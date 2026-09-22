@@ -49,10 +49,10 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     // Gate and Env are appended rather than inserted: the DSP reads its ports
     // by position, so the existing indices have to stay put.
     inputs: [
-      { id: 'fm', label: 'FM' },
-      { id: 'pwm', label: 'PWM' },
-      { id: 'sync', label: 'Sync' },
-      { id: 'gate', label: 'Gate' },
+      { id: 'fm', label: 'FM', block: 'mod' },
+      { id: 'pwm', label: 'PWM', block: 'mod' },
+      { id: 'sync', label: 'Sync', block: 'mod' },
+      { id: 'gate', label: 'Gate', block: 'play' },
     ],
     outputs: [
       { id: 'out', label: 'Out' },
@@ -178,12 +178,12 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     // Jacks are grouped by channel rather than by function, so patching
     // channel 3 means looking in one place.
     inputs: SH_CHANNELS.flatMap((n) => [
-      { id: `in${n}`, label: `In ${n}` },
-      { id: `trig${n}`, label: `Trig ${n}` },
+      { id: `in${n}`, label: `In ${n}`, block: `ch ${n}` },
+      { id: `trig${n}`, label: `Trig ${n}`, block: `ch ${n}` },
     ]),
     outputs: SH_CHANNELS.flatMap((n) => [
-      { id: `out${n}`, label: `Out ${n}` },
-      { id: `clk${n}`, label: `Clk ${n}` },
+      { id: `out${n}`, label: `Out ${n}`, block: `ch ${n}` },
+      { id: `clk${n}`, label: `Clk ${n}`, block: `ch ${n}` },
     ]),
     params: SH_CHANNELS.map((n) => ({
       id: `rate${n}`,
@@ -209,11 +209,11 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     // Divisions rather than multiplications: what a patch wants is several
     // rates that stay related, and the fastest one is the one you set.
     outputs: [
-      { id: 'x1', label: 'x1' },
-      { id: 'd2', label: '/2' },
-      { id: 'd3', label: '/3' },
-      { id: 'd4', label: '/4' },
-      { id: 'd8', label: '/8' },
+      { id: 'x1', label: 'x1', block: 'divisions' },
+      { id: 'd2', label: '/2', block: 'divisions' },
+      { id: 'd3', label: '/3', block: 'divisions' },
+      { id: 'd4', label: '/4', block: 'divisions' },
+      { id: 'd8', label: '/8', block: 'divisions' },
     ],
     params: [
       { id: 'rate', label: 'Rate', min: 0.1, max: 200, default: 4, unit: 'Hz', curve: 'exp' },
@@ -262,12 +262,12 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
       { id: 'reset', label: 'Reset' },
     ],
     outputs: [
-      { id: 'cv', label: 'CV' },
-      { id: 'gate', label: 'Gate' },
-      { id: 'vel', label: 'Vel' },
+      { id: 'cv', label: 'CV', block: 'step' },
+      { id: 'gate', label: 'Gate', block: 'step' },
+      { id: 'vel', label: 'Vel', block: 'step' },
       // Free-running whatever is patched, as the sample and hold's clocks are.
-      { id: 'clk', label: 'Clk' },
-      { id: 'end', label: 'End' },
+      { id: 'clk', label: 'Clk', block: 'chain' },
+      { id: 'end', label: 'End', block: 'chain' },
     ],
     params: [
       // Steps first, then levels, then the three that govern the pattern as a
@@ -590,10 +590,10 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     // goes straight to the speakers, which is what makes an oscillator and a
     // mixer a working rack.
     bus: ['l', 'r'],
-    inputs: CHANNELS.map((n) => ({ id: `in${n}`, label: `${n}` })),
+    inputs: CHANNELS.map((n) => ({ id: `in${n}`, label: `${n}`, block: 'channels' })),
     outputs: [
-      { id: 'l', label: 'L' },
-      { id: 'r', label: 'R' },
+      { id: 'l', label: 'L', block: 'main' },
+      { id: 'r', label: 'R', block: 'main' },
     ],
     params: [
       ...CHANNELS.flatMap((n) => [

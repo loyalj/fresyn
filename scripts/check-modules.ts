@@ -608,6 +608,25 @@ console.log('\ncatalogue')
       seen.add(p.id)
     }
 
+    // The back panel gathers a block by name across both sides, so a def
+    // whose blocks interleave -- in1, out1, in2, out2 under two headings --
+    // still draws two tidy boxes, and the list it was read from is the only
+    // place the mess shows. Keeping each block to one run means the def reads
+    // in the order the panel lays it out.
+    for (const side of [def.inputs, def.outputs]) {
+      const started = new Set<string | undefined>()
+      let run: string | undefined | null = null
+      for (const p of side) {
+        if (p.block !== undefined && p.block.trim() === '') {
+          problems.push(`${key}.${p.id}: empty block name`)
+        }
+        if (p.block === run) continue
+        if (started.has(p.block)) problems.push(`${key}: block "${p.block}" is split up`)
+        started.add(p.block)
+        run = p.block
+      }
+    }
+
     const ids = new Set<string>()
     for (const spec of def.params) {
       if (ids.has(spec.id)) problems.push(`${key}: duplicate param "${spec.id}"`)

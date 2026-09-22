@@ -17,6 +17,15 @@ The rack is a stack of **units**, one per module. Each unit has two faces:
 Press **Tab** to turn the rack around. The front is for tweaking, the back is
 for wiring, and you will go back and forth constantly.
 
+**Jacks come in labelled boxes**, the way the back of a mixing desk does.
+Most modules have two: **IN** for what goes into them and **OUT** for what
+comes out. A module with more to say names its boxes instead -- the Clock
+gathers its five rates under **DIVISIONS**, the Sequencer keeps **STEP**
+apart from **CHAIN**, and the Sample & Hold puts each channel in a box of
+its own, so everything to do with channel 3 is in the one marked **CH 3**
+whether it is an input or an output. On a narrow window the boxes wrap onto
+a second line rather than running off the side of the panel.
+
 **A row holds one panel or two.** The modules that need the room -- the
 Oscillator, the Keyboard, the Sample & Hold, the Sequencer, the Mixer, the
 Scope and the Recorder -- take a full row. Everything else takes half of one, and two half

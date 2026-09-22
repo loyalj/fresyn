@@ -1010,6 +1010,96 @@ console.log('\nexport and import')
   }
 }
 
+// --- jacks on the back panel ------------------------------------------
+console.log()
+console.log('jacks on the back panel')
+{
+  await pick('Patch', 'New')
+  await settle(400)
+  // The starting rack already has the Mixer and the Oscillator; these three
+  // are the rest of what has enough patch points to crowd a panel, and where
+  // a back panel laid out as one long row came apart.
+  for (const name of ['Sample & Hold', 'Clock', 'Sequencer']) {
+    check(`${name} was added`, await addModule(name))
+  }
+
+  await page.keyboard.press('Tab')
+  await settle(700)
+  check(
+    'the rack is showing its back',
+    await page.evaluate(() => !!document.querySelector('.rack-flipped')),
+  )
+
+  const blocks = (module) =>
+    page.evaluate(
+      (m) =>
+        [...document.querySelectorAll(`[data-module="${m}"] .unit-face-back .jack-block-label`)]
+          .map((e) => e.textContent.trim())
+          .join(','),
+      module,
+    )
+
+  // Gathered by name across both sides: a channel box holds that channel's
+  // inputs and its outputs, which is the whole reason for grouping this way.
+  check('a channel is one box', (await blocks('sh1')) === 'ch 1,ch 2,ch 3,ch 4', await blocks('sh1'))
+  check(
+    'and each holds all four of its jacks',
+    await page.evaluate(() =>
+      [...document.querySelectorAll('[data-module="sh1"] .jack-block')].every(
+        (b) => b.querySelectorAll('.jack').length === 4,
+      ),
+    ),
+  )
+  check('the mixer names its strip and its main', (await blocks('mix1')) === 'channels,main', await blocks('mix1'))
+  check('the clock names its divisions', (await blocks('clk1')) === 'in,divisions', await blocks('clk1'))
+  check('the sequencer keeps step apart from chain', (await blocks('seq1')) === 'in,step,chain', await blocks('seq1'))
+  check('the oscillator says what plays it', (await blocks('osc1')) === 'mod,play,out', await blocks('osc1'))
+  // A module that groups nothing is the panel's own doing, and unchanged.
+  check('an ungrouped module is still in and out', (await blocks('lfo1')) === 'in,out', await blocks('lfo1'))
+
+  /**
+   * Jacks that have escaped the unit they belong to.
+   *
+   * Measured against the rack cell the unit sits in, which is the boundary
+   * that means anything: a panel too wide for its cell does not clip, it
+   * hangs out over the column beside it and off the side of the page, where
+   * the jacks on that end cannot be reached. The overflow comes out on the
+   * left, mirrored, because the face it is on is turned around.
+   *
+   * The cell rather than the viewport, because the rack scrolls and a jack
+   * below the fold is fine.
+   */
+  const strays = () =>
+    page.evaluate(() => {
+      const out = []
+      for (const jack of document.querySelectorAll('.unit-face-back .jack')) {
+        const u = jack.closest('.unit-flip').getBoundingClientRect()
+        const r = jack.getBoundingClientRect()
+        const escaped =
+          r.left < u.left - 0.5 ||
+          r.right > u.right + 0.5 ||
+          r.top < u.top - 0.5 ||
+          r.bottom > u.bottom + 0.5
+        if (escaped) out.push(`${jack.dataset.module}.${jack.dataset.port}`)
+      }
+      return out
+    })
+
+  const wide = await strays()
+  check('every jack is on its panel', wide.length === 0, wide.join(' '))
+
+  // One column, which is where the unwrapped row ran off the edge.
+  await page.setViewport({ width: 700, height: 1500 })
+  await settle(500)
+  const narrow = await strays()
+  check('and still on it at one column', narrow.length === 0, narrow.join(' '))
+
+  await page.setViewport({ width: 1200, height: 1500 })
+  await settle(400)
+  await page.keyboard.press('Tab')
+  await settle(700)
+}
+
 console.log('\nproblems    :', problems.length ? problems : 'none')
 await browser.close()
 rmSync(downloads, { recursive: true, force: true })

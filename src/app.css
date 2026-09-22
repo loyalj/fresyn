@@ -949,14 +949,23 @@ body {
    object, so the two halves of a row keep their sides. Strictly a rack turned
    around would mirror them, but nothing shifting is worth more here than that
    is: you flip constantly, and the panel you were just looking at should be
-   where you left it. */
+   where you left it.
+
+   The two min-widths are what hold a face inside its cell. A grid item will
+   not go below its own min-content width unless it is told it may, so a panel
+   with more on it than fits simply grew past the column, out over its
+   neighbour and off the side of the page -- and on the back face, which is
+   turned around, it went off the left-hand side where the overflow was not
+   even visible. Allowed to shrink, the pressure reaches the blocks instead
+   and they wrap. */
 .unit-flip > * {
   grid-area: 1 / 1;
   backface-visibility: hidden;
   display: flex;
+  min-width: 0;
 }
 
-.unit-flip > * > .unit { flex: 1; }
+.unit-flip > * > .unit { flex: 1; min-width: 0; }
 
 .unit-face-back { transform: rotateY(180deg); }
 
@@ -990,26 +999,56 @@ body {
   background: linear-gradient(180deg, var(--rear-top), var(--rear-bottom));
 }
 
+/* Boxes along a rail, wrapping onto a second line when the panel runs out of
+   room. A crowded module then grows downwards by a whole labelled block,
+   which is better than what the single unwrapped row did with the same jacks:
+   below the one-column breakpoint its far end was clipped by the unit and
+   could not be patched at all. */
 .back-face {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 24px;
+  align-content: center;
+  gap: 8px;
   min-height: 64px;
-  /* Room for the controls in the corner: the output jacks are pushed to the
-     right edge and would otherwise sit underneath them. */
+  /* Room for the screws in the corner, which a block would otherwise wrap
+     underneath. */
   padding-right: 74px;
 }
 
-.jack-group { display: flex; align-items: center; gap: 12px; }
-.jack-group-out { margin-left: auto; }
+/* min-width is what lets a block narrower than its contents exist at all.
+   Flex items refuse to shrink past their content by default, and a block that
+   cannot shrink overflows the panel instead of wrapping inside itself. */
+.jack-block {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  padding: 4px 8px 6px;
+  border: 1px solid var(--recess-edge);
+  border-radius: 3px;
+  background: var(--recess-soft);
+}
 
-.jack-group-label {
+.jack-block-label {
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.22em;
   text-transform: uppercase;
+  text-align: center;
   color: var(--ink-faint);
+}
+
+/* A line only wraps between blocks while more than one will fit on it. A
+   block wide enough to fill the panel by itself wraps inside instead, so the
+   Mixer's eight channels are two rows of four in one box rather than eight
+   boxes or four jacks off the edge. */
+.jack-block-jacks {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 4px 12px;
 }
 
 .jack-slot {

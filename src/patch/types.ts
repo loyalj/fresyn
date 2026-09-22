@@ -1,6 +1,19 @@
 export interface PortDef {
   id: string
   label: string
+  /**
+   * The box on the back panel this jack is drawn in, headed by this name.
+   * Ports naming the same block share a box, and a block may hold both an
+   * input and an output -- the Sample & Hold groups by channel, so its CH 3
+   * box holds everything to do with channel 3 and nothing else.
+   *
+   * Absent means the panel's own grouping, which is the inputs in one box and
+   * the outputs in another. That is what most modules want.
+   *
+   * Called `block` and not `group` because ModuleDef already has a group and
+   * it means something else entirely: which menu the module is listed under.
+   */
+  block?: string
 }
 
 /**
