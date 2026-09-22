@@ -1,0 +1,626 @@
+/**
+ * Verifies that the app owns its input: keys it claims never reach the
+ * browser, right-click belongs to the rack, the wheel tunes a knob instead
+ * of scrolling past it, and the escape hatches for browser shortcuts and
+ * text fields still work.
+ *
+ * Needs `npm run dev -- --port 5199` in another terminal.
+ * Point CHROME_PATH at a Chromium build if the default is wrong.
+ */
+import puppeteer from 'puppeteer-core'
+
+const CHROME =
+  process.env.CHROME_PATH ||
+  'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'
+const URL = process.env.DEV_URL || 'http://localhost:5199/'
+
+const browser = await puppeteer.launch({
+  executablePath: CHROME,
+  headless: 'new',
+  args: ['--autoplay-policy=no-user-gesture-required', '--no-sandbox'],
+})
+const page = await browser.newPage()
+// Short on purpose, so the page is definitely scrollable.
+await page.setViewport({ width: 1200, height: 700 })
+
+const problems = []
+page.on('console', (m) => {
+  if (m.type() === 'error' && !m.text().includes('favicon')) problems.push('console: ' + m.text())
+})
+page.on('pageerror', (e) => problems.push('pageerror: ' + e.message))
+
+let failures = 0
+const check = (name, ok, detail = '') => {
+  if (!ok) failures++
+  console.log(`  ${ok ? 'ok  ' : 'FAIL'}  ${name}${detail ? '  ' + detail : ''}`)
+}
+
+await page.goto(URL, { waitUntil: 'networkidle0' })
+const cdp = await page.createCDPSession()
+
+// Record whether each event reached the browser with its default intact.
+await page.evaluate(() => {
+  window.__seen = []
+  for (const type of ['keydown', 'keyup', 'contextmenu']) {
+    document.addEventListener(type, (e) => {
+      window.__seen.push({ type, code: e.code ?? null, prevented: e.defaultPrevented })
+    })
+  }
+})
+const lastSeen = (type) =>
+  page.evaluate((t) => [...window.__seen].reverse().find((s) => s.type === t) ?? null, type)
+const clearSeen = () => page.evaluate(() => { window.__seen = [] })
+
+const scrollY = () => page.evaluate(() => window.scrollY)
+const cableCount = () =>
+  page.evaluate(() => document.querySelectorAll('.cables g.cable:not(.cable-dragging)').length)
+
+check('the page is tall enough to scroll', await page.evaluate(() => document.documentElement.scrollHeight > window.innerHeight))
+
+// --- space ------------------------------------------------------------
+console.log('\nspace holds the gate without scrolling')
+{
+  await page.evaluate(() => window.scrollTo(0, 0))
+  await page.keyboard.down('Space')
+  await new Promise((r) => setTimeout(r, 120))
+  check('a single press does not scroll', (await scrollY()) === 0, `scrollY=${await scrollY()}`)
+
+  // Auto-repeat is the case that actually leaked: the old handler returned
+  // early on repeat, before it reached preventDefault.
+  //
+  // The scroll assertion below is weak for this case -- a CDP-synthesised
+  // repeat does not drive Chrome's native scroll the way a held key does, so
+  // it passes either way. The 'keydown was prevented' check is what actually
+  // pins the repeat path; it fails if the early return comes back.
+  for (let i = 0; i < 6; i++) {
+    await cdp.send('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      code: 'Space',
+      key: ' ',
+      windowsVirtualKeyCode: 32,
+      nativeVirtualKeyCode: 32,
+      autoRepeat: true,
+    })
+  }
+  await new Promise((r) => setTimeout(r, 120))
+  check('auto-repeat does not scroll', (await scrollY()) === 0, `scrollY=${await scrollY()}`)
+
+  await page.keyboard.up('Space')
+  check('keydown was prevented', (await lastSeen('keydown'))?.prevented === true)
+  check('keyup was prevented', (await lastSeen('keyup'))?.prevented === true)
+}
+
+// --- space with a button focused --------------------------------------
+console.log('\nspace after clicking a button')
+{
+  await page.click('.trigger')
+  await page.evaluate(() => window.scrollTo(0, 0))
+  await page.keyboard.down('Space')
+  await new Promise((r) => setTimeout(r, 100))
+  await page.keyboard.up('Space')
+  check('still does not scroll', (await scrollY()) === 0, `scrollY=${await scrollY()}`)
+  check('the key never reaches the focused button', (await lastSeen('keydown'))?.prevented === true)
+}
+
+// --- arrow keys --------------------------------------------------------
+console.log('\narrow keys')
+{
+  await page.evaluate(() => window.scrollTo(0, 0))
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('PageDown')
+  await new Promise((r) => setTimeout(r, 120))
+  check('arrows and page keys do not scroll', (await scrollY()) === 0, `scrollY=${await scrollY()}`)
+}
+
+// --- tab ---------------------------------------------------------------
+console.log('\ntab flips instead of moving focus')
+{
+  const before = await page.evaluate(() => document.activeElement?.className ?? '')
+  await page.keyboard.press('Tab')
+  await new Promise((r) => setTimeout(r, 700))
+  const after = await page.evaluate(() => document.activeElement?.className ?? '')
+  check('focus did not move', before === after, `${before || '<body>'} -> ${after || '<body>'}`)
+  check('the rack flipped', await page.evaluate(() => !!document.querySelector('.rack-flipped')))
+}
+
+// --- right click -------------------------------------------------------
+console.log('\nright click belongs to the rack')
+{
+  await clearSeen()
+  await page.mouse.click(600, 300, { button: 'right' })
+  await new Promise((r) => setTimeout(r, 100))
+  const menu = await lastSeen('contextmenu')
+  check('the browser menu is suppressed', menu?.prevented === true, JSON.stringify(menu))
+}
+
+// Now make the whole rack visible so a jack can be right-clicked.
+await page.setViewport({ width: 1200, height: 1500 })
+await new Promise((r) => setTimeout(r, 400))
+{
+  const before = await cableCount()
+  const jack = await page.evaluate(() => {
+    const el = document.querySelector('.jack[data-module="lpf1"][data-port="in"]')
+    const r = el.getBoundingClientRect()
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+  })
+  await page.mouse.click(jack.x, jack.y, { button: 'right' })
+  await new Promise((r) => setTimeout(r, 150))
+  const after = await cableCount()
+  check('right-clicking a jack unplugs it', after === before - 1, `${before} -> ${after}`)
+}
+
+// --- the wheel over a knob --------------------------------------------
+console.log('\nthe wheel tunes a knob, and only over a knob')
+{
+  // The cable sections above leave the rack turned around, and the knobs
+  // are on the front of it.
+  if (await page.evaluate(() => !!document.querySelector('.rack-flipped'))) {
+    await page.keyboard.press('Tab')
+    await new Promise((r) => setTimeout(r, 600))
+  }
+  await page.evaluate(() => window.scrollTo(0, 0))
+
+  // Named, not "the first knob on the page". The checks below are written
+  // about this one: its unit is hertz, so the last digit the readout shows is
+  // one hertz, which is what makes the shift assertions mean anything. Taking
+  // whatever knob came first meant a module added at the top of the stock rack
+  // silently moved the test onto a different knob with a different unit, and
+  // the failure read as a broken wheel rather than as a moved target.
+  //
+  // The lookup is spelled out at each use because these bodies run in the
+  // page, where a helper declared out here does not exist.
+  const KNOB = { unit: 'osc1', label: 'Pitch' }
+
+  const readout = () =>
+    page.evaluate((k) => {
+      const unit = [...document.querySelectorAll('.unit-face-front')].find(
+        (u) => u.querySelector('.unit-id')?.textContent === k.unit,
+      )
+      const knob = [...(unit?.querySelectorAll('.knob') ?? [])].find(
+        (n) => n.querySelector('.knob-label')?.textContent?.trim() === k.label,
+      )
+      return knob.querySelector('.knob-readout').textContent
+    }, KNOB)
+
+  /** The value behind the readout, which is rounded to whole hertz up here. */
+  const exact = () =>
+    page.evaluate((k) => {
+      const unit = [...document.querySelectorAll('.unit-face-front')].find(
+        (u) => u.querySelector('.unit-id')?.textContent === k.unit,
+      )
+      const knob = [...(unit?.querySelectorAll('.knob') ?? [])].find(
+        (n) => n.querySelector('.knob-label')?.textContent?.trim() === k.label,
+      )
+      return Number(knob.querySelector('svg').getAttribute('aria-valuenow'))
+    }, KNOB)
+
+  const overKnob = async () => {
+    const at = await page.evaluate((k) => {
+      const unit = [...document.querySelectorAll('.unit-face-front')].find(
+        (u) => u.querySelector('.unit-id')?.textContent === k.unit,
+      )
+      const knob = [...(unit?.querySelectorAll('.knob') ?? [])].find(
+        (n) => n.querySelector('.knob-label')?.textContent?.trim() === k.label,
+      )
+      const r = knob.querySelector('svg').getBoundingClientRect()
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+    }, KNOB)
+    await page.mouse.move(at.x, at.y)
+  }
+  const notch = async (deltaY, times = 1) => {
+    for (let i = 0; i < times; i++) {
+      await page.mouse.wheel({ deltaY })
+      await new Promise((r) => setTimeout(r, 40))
+    }
+    await new Promise((r) => setTimeout(r, 120))
+  }
+
+  await overKnob()
+  const start = await readout()
+
+  await notch(-100)
+  const oneUp = await readout()
+  check('one notch up changes the value', oneUp !== start, `${start} -> ${oneUp}`)
+  check('the page did not scroll', (await scrollY()) === 0, `scrollY=${await scrollY()}`)
+
+  // The wheel keeps its own position so a burst does not stall; if that ever
+  // regresses, a run out and back will not land where it started.
+  await notch(-100, 9)
+  const up = await readout()
+  await notch(100, 10)
+  check('ten notches out and back returns exactly', (await readout()) === start, `${start} -> ${up} -> ${await readout()}`)
+
+  // Shift is the exact adjustment: a notch moves the last digit the readout
+  // is showing, which up at 110 Hz is one hertz.
+  const base = await exact()
+  await page.keyboard.down('Shift')
+  await notch(-100)
+  const fine = await exact()
+  await notch(100)
+  const back = await exact()
+  await page.keyboard.up('Shift')
+  check('a shifted notch moves one digit of the readout', fine === base + 1, `${base} -> ${fine}`)
+  check('and the notch back undoes it', back === base, `${fine} -> ${back}`)
+
+  // And it tidies as it moves. A plain notch leaves the knob between two
+  // whole hertz; one shifted notch from there has to land on one of them,
+  // because a value you cannot say exactly is a value you cannot set.
+  await notch(-100)
+  const off = await exact()
+  await page.keyboard.down('Shift')
+  await notch(100)
+  await page.keyboard.up('Shift')
+  const on = await exact()
+  check('and lands on a round value', Number.isInteger(on) && on < off, `${off} -> ${on}`)
+
+  // Anywhere that is not a knob still belongs to the page. The stock rack is
+  // four units, which fits in a tall window with nothing left to scroll, so
+  // the window is shortened to give the page somewhere to go.
+  await page.setViewport({ width: 1200, height: 420 })
+  await new Promise((r) => setTimeout(r, 200))
+  // Outside the rack entirely: the panels are 1040px wide and centred, so
+  // this lands on the page background rather than on any control.
+  await page.mouse.move(1160, 300)
+  await notch(300)
+  check('the page still scrolls elsewhere', (await scrollY()) > 0, `scrollY=${await scrollY()}`)
+  await page.evaluate(() => window.scrollTo(0, 0))
+}
+
+// --- saying a knob's value outright ------------------------------------
+/**
+ * The wheel and the drag are for finding a value. These are for saying one:
+ * typing it into the readout, or carrying it from another knob. Both have to
+ * land on the number asked for and refuse a number that means something
+ * else, which is the entire point of having them.
+ */
+console.log()
+console.log("a knob's value can be said outright")
+{
+  await page.setViewport({ width: 1200, height: 1500 })
+  await new Promise((r) => setTimeout(r, 300))
+  await page.evaluate(() => window.scrollTo(0, 0))
+
+  /** The middle of one part of the knob carrying `label`, in page coords. */
+  const partAt = (label, sel) =>
+    page.evaluate(
+      (l, s) => {
+        const knob = [...document.querySelectorAll('.knob')].find(
+          (k) => k.querySelector('svg')?.getAttribute('aria-label') === l,
+        )
+        const el = knob?.querySelector(s)
+        if (!el) return null
+        const r = el.getBoundingClientRect()
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+      },
+      label,
+      sel,
+    )
+  const valueOf = (label) =>
+    page.evaluate((l) => {
+      const svg = [...document.querySelectorAll('.knob svg')].find(
+        (s) => s.getAttribute('aria-label') === l,
+      )
+      return svg ? Number(svg.getAttribute('aria-valuenow')) : null
+    }, label)
+  const clickPart = async (label, sel, options) => {
+    const at = await partAt(label, sel)
+    if (!at) return false
+    await page.mouse.click(at.x, at.y, options)
+    await new Promise((r) => setTimeout(r, 150))
+    return true
+  }
+  /** A row of the menu at the pointer, by its label. */
+  const row = async (label) => {
+    const h = await page.evaluateHandle(
+      (l) =>
+        [...document.querySelectorAll('.context-menu .menu-item')].find(
+          (b) => b.querySelector('.menu-text')?.textContent.trim() === l,
+        ) ?? null,
+      label,
+    )
+    return h.asElement()
+  }
+  const entryOpen = () => page.evaluate(() => !!document.querySelector('.knob-entry'))
+
+  // An FM amount has to be exactly 1.00 for a keyboard to track an
+  // oscillator, and "near enough" is audibly wrong.
+  check('the readout opens for typing', await clickPart('FM Amt', '.knob-readout'))
+  await page.keyboard.type('1.00')
+  await page.keyboard.press('Enter')
+  await new Promise((r) => setTimeout(r, 150))
+  check('a typed value lands exactly', (await valueOf('FM Amt')) === 1, `${await valueOf('FM Amt')}`)
+  check('and the field closes behind it', !(await entryOpen()))
+
+  // A time is not an amount in octaves, and the field says so by staying
+  // open rather than by guessing.
+  await clickPart('FM Amt', '.knob-readout')
+  await page.keyboard.type('250 ms')
+  await page.keyboard.press('Enter')
+  await new Promise((r) => setTimeout(r, 150))
+  check('a value in the wrong unit is refused', await entryOpen())
+  check('and the knob has not moved', (await valueOf('FM Amt')) === 1)
+  await page.keyboard.press('Escape')
+  await new Promise((r) => setTimeout(r, 150))
+  check('Escape gives up on it', !(await entryOpen()) && (await valueOf('FM Amt')) === 1)
+
+  // Copy, and then paste it somewhere it belongs and somewhere it does not.
+  await clearSeen()
+  check('right-clicking a knob opens a menu', await clickPart('FM Amt', 'svg', { button: 'right' }))
+  check('and not the browser\'s one', (await lastSeen('contextmenu'))?.prevented === true)
+  const copy = await row('Copy')
+  check('the menu offers Copy', !!copy)
+  await copy.click()
+  await new Promise((r) => setTimeout(r, 150))
+
+  await clickPart('CV Amt', 'svg', { button: 'right' })
+  const paste = await row('Paste')
+  check('Paste is offered on a knob in the same unit', !!paste && !(await page.evaluate((b) => b.disabled, paste)))
+  await paste.click()
+  await new Promise((r) => setTimeout(r, 150))
+  check('and it arrives exactly', (await valueOf('CV Amt')) === 1, `${await valueOf('CV Amt')}`)
+
+  const cutoffWas = await valueOf('Cutoff')
+  await clickPart('Cutoff', 'svg', { button: 'right' })
+  const refused = await row('Paste')
+  check(
+    'Paste is greyed on a knob that measures something else',
+    !!refused && (await page.evaluate((b) => b.disabled, refused)),
+  )
+  await page.keyboard.press('Escape')
+  await new Promise((r) => setTimeout(r, 150))
+  check('so the frequency is untouched', (await valueOf('Cutoff')) === cutoffWas)
+  check('and the menu is gone', !(await page.evaluate(() => !!document.querySelector('.context-menu'))))
+}
+
+// --- a menu owns the keyboard while it is open -------------------------
+/**
+ * Every key in this app is captured on the window, ahead of whatever has
+ * focus. That is what makes the rack playable, and it is also what would make
+ * a menu unusable: arrowing down a list would scroll the page, Space would
+ * play the instrument instead of choosing a row, and Tab would turn the rack
+ * around behind the menu you were reading.
+ */
+console.log()
+console.log('a menu takes the keyboard off the rack')
+{
+  const openMenu = async (label) => {
+    const h = await page.evaluateHandle(
+      (t) => [...document.querySelectorAll('.menubar-label')].find((b) => b.textContent.trim() === t),
+      label,
+    )
+    const el = h.asElement()
+    if (!el) return false
+    await el.click()
+    await new Promise((r) => setTimeout(r, 150))
+    return true
+  }
+  const menuShowing = () => page.evaluate(() => !!document.querySelector('.menu'))
+  const flipped = () => page.evaluate(() => !!document.querySelector('.rack-flipped'))
+
+  await page.evaluate(() => window.scrollTo(0, 0))
+  check('a menu opens', await openMenu('Modules'))
+  check('and it is showing', await menuShowing())
+
+  // The three keys the rack would otherwise take.
+  await clearSeen()
+  await page.keyboard.press('ArrowDown')
+  await new Promise((r) => setTimeout(r, 80))
+  check('arrow keys do not scroll the rack away', (await scrollY()) === 0, `scrollY=${await scrollY()}`)
+
+  const wasFlipped = await flipped()
+  await page.keyboard.press('Tab')
+  await new Promise((r) => setTimeout(r, 200))
+  check('Tab does not turn the rack around', (await flipped()) === wasFlipped)
+
+  await page.keyboard.press('Escape')
+  await new Promise((r) => setTimeout(r, 200))
+  check('Escape closes it', !(await menuShowing()))
+
+  // And the rack has the keyboard back the moment it does.
+  await page.evaluate(() => window.scrollTo(0, 0))
+  await clearSeen()
+  await page.keyboard.down('Space')
+  await new Promise((r) => setTimeout(r, 120))
+  await page.keyboard.up('Space')
+  check('the rack has its keys back afterwards', (await lastSeen('keydown'))?.prevented === true)
+  check('and still does not scroll', (await scrollY()) === 0, `scrollY=${await scrollY()}`)
+
+  // Closing a menu leaves focus on the word it opened from, which is right
+  // for a keyboard user and would quietly change what the sections below are
+  // testing. Put it back where it was.
+  await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : null))
+}
+
+// --- claimed modifier combos ------------------------------------------
+console.log()
+console.log('claimed modifier combos')
+{
+  const press = async (mods, code) => {
+    await clearSeen()
+    for (const m of mods) await page.keyboard.down(m)
+    await page.keyboard.press(code)
+    for (const m of [...mods].reverse()) await page.keyboard.up(m)
+    await new Promise((r) => setTimeout(r, 80))
+    return lastSeen('keydown')
+  }
+
+  check('Ctrl+Z is claimed', (await press(['Control'], 'KeyZ'))?.prevented === true)
+  check('Ctrl+Shift+Z is claimed', (await press(['Control', 'Shift'], 'KeyZ'))?.prevented === true)
+  check('Ctrl+Y is claimed', (await press(['Control'], 'KeyY'))?.prevented === true)
+  // An unclaimed combo still belongs to the browser.
+  check('Ctrl+B is left alone', (await press(['Control'], 'KeyB'))?.prevented === false)
+}
+
+// --- escape hatches ----------------------------------------------------
+console.log('\nescape hatches')
+{
+  await clearSeen()
+  // A bound key with a modifier belongs to the browser, not to us.
+  await page.keyboard.down('Control')
+  await page.keyboard.press('Space')
+  await page.keyboard.up('Control')
+  await new Promise((r) => setTimeout(r, 100))
+  check('modifier combos pass through', (await lastSeen('keydown'))?.prevented === false)
+}
+
+{
+  await page.evaluate(() => {
+    const input = document.createElement('input')
+    input.id = 'probe'
+    document.body.appendChild(input)
+    input.focus()
+  })
+  await clearSeen()
+  await page.keyboard.type('a b')
+  await new Promise((r) => setTimeout(r, 100))
+  const value = await page.evaluate(() => document.querySelector('#probe').value)
+  check('typing into a field is not swallowed', value === 'a b', `value="${value}"`)
+  check('its space is not prevented', (await lastSeen('keydown'))?.prevented === false)
+
+  // Undo inside a text field has to reach the field, not the rack.
+  await clearSeen()
+  await page.keyboard.down('Control')
+  await page.keyboard.press('KeyZ')
+  await page.keyboard.up('Control')
+  await new Promise((r) => setTimeout(r, 80))
+  check('Ctrl+Z in a field belongs to the field', (await lastSeen('keydown'))?.prevented === false)
+
+  await page.evaluate(() => document.querySelector('#probe').remove())
+}
+
+// --- trigger key bindings ----------------------------------------------
+//
+// Last in the file, and it starts and ends on a cleared autosave: this is the
+// one section that edits the patch, and a run that left the stock Trigger on
+// some other key would fail every Space check above on the next run.
+console.log('\ntrigger keys')
+{
+  await page.evaluate(() => localStorage.clear())
+  await page.reload({ waitUntil: 'networkidle0' })
+
+  const capText = () =>
+    page.evaluate(() => document.querySelector('.trigger-cap')?.textContent ?? null)
+  const listening = () => page.evaluate(() => !!document.querySelector('.trigger-cap.listening'))
+
+  check('the stock Trigger has a cap', (await capText()) === 'Space', `${await capText()}`)
+
+  // Start the engine the way a user does, and let the note decay away again
+  // so the meters below start from silence.
+  await page.click('.trigger')
+  await new Promise((r) => setTimeout(r, 1500))
+
+  // How full each mixer bar is, read off the geometry the audio thread draws.
+  const barFill = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('.strip-meter-fill')].map((e) => {
+        const m = /inset\(([\d.]+)%/.exec(e.style.clipPath || '')
+        return m ? 1 - Number(m[1]) / 100 : 0
+      }),
+    )
+  /** Hold a key for a moment and report whether the rack made a sound. */
+  const sounds = async (code) => {
+    await page.keyboard.down(code)
+    await new Promise((r) => setTimeout(r, 500))
+    const fill = await barFill()
+    await page.keyboard.up(code)
+    // Long enough for a full-scale bar to fall all the way to the floor, so
+    // the next call starts from silence rather than from this one's tail.
+    await new Promise((r) => setTimeout(r, 1500))
+    return fill.some((v) => v > 0.05)
+  }
+
+  check('Space plays the stock rack', await sounds('Space'))
+
+  await page.click('.trigger-cap')
+  check('clicking the cap starts the wait', await listening())
+  check('and it says so', (await capText()) === 'Press a key', `${await capText()}`)
+
+  // Tab flips the rack, so a Trigger may not take it. The refusal has to be
+  // visible: a press that silently did nothing would read as a broken cap.
+  await page.keyboard.press('Tab')
+  await new Promise((r) => setTimeout(r, 150))
+  check('a reserved key is refused', (await capText()) === 'In use', `${await capText()}`)
+  check('and the cap keeps waiting', await listening())
+  check('the rack did not flip', await page.evaluate(() => !document.querySelector('.rack-flipped')))
+
+  await page.keyboard.press('Escape')
+  await new Promise((r) => setTimeout(r, 150))
+  check('Escape ends the wait', !(await listening()))
+  check('and leaves the binding alone', (await capText()) === 'Space', `${await capText()}`)
+
+  await page.click('.trigger-cap')
+  await page.keyboard.press('KeyW')
+  await new Promise((r) => setTimeout(r, 200))
+  check('a key can be assigned', (await capText()) === 'W', `${await capText()}`)
+  check('the wait is over', !(await listening()))
+
+  check('the new key plays the rack', await sounds('KeyW'))
+  check('and the old one no longer does', !(await sounds('Space')))
+
+  // Undo reaches a binding, because it is a patch edit like any other.
+  await page.keyboard.down('Control')
+  await page.keyboard.press('KeyZ')
+  await page.keyboard.up('Control')
+  await new Promise((r) => setTimeout(r, 250))
+  check('undo puts the binding back', (await capText()) === 'Space', `${await capText()}`)
+
+  // --- latch ----------------------------------------------------------
+  //
+  // The one fire mode with no DSP behind it: the audio thread sees a held
+  // gate whose release never arrives, so the whole of latch is up here and
+  // this is the only place it can be checked.
+  console.log('\nlatch')
+
+  /** Click a position on the stock Trigger's Mode switch. */
+  const setMode = async (label) => {
+    const found = await page.evaluate((want) => {
+      const unit = [...document.querySelectorAll('.unit-face-front')].find(
+        (u) => u.querySelector('.unit-id')?.textContent === 'gate1',
+      )
+      const button = [...(unit?.querySelectorAll('.switch-buttons button') ?? [])].find(
+        (b) => b.textContent?.trim() === want,
+      )
+      if (!button) return false
+      button.click()
+      return true
+    }, label)
+    await new Promise((r) => setTimeout(r, 150))
+    return found
+  }
+
+  const isLatched = () =>
+    page.evaluate(() => !!document.querySelector('.trigger.latched[aria-pressed="true"]'))
+
+  check('the Trigger has a Mode switch', await setMode('latch'))
+  check('nothing is latched yet', !(await isLatched()))
+
+  // Tap and let go. A held gate would have closed here; a latched one does not.
+  await page.keyboard.press('Space')
+  await new Promise((r) => setTimeout(r, 150))
+  check('a tap latches it on', await isLatched())
+
+  await page.keyboard.press('Space')
+  await new Promise((r) => setTimeout(r, 150))
+  check('and the next tap lets it go', !(await isLatched()))
+
+  // Turning Mode off latch while it is on has to release it, or the gate
+  // would be held by a control that no longer has any way to close it.
+  await page.keyboard.press('Space')
+  await new Promise((r) => setTimeout(r, 150))
+  check('latched again', await isLatched())
+  await setMode('held')
+  check('leaving latch releases it', !(await isLatched()))
+
+  // Back to the stock setting, so the autosave this section clears is the
+  // only thing the next run has to undo.
+  await setMode('held')
+
+  await page.evaluate(() => localStorage.clear())
+}
+
+console.log('\nproblems    :', problems.length ? problems : 'none')
+await browser.close()
+
+const ok = failures === 0 && problems.length === 0
+console.log(ok ? '\nPASS' : `\nFAIL (${failures} check(s))`)
+process.exit(ok ? 0 : 1)

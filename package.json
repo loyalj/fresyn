@@ -1,0 +1,36 @@
+{
+  "name": "fresyn",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "check:dsp": "esbuild scripts/check-dsp.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/check-dsp.mjs --log-level=warning && node node_modules/.cache/check-dsp.mjs",
+    "check:browser": "node scripts/check-browser.mjs",
+    "check:cables": "node scripts/check-cables.mjs",
+    "check:input": "node scripts/check-input.mjs",
+    "check:patch": "esbuild scripts/check-patch.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/check-patch.mjs --log-level=warning && node node_modules/.cache/check-patch.mjs",
+    "check:rack": "node scripts/check-rack.mjs",
+    "check:render": "esbuild scripts/check-render.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/check-render.mjs --log-level=warning && node node_modules/.cache/check-render.mjs",
+    "check:export": "node scripts/check-export.mjs",
+    "check:scope": "node scripts/check-scope.mjs",
+    "check:manual": "esbuild scripts/check-manual.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/check-manual.mjs --log-level=warning && node node_modules/.cache/check-manual.mjs",
+    "check:modules": "esbuild scripts/check-modules.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/check-modules.mjs --log-level=warning && node node_modules/.cache/check-modules.mjs",
+    "check:theme": "node scripts/check-theme.mjs"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "esbuild": "^0.24.0",
+    "puppeteer-core": "^24.0.0",
+    "typescript": "^5.6.0",
+    "vite": "^6.0.0"
+  }
+}

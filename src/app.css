@@ -1,0 +1,1625 @@
+@import './theme.css';
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 13px/1.4 "Inter", "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+.app {
+  max-width: 1040px;
+  margin: 0 auto;
+  /* No gap above: the head panel sits against the top of the window from the
+     first paint, in the same place it stays once the rack scrolls under it. */
+  padding: 0 16px 48px;
+}
+
+/* --- the head of the rack -------------------------------------------
+   A panel like the units below it, but the one bolted to the top of the
+   rails: it keeps its place while the rest of the rack scrolls past, and
+   it is the only face in the room wearing the accent rather than just
+   lighting up with it.
+-------------------------------------------------------------------- */
+
+.masthead {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 9px 12px;
+  border: 1px solid var(--panel-edge);
+  border-top: 0;
+  border-radius: 0 0 4px 4px;
+  /* The accent wash sits over the same gradient the units use, so this
+     reads as the same piece of equipment in a different finish. */
+  background:
+    linear-gradient(180deg, rgb(var(--accent-rgb) / 0.1), rgb(var(--accent-rgb) / 0.03)),
+    linear-gradient(180deg, var(--unit-top), var(--unit-bottom));
+  /* A lit rail along the top edge instead of the units' plain bevel, and a
+     deeper shadow so the panel reads as standing off the rack it covers. */
+  box-shadow: 0 2px 0 rgb(var(--accent-rgb) / 0.5) inset, 0 8px 22px var(--unit-shadow);
+}
+
+/* Screwed to the panel rather than printed on it. */
+.masthead-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 11px;
+  border: 1px solid var(--panel-edge);
+  border-radius: 3px;
+  background: var(--recess);
+  box-shadow: 0 0 0 1px var(--recess-edge) inset;
+}
+
+.masthead h1 {
+  margin: 0;
+  font-size: 17px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent-line);
+}
+
+/* Pushed to the far end, so the bar reads from the name to the rack. */
+.masthead .flip-button { margin-left: auto; }
+
+.tagline { color: var(--ink-dim); font-size: 11px; }
+
+.led {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--led-off);
+  box-shadow: 0 0 0 1px var(--sunken) inset;
+  flex: none;
+}
+
+.led.on {
+  background: var(--accent-line);
+  box-shadow: 0 0 6px var(--accent-line), 0 0 0 1px var(--sunken) inset;
+}
+
+/* Repainting the rack is a scene change, so it cross-fades: the whole page
+   at once, panels and gradients included, which a transition on colour
+   alone could not do. Slow enough to read as a change of light, short
+   enough that the toolbar is not held hostage to it. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 320ms;
+  animation-timing-function: ease;
+}
+
+/* Anyone who has asked for less motion gets the cut instead; the code that
+   starts the transition checks the same query before it bothers. */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none;
+  }
+}
+
+/* --- menu bar -------------------------------------------------------
+
+   The head of the rack is still a panel, but the controls on it are software
+   controls: a menu can hold what a row of buttons cannot, and the things you
+   set once -- the palette, the mode -- stop taking the best space on screen
+   for a choice made on the first day and never again.
+-------------------------------------------------------------------- */
+
+.menubar { display: flex; align-items: center; gap: 2px; }
+
+.menubar-slot { position: relative; }
+
+.menubar-label {
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  padding: 5px 10px;
+  color: var(--ink-dim);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.menubar-label:hover { color: var(--ink); background: var(--control-hover); }
+
+/* The open menu keeps its label lit, so it is obvious which list belongs to
+   which word once several have been swept past. */
+.menubar-label.open {
+  color: var(--accent-line);
+  background: rgb(var(--accent-rgb) / 0.12);
+  border-color: rgb(var(--accent-rgb) / 0.4);
+}
+
+.menubar-collapsed .menubar-label { font-size: 15px; padding: 2px 9px; }
+
+/* --- a menu --------------------------------------------------------- */
+
+.menu {
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 0;
+  z-index: 30;
+  min-width: 190px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  background: var(--unit-top);
+  border: 1px solid var(--panel-edge);
+  border-radius: 4px;
+  box-shadow: 0 10px 28px var(--unit-shadow), 0 0 0 1px var(--sunken) inset;
+}
+
+/* A submenu opens beside its row rather than below it, and overlaps the
+   parent by a few pixels so the pointer never crosses a gap on the way. */
+.menu-nested { top: -5px; left: calc(100% - 2px); }
+
+/* A menu opened at the pointer. It hangs off the body rather than off the
+   control it belongs to, so that a panel's own scrolling and clipping cannot
+   cut it in half; the list inside it therefore stops placing itself and
+   simply fills the box the pointer put here. */
+.context-menu { position: fixed; z-index: 40; }
+.context-menu > .menu { position: static; min-width: 170px; }
+
+.menu-slot { position: relative; display: flex; }
+.menu-slot > .menu-item { flex: 1; }
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  padding: 5px 8px;
+  color: var(--ink-dim);
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* Focus is how a menu is navigated, so it is the highlight -- not an outline
+   on top of a separate hover colour saying the same thing twice. */
+.menu-item:hover,
+.menu-item:focus {
+  color: var(--ink);
+  background: rgb(var(--accent-rgb) / 0.15);
+  outline: none;
+}
+
+.menu-item:disabled {
+  color: var(--ink-faint);
+  background: transparent;
+  cursor: default;
+}
+
+/* A fixed column for the tick, so the labels line up whether or not anything
+   in the menu is checkable. */
+.menu-tick {
+  width: 11px;
+  flex: none;
+  color: var(--accent-line);
+  font-size: 11px;
+}
+
+.menu-text { flex: 1; }
+
+.menu-shortcut {
+  color: var(--ink-faint);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  padding-left: 18px;
+}
+
+.menu-more { color: var(--ink-faint); font-size: 10px; }
+
+.menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--panel-edge);
+}
+
+/* --- rack ---------------------------------------------------------- */
+
+/* Two rails' worth of width. A row holds one full-width panel or two
+   half-width ones, and auto-placement fills it in patch order, so where a
+   unit sits on the page is still where it sits in the signal chain -- a half
+   panel that has no half panel after it simply leaves the rest of its row as
+   blank rack space, the way a real rack does. */
+.rack {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+/* Full width is the default; a module that asked for half a row gets one
+   column. Written on the unit rather than the face, because both faces share
+   the same cell and the rack is laid out once for the pair. */
+.unit-flip { grid-column: span 2; }
+.unit-flip.half { grid-column: span 1; }
+
+/* Too narrow for two panels abreast: one column, and a half-width panel is
+   simply a panel. */
+@media (max-width: 760px) {
+  .patch-name { min-width: 0; flex: 1; }
+  /* A submenu has nowhere to go to the right of a narrow screen, so it drops
+     back under its row and indents instead. */
+  .menu-nested { position: static; margin: 2px 0 2px 12px; box-shadow: none; }
+  .rack { grid-template-columns: minmax(0, 1fr); }
+  .unit-flip,
+  .unit-flip.half { grid-column: span 1; }
+}
+
+.unit {
+  display: flex;
+  border: 1px solid var(--panel-edge);
+  border-radius: 4px;
+  background: linear-gradient(180deg, var(--unit-top), var(--unit-bottom));
+  box-shadow: 0 1px 0 var(--unit-bevel) inset, 0 4px 14px var(--unit-shadow);
+  overflow: hidden;
+}
+
+/* The rack ear: the strip that would be bolted to the rails, and the handle
+   the unit is dragged up and down by. */
+.unit-spine {
+  width: 30px;
+  flex: none;
+  cursor: grab;
+  touch-action: none;
+  background: linear-gradient(90deg, var(--spine-top), var(--spine-bottom));
+  border-right: 1px solid var(--panel-edge);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 0;
+}
+
+.unit-id {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.unit-name {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  white-space: nowrap;
+  color: var(--ink-dim);
+}
+
+.unit-face {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 12px 16px;
+  min-width: 0;
+}
+
+.unit-face > .controls { flex: 1; }
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 14px;
+}
+
+/* --- knob ---------------------------------------------------------- */
+
+.knob {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 58px;
+}
+
+.knob svg { cursor: ns-resize; touch-action: none; }
+
+.knob-track { fill: none; stroke: var(--knob-track); stroke-width: 4; stroke-linecap: round; }
+.knob-value { fill: none; stroke: var(--accent-line); stroke-width: 4; stroke-linecap: round; }
+.knob-cap { fill: var(--knob-cap); stroke: var(--knob-cap-edge); }
+.knob-pointer { stroke: var(--knob-pointer); stroke-width: 2; stroke-linecap: round; }
+
+.knob-label {
+  margin-top: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+/* A button, because the readout is where the value is typed as well as read.
+   It is styled back down to the caption it always looked like: a number
+   under a knob that announced itself as a control would compete with the
+   knob it belongs to. */
+.knob-readout {
+  font: inherit;
+  font-size: 10px;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+  max-width: 100%;
+  padding: 0 2px;
+  background: transparent;
+  border: 0;
+  border-radius: 2px;
+  cursor: text;
+}
+
+.knob-readout:hover,
+.knob-readout:focus-visible {
+  color: var(--ink);
+  background: var(--control-hover);
+  outline: none;
+}
+
+/* Open for typing. Centred and the width of the caption, so the row of knobs
+   does not shuffle sideways the moment one of them is being set. */
+.knob-entry {
+  width: 100%;
+  text-align: center;
+  color: var(--ink);
+  background: var(--field);
+  border: 1px solid var(--accent-line);
+  cursor: text;
+}
+
+/* Said, but not readable as this knob's unit. The field stays open with the
+   text still in it: the fix is usually one character. */
+.knob-entry.bad { border-color: var(--danger); }
+
+/* --- switch -------------------------------------------------------- */
+
+.switch { display: flex; flex-direction: column; align-items: center; }
+
+.switch-buttons {
+  display: flex;
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.switch-buttons button {
+  font: inherit;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 5px 9px;
+  color: var(--ink-dim);
+  background: var(--control);
+  border: 0;
+  border-right: 1px solid var(--panel-edge);
+  cursor: pointer;
+}
+
+.switch-buttons button:last-child { border-right: 0; }
+
+.switch-buttons button.active {
+  color: var(--on-accent);
+  background: var(--accent);
+}
+
+.switch .knob-label { margin-top: 5px; }
+
+/* --- mixer --------------------------------------------------------- */
+
+/* Strips stretch to the tallest, so every meter is the same bar read against
+   the same scale. The main bus has one knob where a channel has two, and a
+   short meter next to tall ones would read as a quieter bus. */
+.mixer { display: flex; align-items: stretch; gap: 4px; }
+
+.strip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 4px 4px;
+  border-radius: 3px;
+  background: var(--recess-soft);
+}
+
+/* The faders and the meter stand side by side, as they do on a console, and
+   the channel number sits under both. */
+.strip-body {
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+
+/* Bottom-aligned, so the main fader lines up with the channel faders rather
+   than floating at the top of its taller strip. */
+.strip-knobs {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 2px;
+}
+
+.strip-meter {
+  position: relative;
+  width: 5px;
+  align-self: stretch;
+  border-radius: 2px;
+  background: var(--meter-track);
+  box-shadow: 0 0 0 1px var(--sunken) inset;
+  overflow: hidden;
+}
+
+/* Full height and clipped from the top by the draw loop, so the gradient
+   stays put: a fill that scaled would paint a quiet channel in the colour
+   reserved for a loud one. */
+.strip-meter-fill {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(0deg, var(--meter-low), var(--accent-line) 72%, var(--meter-high));
+  clip-path: inset(100% 0 0 0);
+}
+
+/* The main bus is the one you watch while rendering, so it gets the wider
+   bar as well as the tinted strip. */
+.strip-master .strip-meter { width: 8px; }
+
+/* The main bus reads as part of the console, not as a ninth channel. */
+.strip-master {
+  margin-left: 10px;
+  background: rgb(var(--accent-rgb) / 0.07);
+  box-shadow: 0 0 0 1px rgb(var(--accent-rgb) / 0.16) inset;
+}
+
+/* Mute and solo, under the meter and above the channel number. Small and
+   square, the way they are on a desk: they are switched far more often than
+   the pan is turned, but they are not what a strip is for. */
+.strip-switches {
+  display: flex;
+  gap: 3px;
+  justify-content: center;
+  margin-top: 5px;
+}
+
+.strip-switch {
+  font: inherit;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  width: 20px;
+  padding: 2px 0;
+  color: var(--ink-faint);
+  background: var(--well);
+  border: 1px solid var(--recess-edge);
+  border-radius: 2px;
+  box-shadow: 0 1px 2px var(--recess) inset;
+  cursor: pointer;
+}
+
+.strip-switch:hover,
+.strip-switch:focus-visible {
+  color: var(--ink);
+  border-color: var(--rule);
+  outline: none;
+}
+
+/* Lit, not merely marked. A channel that is off has to be findable at a
+   glance from across the rack, or the confusing case -- wondering why a layer
+   has gone missing -- is exactly the one it fails at. */
+.strip-switch.on {
+  color: var(--on-danger);
+  background: var(--danger);
+  border-color: var(--danger);
+  box-shadow: none;
+}
+
+/* Solo is the rack accent rather than the danger colour: it is not taking
+   anything away on purpose, it is putting one thing in front. */
+.strip-switch.solo.on {
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: var(--accent-line);
+}
+
+.strip-number {
+  margin-top: 2px;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--ink-dim);
+}
+
+.strip .knob-label { font-size: 9px; color: var(--ink-dim); }
+
+/* --- sequencer ------------------------------------------------------ */
+
+/* One column per step, built like the mixer's channel strips: the pattern is
+   the thing being edited, and eight loose pairs of knobs would not read as
+   one. The three knobs that govern the pattern as a whole stand apart from
+   the steps, the way the mixer's master fader does. */
+.seq { display: flex; align-items: stretch; gap: 4px; }
+
+.seq-steps { display: flex; align-items: stretch; gap: 4px; }
+
+.seq-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 4px 4px;
+  border-radius: 3px;
+  background: var(--recess-soft);
+}
+
+/* Past the end of the pattern. Dimmed rather than hidden: the values are
+   still there, and shortening a pattern must not look like clearing it. */
+.seq-step-off { opacity: 0.38; }
+
+.seq .knob-label { font-size: 9px; color: var(--ink-dim); }
+
+/* The lamp sits in a recess, so an unlit step still reads as a lamp that is
+   off rather than as nothing at all. */
+.seq-lamp-track {
+  width: 100%;
+  height: 5px;
+  margin-top: 2px;
+  border-radius: 2px;
+  background: var(--meter-track);
+  box-shadow: 0 0 0 1px var(--sunken) inset;
+  overflow: hidden;
+}
+
+/* Faded by the draw loop writing its opacity, never through React state. */
+.seq-lamp {
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  background: var(--accent-line);
+  box-shadow: 0 0 6px var(--accent-line);
+}
+
+.seq-number {
+  margin-top: 2px;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Set off the way the mixer sets off its main bus, but hugging its three
+   knobs rather than stretching: the mixer's master strip fills its height
+   with a meter, and there is nothing here that wants that room. */
+.seq-controls {
+  display: flex;
+  align-items: flex-end;
+  align-self: center;
+  gap: 12px;
+  margin-left: 10px;
+  padding: 8px 10px 6px;
+  border-radius: 3px;
+  background: rgb(var(--accent-rgb) / 0.07);
+  box-shadow: 0 0 0 1px rgb(var(--accent-rgb) / 0.16) inset;
+}
+
+/* --- sheets, over the rack ------------------------------------------ */
+
+/* Dark enough that the rack reads as out of reach, not dark enough to hide
+   what choosing something is about to replace. */
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 0.55);
+}
+
+.sheet {
+  display: flex;
+  flex-direction: column;
+  width: min(680px, 100%);
+  max-height: min(720px, 100%);
+  background: var(--unit-top);
+  border: 1px solid var(--panel-edge);
+  border-radius: 5px;
+  box-shadow: 0 24px 60px rgb(0 0 0 / 0.55), 0 0 0 1px var(--sunken) inset;
+}
+
+.sheet-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.sheet-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.sheet-note {
+  margin: 6px 0 0;
+  max-width: 62ch;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-faint);
+}
+
+.sheet-close {
+  flex: none;
+  margin-left: auto;
+  font: inherit;
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 7px;
+  color: var(--ink-dim);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.sheet-close:hover,
+.sheet-close:focus-visible {
+  color: var(--ink);
+  border-color: var(--rule);
+  outline: none;
+}
+
+.sheet-foot {
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 10px 18px;
+  font-size: 11px;
+  color: var(--ink-faint);
+  border-top: 1px solid var(--hairline);
+}
+
+.sheet-keys { white-space: nowrap; }
+
+/* --- the patch library ----------------------------------------------- */
+
+.library {
+  flex: 1;
+  overflow-y: auto;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+}
+
+/* Two columns and two rows: the name and which tutorial it is above, what it
+   sounds like and what it teaches below. The tutorial number is right-aligned
+   so the names stay a column the eye can run down. */
+.library-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 12px;
+  width: 100%;
+  padding: 9px 11px;
+  font: inherit;
+  text-align: left;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+/* One highlight, driven by the same index whether it was reached by the
+   arrows or by the pointer -- two of them disagreeing is how a list ends up
+   loading a rack nobody was looking at. */
+.library-row.at,
+.library-row:focus-visible {
+  background: rgb(var(--accent-rgb) / 0.10);
+  border-color: rgb(var(--accent-rgb) / 0.35);
+  outline: none;
+}
+
+.library-name {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.library-row.at .library-name { color: var(--accent-line); }
+
+.library-tutorial {
+  align-self: center;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.library-description {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-dim);
+}
+
+.library-teaches {
+  grid-column: 1 / -1;
+  margin-top: 1px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink-faint);
+}
+
+.library-teaches::before {
+  content: 'Teaches: ';
+  letter-spacing: 0.04em;
+}
+
+/* --- trigger, on the gate module's panel ---------------------------- */
+
+/* The button and the cap that says which key does the same thing. Stacked so
+   the cap reads as a legend under the control it describes rather than as a
+   second control beside it, which also keeps the pair narrow enough to sit
+   beside Mode and Length on a half-width panel. */
+.trigger-row {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.trigger {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 9px 20px;
+  color: var(--ink);
+  background: linear-gradient(180deg, var(--control-top), var(--control-bottom));
+  border: 1px solid var(--panel-edge);
+  border-radius: 3px;
+  box-shadow: 0 1px 0 var(--control-bevel) inset, 0 2px 4px var(--shadow-raised);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.trigger:active,
+.trigger.latched {
+  color: var(--accent-line);
+  background: linear-gradient(180deg, var(--control-pressed-top), var(--control-pressed-bottom));
+  box-shadow: 0 2px 6px var(--shadow-pressed) inset;
+}
+
+/* Latched holds the button down with nothing on it, which on its own reads as
+   a stuck control rather than a chosen state. The ring is what says it is on
+   deliberately, and it is the only difference from an ordinary press. */
+.trigger.latched {
+  border-color: var(--accent-line);
+}
+
+/* The key cap. Drawn as a legend rather than as a second control: it is read
+   far more often than it is clicked, and a Trigger panel with two things on
+   it that both look pressable does not say which one makes the sound. */
+/* The duplicate screw, alongside the move arrows and the remove cross. */
+.unit-duplicate { font-size: 13px; }
+
+.trigger-cap {
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  min-width: 46px;
+  padding: 2px 7px;
+  color: var(--ink-dim);
+  background: var(--well);
+  border: 1px solid var(--recess-edge);
+  border-radius: 3px;
+  box-shadow: 0 1px 2px var(--recess) inset;
+  cursor: pointer;
+}
+
+.trigger-cap:hover,
+.trigger-cap:focus-visible {
+  color: var(--ink);
+  border-color: var(--rule);
+  outline: none;
+}
+
+/* Never set, so it asks rather than reports. */
+.trigger-cap.unbound {
+  color: var(--ink-faint);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+}
+
+/* Waiting for a key. The rack has handed it the whole keyboard by this point,
+   so it has to be obvious which panel is holding it. */
+.trigger-cap.listening {
+  color: var(--accent-line);
+  border-color: var(--accent-line);
+  background: rgb(var(--accent-rgb) / 0.07);
+}
+
+/* A key the rack keeps for itself. Said in the cap because the alternative is
+   a press that appears to do nothing at all. */
+.trigger-cap.refused {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: transparent;
+}
+
+/* --- rack flip ------------------------------------------------------ */
+
+.rack { position: relative; perspective: 2400px; }
+
+.unit-flip {
+  display: grid;
+  min-width: 0;
+  transform-style: preserve-3d;
+  transition: transform 420ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.unit-flip.flipped { transform: rotateY(180deg); }
+
+/* The unit stays in the rack while it is being dragged, as the gap it will
+   drop into. What follows the pointer is the panel below. */
+.unit-flip.dragging { opacity: 0.35; }
+
+.unit-flip.dragging .unit {
+  border-style: dashed;
+  border-color: var(--accent-line);
+  box-shadow: none;
+}
+
+/* The panel in hand: the unit's own shape and its name, enough to read as
+   the thing you picked up without pretending to be a working panel.
+
+   Named and tinted rather than left blank. A plain translucent rectangle over
+   a rack of panels reads as whichever panel is behind it, and the knobs
+   showing through look like they belong to the thing you are carrying. */
+.rack-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  opacity: 0.88;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.rack-ghost .unit {
+  flex: 1;
+  border-color: var(--accent-line);
+  box-shadow: 0 1px 0 var(--unit-bevel) inset, 0 14px 34px var(--unit-shadow);
+}
+
+.rack-ghost-face {
+  align-items: center;
+  justify-content: center;
+  background: rgb(var(--accent-rgb) / 0.08);
+}
+
+.rack-ghost-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent-line);
+}
+
+/* Held anywhere, not just over the ear it was picked up by. */
+.rack.reordering,
+.rack.reordering .unit-spine,
+.rack-ghost { cursor: grabbing; }
+
+/* Both faces share one grid cell, so a unit is as tall as its taller side
+   and nothing shifts vertically when the rack turns around. Each face then
+   stretches to fill that cell, so a tall module has a tall blank back panel
+   rather than a short one floating above a gap.
+
+   Each unit turns about its own axis rather than the rack turning as one
+   object, so the two halves of a row keep their sides. Strictly a rack turned
+   around would mirror them, but nothing shifting is worth more here than that
+   is: you flip constantly, and the panel you were just looking at should be
+   where you left it. */
+.unit-flip > * {
+  grid-area: 1 / 1;
+  backface-visibility: hidden;
+  display: flex;
+}
+
+.unit-flip > * > .unit { flex: 1; }
+
+.unit-face-back { transform: rotateY(180deg); }
+
+/* Belt and braces alongside backface-visibility: the hidden face must not
+   answer elementFromPoint during a cable drag. */
+.unit-flip:not(.flipped) .unit-face-back { pointer-events: none; }
+.unit-flip.flipped .unit-face-front { pointer-events: none; }
+
+.flip-button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 5px 10px;
+  color: var(--ink-dim);
+  background: var(--control);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.flip-button:hover { color: var(--ink); }
+
+/* --- back panel ----------------------------------------------------- */
+
+/* Unfinished metal: the side of a panel nobody was meant to see. */
+.unit-rear {
+  background: linear-gradient(180deg, var(--rear-top), var(--rear-bottom));
+}
+
+.back-face {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 64px;
+  /* Room for the controls in the corner: the output jacks are pushed to the
+     right edge and would otherwise sit underneath them. */
+  padding-right: 74px;
+}
+
+.jack-group { display: flex; align-items: center; gap: 12px; }
+.jack-group-out { margin-left: auto; }
+
+.jack-group-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.jack-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.jack {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  cursor: crosshair;
+  background: radial-gradient(circle at 35% 30%, var(--jack-hi), var(--jack-lo) 70%);
+  border: 1px solid var(--jack-ring);
+  box-shadow: 0 1px 2px var(--shadow-jack);
+  touch-action: none;
+}
+
+.jack-hole {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--jack-hole);
+  box-shadow: inset 0 1px 2px var(--shadow-hole);
+}
+
+.jack-output { background: radial-gradient(circle at 35% 30%, var(--jack-out-hi), var(--jack-out-lo) 70%); }
+
+.jack.occupied .jack-hole {
+  background: var(--accent-line);
+  box-shadow: 0 0 5px rgb(var(--accent-rgb) / 0.55);
+}
+
+/* Legal destinations light up while a cable is in the air. */
+.jack.candidate {
+  box-shadow: 0 0 0 2px rgb(var(--accent-rgb) / 0.7), 0 0 10px rgb(var(--accent-rgb) / 0.3);
+}
+
+.jack-label {
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+
+/* --- cables --------------------------------------------------------- */
+
+.cables {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.cable-shadow {
+  fill: none;
+  stroke: var(--cable-shadow);
+  stroke-width: 6;
+  stroke-linecap: round;
+}
+
+/* Only the hue is the cable's own -- it comes from the module the cable
+   leaves, and is set on the group as --cable-h. Saturation and lightness
+   belong to the theme, so the same patch reads as deep cord on paper and
+   as lit cord in the dark. */
+.cable-line {
+  fill: none;
+  stroke: hsl(var(--cable-h) var(--cable-s) var(--cable-l));
+  stroke-width: 3.5;
+  stroke-linecap: round;
+}
+
+.cable-end { fill: hsl(var(--cable-h) var(--cable-end-s) var(--cable-end-l)); }
+
+.cable-grip { fill: var(--cable-grip); }
+
+/* The cable under the pointer, ready to be pulled out. */
+.cable.hovered .cable-line { stroke-width: 5; filter: var(--cable-hover); }
+
+.rack.grabbing-cable { cursor: pointer; }
+
+.cable-dragging { pointer-events: none; }
+/* The cable in the air reads a shade apart from the ones already patched. */
+.cable-dragging .cable-line {
+  stroke: hsl(var(--cable-h) var(--cable-drag-s) var(--cable-drag-l));
+  stroke-dasharray: 1 0;
+  opacity: 0.95;
+}
+
+/* --- patch toolbar -------------------------------------------------- */
+
+/* Pushed away from the menus: the bar reads commands, then the document,
+   then the face the rack is showing. */
+.patch-name { margin-left: auto; }
+
+.patch-name {
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  width: 150px;
+  padding: 4px 8px;
+  color: var(--ink);
+  background: var(--field);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+}
+
+.patch-name:focus {
+  outline: none;
+  border-color: var(--accent-line);
+}
+
+.notice {
+  margin: -8px 0 14px;
+  padding: 7px 12px;
+  font-size: 11px;
+  color: var(--accent-line);
+  background: rgb(var(--accent-rgb) / 0.09);
+  border: 1px solid rgb(var(--accent-rgb) / 0.25);
+  border-radius: 3px;
+}
+
+/* --- unit controls -------------------------------------------------- */
+
+.unit-flip > * { position: relative; }
+
+.unit-controls {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  display: flex;
+  gap: 3px;
+  opacity: 0;
+  transition: opacity 120ms;
+}
+
+/* Out of the way until you go looking for them, and only on the back, which
+   is the side you build a rack from. */
+.unit-face-back:hover .unit-controls,
+.unit-controls:focus-within { opacity: 1; }
+
+.unit-controls button {
+  font: inherit;
+  font-size: 9px;
+  line-height: 1;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  color: var(--ink-dim);
+  background: var(--control);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.unit-controls button:hover { color: var(--ink); background: var(--control-hover); }
+
+.unit-controls .unit-remove:hover {
+  color: var(--on-danger);
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+/* Still used by the take list, which has its own way out. */
+.panel-cancel {
+  margin-top: 10px;
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  background: var(--control);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+/* --- the recorder's panels ------------------------------------------- */
+
+.export-panel,
+.take-panel {
+  margin-top: 6px;
+  padding: 12px;
+  background: var(--well);
+  border: 1px solid var(--panel-edge);
+  border-radius: 4px;
+}
+
+/* The same row of knobs the modules use, so the recorder is read and worked
+   the way every other panel is. */
+.export-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 14px;
+}
+
+/* Sits on the knob's baseline, with its caption where a knob's label is. */
+.export-format {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+
+.export-format select {
+  font: inherit;
+  font-size: 11px;
+  padding: 5px 6px;
+  color: var(--ink);
+  background: var(--field);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+}
+
+.export-format select:focus { outline: none; border-color: var(--accent-line); }
+
+.export-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.export-go {
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 8px 20px;
+  color: var(--on-accent);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.export-go:disabled { opacity: 0.55; cursor: default; }
+.export-actions .add-cancel { margin-top: 0; }
+.export-note { font-size: 10px; color: var(--ink-dim); }
+
+/* --- takes ----------------------------------------------------------- */
+
+.take-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.take-title {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.take-link {
+  font: inherit;
+  font-size: 10px;
+  padding: 0;
+  color: var(--ink-dim);
+  background: none;
+  border: 0;
+  border-bottom: 1px dotted var(--rule);
+  cursor: pointer;
+}
+
+.take-link:hover { color: var(--accent-line); border-color: var(--accent-line); }
+
+.take-rows { display: flex; flex-direction: column; gap: 3px; }
+
+.take {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 8px;
+  border-radius: 3px;
+  background: var(--recess-soft);
+  /* Discarded takes stay visible but recede, so the batch still reads as a
+     batch while you work through it. */
+  opacity: 0.45;
+}
+
+.take.kept { opacity: 1; }
+.take.playing { box-shadow: 0 0 0 1px rgb(var(--accent-rgb) / 0.5) inset; }
+
+.take-keep {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.take-keep input { accent-color: var(--accent-line); cursor: pointer; }
+
+.take-number {
+  font-size: 10px;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.take-wave {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.waveform { display: block; width: 100%; height: 32px; }
+.waveform path { fill: var(--wave); }
+.waveform-axis { stroke: var(--wave-axis); stroke-width: 1; vector-effect: non-scaling-stroke; }
+
+.take.kept .waveform path { fill: var(--wave-kept); }
+.take.playing .waveform path { fill: var(--accent-line); }
+
+.take-meta {
+  font-size: 9px;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.take-panel { margin-top: 0; }
+
+/* --- oscillator panel ------------------------------------------------ */
+
+.osc-face {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+
+.osc-row {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.osc-row .controls { flex: 1; }
+
+.osc-env {
+  padding: 10px 12px 12px;
+  border-radius: 4px;
+  background: var(--recess);
+  box-shadow: 0 0 0 1px var(--recess-edge) inset;
+}
+
+.osc-env-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.section-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.osc-env-note { font-size: 10px; color: var(--ink-faint); }
+
+.env-graph {
+  display: block;
+  width: 100%;
+  height: 92px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, var(--screen-top), var(--screen-bottom));
+  box-shadow: 0 0 0 1px var(--screen-edge) inset;
+}
+
+.env-line {
+  fill: none;
+  stroke: var(--accent-line);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+/* Stage boundaries, readable but never competing with the curve. */
+.env-mark { stroke: var(--env-mark); stroke-width: 1; }
+
+.osc-env-knobs { margin-top: 10px; align-items: flex-start; }
+
+/* Env Amt is the one that decides whether any of this is audible, so it sits
+   apart from the six stage knobs. */
+.osc-amount {
+  margin-left: 6px;
+  padding-left: 14px;
+  border-left: 1px solid var(--hairline);
+}
+
+/* --- scope ---------------------------------------------------------- */
+
+.scope-face {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+
+.scope-screen-frame {
+  position: relative;
+  padding: 8px;
+  border-radius: 4px;
+  background: var(--recess);
+  box-shadow: 0 0 0 1px var(--recess-edge) inset;
+}
+
+/* The canvas cannot read a CSS variable itself, so the palette is declared
+   here and the component reads it off the element -- once per theme, since
+   a repaint after a theme change has to pick up the new values. */
+.scope-screen {
+  display: block;
+  width: 100%;
+  height: 128px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, var(--screen-top), var(--screen-bottom));
+  box-shadow: 0 0 0 1px var(--screen-edge) inset;
+  --scope-line: var(--accent-line);
+  --scope-grid: var(--scope-grid-c);
+  --scope-axis: var(--scope-axis-c);
+}
+
+/* Sits over the trace, which reaches the bottom corners on a spectrum, so
+   it needs a backdrop of its own to stay readable. */
+.scope-legend {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  padding: 2px 5px;
+  border-radius: 2px;
+  background: var(--legend-bg);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--ink-dim);
+  pointer-events: none;
+}
+
+/* --- recorder panel -------------------------------------------------- */
+
+.rec-face {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* The render controls are part of a panel now rather than a card floating
+   under the rack, so they lose the card and become a recessed section of the
+   unit, the way the oscillator's envelope is. */
+.rec-face .export-panel,
+.rec-face .take-panel {
+  margin: 0;
+  border: 0;
+  border-radius: 4px;
+  background: var(--recess);
+  box-shadow: 0 0 0 1px var(--recess-edge) inset;
+}
+
+/* Waveforms have a whole panel's width to spread into here, which is most of
+   the reason the recorder is better off in the rack. */
+.rec-face .take-rows { max-height: none; }
+
+/* --- keyboard panel --------------------------------------------------
+   The keys are laid out the way a keyboard is: the naturals share the width
+   between them, and the sharps are placed on the seams between naturals and
+   drawn over the top. One custom property carries how many naturals there
+   are, so the arithmetic stays in CSS and the markup just says which seam
+   each sharp sits on.
+-------------------------------------------------------------------- */
+
+.keys-face {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 20px;
+}
+
+.keys-board {
+  --seam: calc(100% / var(--naturals));
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  height: 96px;
+  padding: 0;
+  border: 1px solid var(--panel-edge);
+  border-radius: 3px;
+  background: var(--sunken);
+  /* A drag across the keys is a glissando, not a text selection. */
+  touch-action: none;
+  overflow: hidden;
+}
+
+.keys-key {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-right: 1px solid var(--panel-edge);
+  border-radius: 0 0 2px 2px;
+  background: var(--key-white);
+  background: linear-gradient(180deg, var(--key-white), color-mix(in srgb, var(--key-white) 88%, var(--sunken)));
+  cursor: pointer;
+  touch-action: none;
+}
+
+.keys-key:last-of-type { border-right: 0; }
+
+.keys-key.sharp {
+  position: absolute;
+  top: 0;
+  z-index: 2;
+  width: calc(var(--seam) * 0.62);
+  left: calc(var(--seam) * var(--at) - var(--seam) * 0.31);
+  height: 60%;
+  flex: none;
+  border: 1px solid var(--sunken);
+  border-radius: 0 0 2px 2px;
+  background: var(--key-black);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--key-black) 82%, var(--key-white)), var(--key-black));
+  box-shadow: 0 2px 3px var(--shadow-jack);
+}
+
+/* The key the Pitch jack is currently putting out, which is not always the
+   one under your finger: the spacebar and a render play the last one pressed. */
+.keys-key.held {
+  background: var(--accent);
+  background: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 80%, var(--sunken)));
+}
+
+.keys-key:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -2px; }
+
+.keys-controls {
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+}
+
+.keys-octave, .keys-readout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.keys-octave {
+  display: grid;
+  grid-template-columns: repeat(3, auto);
+  align-items: center;
+  gap: 4px;
+}
+
+.keys-octave .knob-label,
+.keys-readout .knob-label { grid-column: 1 / -1; }
+
+.keys-octave button {
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  width: 24px;
+  height: 24px;
+  color: var(--ink-dim);
+  background: var(--control);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.keys-octave button:hover { color: var(--accent-line); }
+
+.keys-octave-value {
+  min-width: 26px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.keys-note {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--accent-line);
+}
+
+.keys-pitch {
+  font-size: 10px;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}

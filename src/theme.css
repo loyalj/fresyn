@@ -1,0 +1,1053 @@
+/* --- palettes --------------------------------------------------------
+   Appearance has two axes: a theme (the family of colours) and a mode
+   (dark or light). Both are attributes on <html>, set before React mounts
+   so the rack never flashes the wrong palette on load.
+
+   Every combination declares the whole set rather than patching the block
+   above it. These themes differ in hue, not only in lightness, and a
+   partial override is how a green rack ends up with one grey knob.
+
+   Names say what a part is, not what colour it happens to be: --spine-top
+   survives a theme that makes the rack ears sage, where --grey-dark would
+   have become a lie.
+-------------------------------------------------------------------- */
+
+/* --- standard, dark: the original rack ------------------------------ */
+:root,
+:root[data-theme="standard"][data-mode="dark"] {
+  color-scheme: dark;
+
+  --bg: #101115;
+  --panel: #23252b;
+  --panel-edge: #15161a;
+  --hairline: #2c2e35;
+  --hairline-dash: #34363e;
+  --rule: #45474f;
+
+  /* Against the panel: --ink-dim is about 7:1 and --ink-faint about 5:1.
+     The old values were 4.4:1 and 2:1, which at 8px read as texture. */
+  --ink: #e2e0d9;
+  --ink-dim: #b6b4ac;
+  --ink-faint: #93918a;
+
+  /* --accent is the lamp: arcs, LEDs, a lit jack, a large filled button.
+     --accent-line is the same colour where it has to hold up as a stroke
+     or as text. On a dark rack the two are one; on a light one they part,
+     because an amber that glows on black is unreadable on paper. */
+  --accent: #f0a641;
+  --accent-line: #f0a641;
+  --accent-rgb: 240 166 65;
+  --on-accent: #1a1206;
+  --danger: #d1503a;
+  --on-danger: #0f0803;
+
+  --unit-top: #2a2c33;
+  --unit-bottom: #202228;
+  --unit-bevel: #3a3c44;
+  --unit-shadow: rgb(0 0 0 / 0.45);
+  --spine-top: #1b1c21;
+  --spine-bottom: #2c2e35;
+  --rear-top: #1e2025;
+  --rear-bottom: #191a1e;
+
+  --well: #1a1b20;
+  --recess: rgb(0 0 0 / 0.22);
+  --recess-soft: rgb(0 0 0 / 0.17);
+  --recess-edge: #191a1f;
+  --screen-top: #16181d;
+  --screen-bottom: #101115;
+  --screen-edge: #202228;
+  --legend-bg: rgb(16 17 21 / 0.82);
+
+  --control: #1b1c21;
+  --control-hover: #24262c;
+  --control-top: #34363e;
+  --control-bottom: #24262c;
+  --control-bevel: #43454d;
+  --control-pressed-top: #1e2025;
+  --control-pressed-bottom: #26282e;
+  --shadow-raised: rgb(0 0 0 / 0.4);
+  --shadow-pressed: rgb(0 0 0 / 0.6);
+  --shadow-jack: rgb(0 0 0 / 0.6);
+  --shadow-hole: rgb(0 0 0 / 0.9);
+
+  --field: #16171b;
+  --kbd: #101115;
+  --kbd-edge: #303239;
+  --sunken: #000;
+
+  --knob-track: #131419;
+  --knob-cap: #33353d;
+  --knob-cap-edge: #15161a;
+  --knob-pointer: #e2e0d9;
+  /* Keyboard: a pale surface and a dark one, tinted to the theme. Unlike
+     the ink, these do not swap with the mode -- naturals are the light key
+     in a dark rack too, because that is what a keyboard looks like. */
+  --key-white: #d7d5cd;
+  --key-black: #17181c;
+
+  --jack-hi: #4a4d56;
+  --jack-lo: #26282e;
+  --jack-out-hi: #55505a;
+  --jack-out-lo: #2b2730;
+  --jack-ring: #0c0d10;
+  --jack-hole: #08090b;
+
+  --led-off: #3a2a15;
+  --meter-track: #000;
+  --meter-low: #4ea36b;
+  --meter-high: #d1503a;
+
+  --wave: #4d5159;
+  --wave-kept: #7d8390;
+  --wave-axis: #2a2c33;
+
+  /* Hue comes from the module a cable leaves; the rest of the colour is the
+     theme's, so a pale rack gets deeper cables rather than washed-out ones. */
+  --cable-s: 62%;
+  --cable-l: 52%;
+  --cable-end-s: 55%;
+  --cable-end-l: 38%;
+  --cable-drag-s: 70%;
+  --cable-drag-l: 60%;
+  --cable-grip: #d8d6cf;
+  --cable-shadow: rgb(0 0 0 / 0.5);
+  --cable-hover: brightness(1.3);
+
+  --scope-grid-c: #22242a;
+  --scope-axis-c: #34373f;
+  --env-mark: #2b2d34;
+}
+
+/* --- standard, light: the same rack under a bench lamp --------------- */
+:root[data-theme="standard"][data-mode="light"] {
+  color-scheme: light;
+
+  --bg: #e5e5e2;
+  --panel: #f2f2ef;
+  --panel-edge: #b7b7b1;
+  --hairline: #c9c9c2;
+  --hairline-dash: #c2c2ba;
+  --rule: #b5b5ae;
+
+  --ink: #23252b;
+  --ink-dim: #4f525a;
+  --ink-faint: #64676f;
+
+  --accent: #e2941f;
+  --accent-line: #9a5f06;
+  --accent-rgb: 226 148 31;
+  --on-accent: #2a1a02;
+  --danger: #bf4128;
+  --on-danger: #fff3ef;
+
+  --unit-top: #fcfcfa;
+  --unit-bottom: #eaeae6;
+  --unit-bevel: #fff;
+  --unit-shadow: rgb(40 42 48 / 0.18);
+  --spine-top: #dcdcd6;
+  --spine-bottom: #eeeeea;
+  --rear-top: #e4e4df;
+  --rear-bottom: #d9d9d3;
+
+  --well: #f0f0ec;
+  --recess: rgb(35 37 43 / 0.07);
+  --recess-soft: rgb(35 37 43 / 0.05);
+  --recess-edge: rgb(35 37 43 / 0.14);
+  --screen-top: #fdfdfb;
+  --screen-bottom: #f0f0ec;
+  --screen-edge: #cfcfc8;
+  --legend-bg: rgb(250 250 247 / 0.85);
+
+  --control: #e6e6e1;
+  --control-hover: #dcdcd6;
+  --control-top: #fdfdfb;
+  --control-bottom: #ebebe6;
+  --control-bevel: #fff;
+  --control-pressed-top: #dededa;
+  --control-pressed-bottom: #e9e9e4;
+  --shadow-raised: rgb(40 42 48 / 0.16);
+  --shadow-pressed: rgb(40 42 48 / 0.28);
+  --shadow-jack: rgb(40 42 48 / 0.35);
+  --shadow-hole: rgb(0 0 0 / 0.55);
+
+  --field: #fff;
+  --kbd: #fff;
+  --kbd-edge: #c9c9c2;
+  --sunken: rgb(40 42 48 / 0.35);
+
+  --knob-track: #d2d2cb;
+  --knob-cap: #f6f6f3;
+  --knob-cap-edge: #aeaea6;
+  --knob-pointer: #3a3c44;
+  /* Keyboard: a pale surface and a dark one, tinted to the theme. Unlike
+     the ink, these do not swap with the mode -- naturals are the light key
+     in a dark rack too, because that is what a keyboard looks like. */
+  --key-white: #fbfbf9;
+  --key-black: #3a3c44;
+
+  --jack-hi: #cfd1d6;
+  --jack-lo: #a7a9b0;
+  --jack-out-hi: #d2ccd4;
+  --jack-out-lo: #aaa3ae;
+  --jack-ring: #6e7078;
+  --jack-hole: #2a2c31;
+
+  --led-off: #d6ccb8;
+  --meter-track: #cfcfc8;
+  --meter-low: #3f8f5c;
+  --meter-high: #c0432f;
+
+  --wave: #a9aab0;
+  --wave-kept: #6f727a;
+  --wave-axis: #d5d5ce;
+
+  --cable-s: 58%;
+  --cable-l: 42%;
+  --cable-end-s: 62%;
+  --cable-end-l: 30%;
+  --cable-drag-s: 66%;
+  --cable-drag-l: 34%;
+  --cable-grip: #3a3c44;
+  --cable-shadow: rgb(40 42 48 / 0.22);
+  --cable-hover: brightness(0.82) saturate(1.2);
+
+  --scope-grid-c: #dcdcd5;
+  --scope-axis-c: #b6b6ae;
+  --env-mark: #d3d3cc;
+}
+
+/* --- fall cafe, light: oat milk, kraft paper and dried leaves --------
+   The neutrals are the coffee -- espresso ink on an oat-foam panel, on
+   kraft behind it -- and the season is carried by three colours that no
+   other theme here uses together: ochre on the lit parts, dried grass on
+   the rack ears, and wine where something wants stopping.
+
+   Deliberately low in chroma. Mesa is the dry, sunny, high-chroma one;
+   this is the same month indoors with the rain on the window.
+-------------------------------------------------------------------- */
+:root[data-theme="fall-cafe"][data-mode="light"] {
+  color-scheme: light;
+
+  --bg: #dbd1c0;
+  --panel: #f1ece1;
+  --panel-edge: #b4a894;
+  --hairline: #ccc2af;
+  --hairline-dash: #c2b7a2;
+  --rule: #beb39e;
+
+  --ink: #322620;
+  --ink-dim: #5a4c3e;
+  --ink-faint: #766757;
+
+  --accent: #c89442;
+  --accent-line: #7e5a14;
+  --accent-rgb: 200 148 66;
+  --on-accent: #2b1d06;
+  /* Wine rather than red: the one colour in the room that is not a bean,
+     a leaf or a paper bag. */
+  --danger: #8c3348;
+  --on-danger: #fff0f2;
+
+  --unit-top: #f8f5ec;
+  --unit-bottom: #ede7da;
+  --unit-bevel: #fffcf5;
+  --unit-shadow: rgb(70 52 44 / 0.16);
+  --spine-top: #c5bb9c;
+  --spine-bottom: #dbd3b9;
+  --rear-top: #e6dfcf;
+  --rear-bottom: #dcd4c1;
+
+  --well: #ebe4d6;
+  --recess: rgb(70 52 44 / 0.07);
+  --recess-soft: rgb(70 52 44 / 0.05);
+  --recess-edge: rgb(70 52 44 / 0.14);
+  --screen-top: #f4f0e6;
+  --screen-bottom: #eae4d6;
+  --screen-edge: #c6baa3;
+  --legend-bg: rgb(244 240 230 / 0.86);
+
+  --control: #e7e0d0;
+  --control-hover: #dbd3c0;
+  --control-top: #f8f4ea;
+  --control-bottom: #ece5d7;
+  --control-bevel: #fffcf5;
+  --control-pressed-top: #e0d8c7;
+  --control-pressed-bottom: #eae3d5;
+  --shadow-raised: rgb(70 52 44 / 0.16);
+  --shadow-pressed: rgb(70 52 44 / 0.28);
+  --shadow-jack: rgb(70 52 44 / 0.32);
+  --shadow-hole: rgb(0 0 0 / 0.5);
+
+  --field: #fbf8f1;
+  --kbd: #fbf8f1;
+  --kbd-edge: #ccc2af;
+  --sunken: rgb(70 52 44 / 0.3);
+
+  --knob-track: #d8cfbb;
+  --knob-cap: #f8f4ea;
+  --knob-cap-edge: #b6a991;
+  --knob-pointer: #322620;
+  /* Keyboard: a pale surface and a dark one, tinted to the theme. Unlike
+     the ink, these do not swap with the mode -- naturals are the light key
+     in a dark rack too, because that is what a keyboard looks like. */
+  --key-white: #fbf7ee;
+  --key-black: #46322a;
+
+  --jack-hi: #d4cbb4;
+  --jack-lo: #ada288;
+  --jack-out-hi: #d6c9bc;
+  --jack-out-lo: #ae9f8e;
+  --jack-ring: #766a54;
+  --jack-hole: #2a231b;
+
+  --led-off: #ddcfae;
+  --meter-track: #d8cfbb;
+  /* Moss at the quiet end, wine at the loud one: the year in one bar. */
+  --meter-low: #7e8a5e;
+  --meter-high: #8c3348;
+
+  --wave: #c2b79e;
+  --wave-kept: #8a7a5c;
+  --wave-axis: #d6cdb8;
+
+  --cable-s: 42%;
+  --cable-l: 36%;
+  --cable-end-s: 46%;
+  --cable-end-l: 25%;
+  --cable-drag-s: 48%;
+  --cable-drag-l: 30%;
+  --cable-grip: #322620;
+  --cable-shadow: rgb(70 52 44 / 0.2);
+  --cable-hover: brightness(0.84) saturate(1.25);
+
+  --scope-grid-c: #dcd3be;
+  --scope-axis-c: #b9ad94;
+  --env-mark: #d6cdb8;
+}
+
+/* --- fall cafe, dark: the cafe after closing -------------------------
+   Espresso everywhere the light does not reach, crema where it does, and
+   one lamp the colour of a maple leaf. The rack ears are the plum of the
+   banquette along the wall -- the detail that keeps this from being a
+   brown theme, and the thing the light mode's wine is the daytime of.
+-------------------------------------------------------------------- */
+:root[data-theme="fall-cafe"][data-mode="dark"] {
+  color-scheme: dark;
+
+  --bg: #17120f;
+  --panel: #241c16;
+  --panel-edge: #100c09;
+  --hairline: #342a20;
+  --hairline-dash: #413427;
+  --rule: #4a3b2c;
+
+  --ink: #e9dcc2;
+  --ink-dim: #c0ae90;
+  --ink-faint: #9a8a70;
+
+  --accent: #d8a33f;
+  --accent-line: #d8a33f;
+  --accent-rgb: 216 163 63;
+  --on-accent: #1a1204;
+  --danger: #b04a5e;
+  --on-danger: #fff0f3;
+
+  --unit-top: #2e241c;
+  --unit-bottom: #241c16;
+  --unit-bevel: #453629;
+  --unit-shadow: rgb(0 0 0 / 0.5);
+  --spine-top: #211619;
+  --spine-bottom: #4a2c36;
+  --rear-top: #2a211a;
+  --rear-bottom: #1e1712;
+
+  --well: #1e1712;
+  --recess: rgb(0 0 0 / 0.24);
+  --recess-soft: rgb(0 0 0 / 0.18);
+  --recess-edge: #191410;
+  --screen-top: #1c1611;
+  --screen-bottom: #130f0c;
+  --screen-edge: #2a2119;
+  --legend-bg: rgb(23 18 15 / 0.85);
+
+  --control: #1f1913;
+  --control-hover: #2a2119;
+  --control-top: #382c22;
+  --control-bottom: #251e17;
+  --control-bevel: #4c3b2c;
+  --control-pressed-top: #191411;
+  --control-pressed-bottom: #241d17;
+  --shadow-raised: rgb(0 0 0 / 0.45);
+  --shadow-pressed: rgb(0 0 0 / 0.65);
+  --shadow-jack: rgb(0 0 0 / 0.6);
+  --shadow-hole: rgb(0 0 0 / 0.9);
+
+  --field: #1c1611;
+  --kbd: #130f0c;
+  --kbd-edge: #362a20;
+  --sunken: #000;
+
+  --knob-track: #130f0c;
+  --knob-cap: #322820;
+  --knob-cap-edge: #100c09;
+  --knob-pointer: #e9dcc2;
+  /* Keyboard: a pale surface and a dark one, tinted to the theme. Unlike
+     the ink, these do not swap with the mode -- naturals are the light key
+     in a dark rack too, because that is what a keyboard looks like. */
+  --key-white: #ddd0b6;
+  --key-black: #191210;
+
+  --jack-hi: #584936;
+  --jack-lo: #292019;
+  --jack-out-hi: #63523d;
+  --jack-out-lo: #2d2318;
+  --jack-ring: #0b0806;
+  --jack-hole: #060403;
+
+  --led-off: #3b2a10;
+  --meter-track: #000;
+  --meter-low: #6e7a4a;
+  --meter-high: #b04a5e;
+
+  --wave: #4c3f2e;
+  --wave-kept: #9e8b69;
+  --wave-axis: #292019;
+
+  --cable-s: 52%;
+  --cable-l: 50%;
+  --cable-end-s: 48%;
+  --cable-end-l: 34%;
+  --cable-drag-s: 60%;
+  --cable-drag-l: 58%;
+  --cable-grip: #e9dcc2;
+  --cable-shadow: rgb(0 0 0 / 0.55);
+  --cable-hover: brightness(1.3);
+
+  --scope-grid-c: #221a14;
+  --scope-axis-c: #3b2e22;
+  --env-mark: #2c2319;
+}
+
+/* --- neon vice, dark: a wet street at 2am --------------------------- */
+:root[data-theme="neon-vice"][data-mode="dark"] {
+  color-scheme: dark;
+
+  --bg: #1a0129;
+  --panel: #2e0249;
+  --panel-edge: #16012a;
+  --hairline: #3d0761;
+  --hairline-dash: #4a0a74;
+  --rule: #570a57;
+
+  --ink: #f0e3fa;
+  --ink-dim: #b7a0cc;
+  --ink-faint: #9e82b8;
+
+  /* --accent is the deepest pink white still reads on, because the filled
+     buttons are lit tubes with white lettering. The full hot pink stays on
+     everything that only glows: arcs, LEDs, a plugged jack, and every wash
+     mixed from --accent-rgb. */
+  --accent: #ce05a6;
+  --accent-line: #f806cc;
+  --accent-rgb: 248 6 204;
+  --on-accent: #fff0fb;
+  --danger: #ff5252;
+  --on-danger: #2a0008;
+
+  --unit-top: #3a0659;
+  --unit-bottom: #2e0249;
+  --unit-bevel: #5c1785;
+  --unit-shadow: rgb(0 0 0 / 0.55);
+  /* The rack ears take the plum, which is the one core colour with no job
+     on a panel: too dark to read on, too saturated to fill a face with. */
+  --spine-top: #260340;
+  --spine-bottom: #570a57;
+  --rear-top: #2a0442;
+  --rear-bottom: #1f0331;
+
+  --well: #240339;
+  --recess: rgb(0 0 0 / 0.26);
+  --recess-soft: rgb(0 0 0 / 0.2);
+  --recess-edge: #1b0230;
+  --screen-top: #1c0230;
+  --screen-bottom: #130120;
+  --screen-edge: #2f0650;
+  --legend-bg: rgb(26 1 41 / 0.85);
+
+  --control: #2a0442;
+  --control-hover: #380858;
+  --control-top: #43096a;
+  --control-bottom: #2e0249;
+  --control-bevel: #6a1a95;
+  --control-pressed-top: #1f0333;
+  --control-pressed-bottom: #2a0442;
+  --shadow-raised: rgb(0 0 0 / 0.5);
+  --shadow-pressed: rgb(0 0 0 / 0.7);
+  --shadow-jack: rgb(0 0 0 / 0.65);
+  --shadow-hole: rgb(0 0 0 / 0.9);
+
+  --field: #1c0230;
+  --kbd: #150124;
+  --kbd-edge: #3e0763;
+  --sunken: #000;
+
+  --knob-track: #170126;
+  --knob-cap: #3e0763;
+  --knob-cap-edge: #16012a;
+  --knob-pointer: #f0e3fa;
+  /* Keyboard: a pale surface and a dark one, tinted to the theme. Unlike
+     the ink, these do not swap with the mode -- naturals are the light key
+     in a dark rack too, because that is what a keyboard looks like. */
+  --key-white: #e6d8f2;
+  --key-black: #1b0330;
+
+  --jack-hi: #6e4a8e;
+  --jack-lo: #33064f;
+  --jack-out-hi: #7b4c97;
+  --jack-out-lo: #3a0959;
+  --jack-ring: #12011e;
+  --jack-hole: #0b0113;
+
+  --led-off: #3e0733;
+  --meter-track: #000;
+  --meter-low: #6d4aff;
+  --meter-high: #ff5252;
+
+  --wave: #5b2a72;
+  --wave-kept: #a06bc0;
+  --wave-axis: #33064f;
+
+  --cable-s: 70%;
+  --cable-l: 58%;
+  --cable-end-s: 62%;
+  --cable-end-l: 40%;
+  --cable-drag-s: 78%;
+  --cable-drag-l: 66%;
+  --cable-grip: #f0e3fa;
+  --cable-shadow: rgb(0 0 0 / 0.55);
+  --cable-hover: brightness(1.3);
+
+  --scope-grid-c: #2a0442;
+  --scope-axis-c: #4a0d70;
+  --env-mark: #3a0659;
+}
+
+/* --- neon vice, light: pink and blue tubes in daylight ---------------
+   The two tubes keep their jobs: pink is everything that is lit -- arcs,
+   LEDs, a plugged jack, the trace on a screen -- and blue is everything
+   the pink is mounted on. A rack in one hue would just be a lilac rack.
+-------------------------------------------------------------------- */
+:root[data-theme="neon-vice"][data-mode="light"] {
+  color-scheme: light;
+
+  --bg: #c9e8f5;
+  --panel: #edeef7;
+  --panel-edge: #aeb0d6;
+  --hairline: #c9cbe4;
+  --hairline-dash: #bfc1dc;
+  --rule: #b4b6d4;
+
+  --ink: #241f4d;
+  --ink-dim: #504a80;
+  --ink-faint: #655f99;
+
+  /* The filled buttons are lit tubes with white lettering, so --accent is
+     the deepest pink white still reads on. The bright one stays alive in
+     --accent-rgb, which is what every glow and wash is mixed from. */
+  --accent: #ce1486;
+  --accent-line: #c21580;
+  --accent-rgb: 232 54 159;
+  --on-accent: #fff4fb;
+  /* Far enough round the wheel from the pink to still mean stop. */
+  --danger: #d61a28;
+  --on-danger: #fff0f1;
+
+  /* Each panel runs pink at the top into lilac at the bottom, which is as
+     much of a sign's wash as a flat face can hold. */
+  --unit-top: #fcf6fb;
+  --unit-bottom: #eaecf7;
+  --unit-bevel: #fff;
+  --unit-shadow: rgb(60 56 110 / 0.16);
+  --spine-top: #c2bfff;
+  --spine-bottom: #deddff;
+  --rear-top: #e0e6f2;
+  --rear-bottom: #d5dcec;
+
+  --well: #e9e7f4;
+  --recess: rgb(60 56 110 / 0.07);
+  --recess-soft: rgb(60 56 110 / 0.05);
+  --recess-edge: rgb(60 56 110 / 0.14);
+  /* The pale cyan is a screen colour before it is anything else, and a
+     pink trace on it is the whole theme in one panel. */
+  --screen-top: #f2fdff;
+  --screen-bottom: #e4fbff;
+  --screen-edge: #a9d8e4;
+  --legend-bg: rgb(244 253 255 / 0.86);
+
+  --control: #e4e2f2;
+  --control-hover: #d8d5ec;
+  --control-top: #fcf8fd;
+  --control-bottom: #eaeaf6;
+  --control-bevel: #fff;
+  --control-pressed-top: #dcdcf0;
+  --control-pressed-bottom: #e8e8f5;
+  --shadow-raised: rgb(60 56 110 / 0.16);
+  --shadow-pressed: rgb(60 56 110 / 0.28);
+  --shadow-jack: rgb(60 56 110 / 0.32);
+  --shadow-hole: rgb(20 15 50 / 0.5);
+
+  --field: #fff;
+  --kbd: #fff;
+  --kbd-edge: #c3c5e0;
+  --sunken: rgb(60 56 110 / 0.32);
+
+  --knob-track: #d2d4ea;
+  --knob-cap: #fbf8fd;
+  --knob-cap-edge: #aeaecd;
+  --knob-pointer: #241f4d;
+  /* Keyboard: a pale surface and a dark one, tinted to the theme. Unlike
+     the ink, these do not swap with the mode -- naturals are the light key
+     in a dark rack too, because that is what a keyboard looks like. */
+  --key-white: #fdfbff;
+  --key-black: #2d2760;
+
+  /* Inputs in blue chrome, outputs in rose: the split is decorative on the
+     front and quietly useful on the back. */
+  --jack-hi: #cfd2ec;
+  --jack-lo: #a3a6ce;
+  --jack-out-hi: #e6c9e2;
+  --jack-out-lo: #bb96b4;
+  --jack-ring: #6c6e9b;
+  --jack-hole: #272247;
+
+  --led-off: #efc9df;
+  --meter-track: #cfd2ea;
+  --meter-low: #00a3c4;
+  --meter-high: #d61a28;
+
+  --wave: #a9acd0;
+  --wave-kept: #6e68a0;
+  --wave-axis: #d3d5ea;
+
+  --cable-s: 62%;
+  --cable-l: 45%;
+  --cable-end-s: 66%;
+  --cable-end-l: 32%;
+  --cable-drag-s: 70%;
+  --cable-drag-l: 38%;
+  --cable-grip: #241f4d;
+  --cable-shadow: rgb(60 56 110 / 0.22);
+  --cable-hover: brightness(0.82) saturate(1.2);
+
+  --scope-grid-c: #c8e9f2;
+  --scope-axis-c: #93c4d4;
+  --env-mark: #d6c6e0;
+}
+
+/* --- mesa, light: sun-struck adobe, clay and sage ------------------- */
+:root[data-theme="mesa"][data-mode="light"] {
+  color-scheme: light;
+
+  --bg: #e8cdb0;
+  --panel: #fbebd6;
+  --panel-edge: #c4a481;
+  --hairline: #d6be9e;
+  --hairline-dash: #ccb392;
+  --rule: #c8af8d;
+
+  --ink: #2f211c;
+  --ink-dim: #5e4436;
+  --ink-faint: #7a5c48;
+
+  /* The clay fills, the terracotta draws: the pale one cannot hold a 2px
+     stroke on adobe, and the dark one makes a muddy button. */
+  --accent: #e8845a;
+  --accent-line: #a4402a;
+  --accent-rgb: 232 132 90;
+  --on-accent: #35190c;
+  /* Deep enough to still read as stop beside a rack this warm. */
+  --danger: #8e2016;
+  --on-danger: #fff0ec;
+
+  --unit-top: #fff5e7;
+  --unit-bottom: #f8e9d2;
+  --unit-bevel: #fff;
+  --unit-shadow: rgb(70 40 30 / 0.16);
+  --spine-top: #ddbe97;
+  --spine-bottom: #edd6b4;
+  --rear-top: #f2e2c8;
+  --rear-bottom: #e9d6b8;
+
+  --well: #f5e7cf;
+  --recess: rgb(70 40 30 / 0.07);
+  --recess-soft: rgb(70 40 30 / 0.05);
+  --recess-edge: rgb(70 40 30 / 0.13);
+  --screen-top: #fbf2df;
+  --screen-bottom: #f2e7ce;
+  --screen-edge: #cdba95;
+  --legend-bg: rgb(251 242 223 / 0.86);
+
+  --control: #f0e1c8;
+  --control-hover: #e5d3b6;
+  --control-top: #fff7ea;
+  --control-bottom: #f6e8d1;
+  --control-bevel: #fff;
+  --control-pressed-top: #eadac0;
+  --control-pressed-bottom: #f3e5ce;
+  --shadow-raised: rgb(70 40 30 / 0.16);
+  --shadow-pressed: rgb(70 40 30 / 0.28);
+  --shadow-jack: rgb(70 40 30 / 0.32);
+  --shadow-hole: rgb(0 0 0 / 0.5);
+
+  --field: #fffaf0;
+  --kbd: #fffaf0;
+  --kbd-edge: #d6be9e;
+  --sunken: rgb(70 40 30 / 0.3);
+
+  --knob-track: #e2d0af;
+  --knob-cap: #fff7ea;
+  --knob-cap-edge: #c4af8b;
+  --knob-pointer: #2f211c;
+  /* Keyboard: a pale surface and a dark one, tinted to the theme. Unlike
+     the ink, these do not swap with the mode -- naturals are the light key
+     in a dark rack too, because that is what a keyboard looks like. */
+  --key-white: #fff6e7;
+  --key-black: #3b2820;
+
+  --jack-hi: #e2d1b0;
+  --jack-lo: #baa37e;
+  --jack-out-hi: #e5cfb6;
+  --jack-out-lo: #bd9f86;
+  --jack-ring: #80674f;
+  --jack-hole: #2c2118;
+
+  --led-off: #efcbae;
+  --meter-track: #e2d0af;
+  /* The sage is the one cool thing on the mesa, and it is what "safe"
+     looks like here. */
+  --meter-low: #9dab86;
+  --meter-high: #8e2016;
+
+  --wave: #ccbc98;
+  --wave-kept: #8e9c79;
+  --wave-axis: #e2d6b7;
+
+  --cable-s: 50%;
+  --cable-l: 38%;
+  --cable-end-s: 54%;
+  --cable-end-l: 26%;
+  --cable-drag-s: 57%;
+  --cable-drag-l: 32%;
+  --cable-grip: #2f211c;
+  --cable-shadow: rgb(70 40 30 / 0.2);
+  --cable-hover: brightness(0.84) saturate(1.25);
+
+  --scope-grid-c: #e2d5b4;
+  --scope-axis-c: #bfac88;
+  --env-mark: #dfd2b0;
+}
+
+/* --- mesa, dark: the same ground, red rock after sundown ------------ */
+:root[data-theme="mesa"][data-mode="dark"] {
+  color-scheme: dark;
+
+  --bg: #201513;
+  --panel: #31211e;
+  --panel-edge: #170f0d;
+  --hairline: #47302b;
+  --hairline-dash: #543a33;
+  --rule: #5c4038;
+
+  --ink: #e0c097;
+  --ink-dim: #cfad85;
+  --ink-faint: #c2a17c;
+
+  --accent: #d2552f;
+  --accent-line: #ed8450;
+  --accent-rgb: 237 132 80;
+  --danger: #a32b22;
+  --on-accent: #180d08;
+  --on-danger: #ffeeea;
+
+  --unit-top: #3c2924;
+  --unit-bottom: #31211e;
+  --unit-bevel: #5a3e33;
+  --unit-shadow: rgb(0 0 0 / 0.5);
+  --spine-top: #251816;
+  --spine-bottom: #66392a;
+  --rear-top: #352321;
+  --rear-bottom: #281a18;
+
+  --well: #2a1c19;
+  --recess: rgb(0 0 0 / 0.24);
+  --recess-soft: rgb(0 0 0 / 0.18);
+  --recess-edge: #201513;
+  --screen-top: #281a18;
+  --screen-bottom: #1d1312;
+  --screen-edge: #3a2723;
+  --legend-bg: rgb(32 21 19 / 0.85);
+
+  --control: #2b1d1a;
+  --control-hover: #382622;
+  --control-top: #4a332c;
+  --control-bottom: #30211e;
+  --control-bevel: #5f4137;
+  --control-pressed-top: #221715;
+  --control-pressed-bottom: #2e201d;
+  --shadow-raised: rgb(0 0 0 / 0.45);
+  --shadow-pressed: rgb(0 0 0 / 0.65);
+  --shadow-jack: rgb(0 0 0 / 0.6);
+  --shadow-hole: rgb(0 0 0 / 0.9);
+
+  --field: #231715;
+  --kbd: #1c1211;
+  --kbd-edge: #47302b;
+  --sunken: #000;
+
+  --knob-track: #1d1312;
+  --knob-cap: #422d28;
+  --knob-cap-edge: #170f0d;
+  --knob-pointer: #e0c097;
+  /* Keyboard: a pale surface and a dark one, tinted to the theme. Unlike
+     the ink, these do not swap with the mode -- naturals are the light key
+     in a dark rack too, because that is what a keyboard looks like. */
+  --key-white: #d9bd97;
+  --key-black: #1b1210;
+
+  --jack-hi: #6a4c41;
+  --jack-lo: #2e201d;
+  --jack-out-hi: #755447;
+  --jack-out-lo: #33231f;
+  --jack-ring: #100a09;
+  --jack-hole: #090504;
+
+  --led-off: #43210f;
+  --meter-track: #000;
+  --meter-low: #7c8450;
+  --meter-high: #c0392b;
+
+  --wave: #66463e;
+  --wave-kept: #a88a63;
+  --wave-axis: #2e201d;
+
+  --cable-s: 60%;
+  --cable-l: 54%;
+  --cable-end-s: 54%;
+  --cable-end-l: 36%;
+  --cable-drag-s: 68%;
+  --cable-drag-l: 62%;
+  --cable-grip: #e0c097;
+  --cable-shadow: rgb(0 0 0 / 0.55);
+  --cable-hover: brightness(1.3);
+
+  --scope-grid-c: #2e201d;
+  --scope-axis-c: #4a332c;
+  --env-mark: #3a2723;
+}
+
+/* --- terminal 80s, dark: P1 phosphor ---------------------------------
+   The green tube. Everything that glows is the one phosphor colour, and
+   everything that does not is the inside of a dark room -- which is most
+   of why a CRT looked the way it did.
+-------------------------------------------------------------------- */
+:root[data-theme="terminal-80s"][data-mode="dark"] {
+  color-scheme: dark;
+
+  --bg: #05100a;
+  --panel: #0a1a10;
+  --panel-edge: #030a06;
+  --hairline: #17381f;
+  --hairline-dash: #1e4a2a;
+  --rule: #255c33;
+
+  --ink: #a8ffc0;
+  --ink-dim: #4eb866;
+  --ink-faint: #44a058;
+
+  --accent: #33ff66;
+  --accent-line: #33ff66;
+  --accent-rgb: 51 255 102;
+  --on-accent: #031a08;
+  /* The other thing an 80s console could do was go red at you. */
+  --danger: #ff5533;
+  --on-danger: #1a0703;
+
+  --unit-top: #0e2416;
+  --unit-bottom: #091b10;
+  --unit-bevel: #1c4a2c;
+  --unit-shadow: rgb(0 0 0 / 0.6);
+  --spine-top: #061209;
+  --spine-bottom: #123a20;
+  --rear-top: #0b1d12;
+  --rear-bottom: #071409;
+
+  --well: #08170e;
+  --recess: rgb(0 0 0 / 0.3);
+  --recess-soft: rgb(0 0 0 / 0.22);
+  --recess-edge: #0a1f12;
+  --screen-top: #06150c;
+  --screen-bottom: #030d07;
+  --screen-edge: #12331c;
+  --legend-bg: rgb(5 16 10 / 0.85);
+
+  --control: #0b2011;
+  --control-hover: #12301b;
+  --control-top: #163a21;
+  --control-bottom: #0c2413;
+  --control-bevel: #24572f;
+  --control-pressed-top: #071409;
+  --control-pressed-bottom: #0e2615;
+  --shadow-raised: rgb(0 0 0 / 0.5);
+  --shadow-pressed: rgb(0 0 0 / 0.7);
+  --shadow-jack: rgb(0 0 0 / 0.65);
+  --shadow-hole: rgb(0 0 0 / 0.9);
+
+  --field: #06150c;
+  --kbd: #030d07;
+  --kbd-edge: #1c4629;
+  --sunken: #000;
+
+  --knob-track: #061209;
+  --knob-cap: #143019;
+  --knob-cap-edge: #030a06;
+  --knob-pointer: #a8ffc0;
+  /* Keyboard: a pale surface and a dark one, tinted to the theme. Unlike
+     the ink, these do not swap with the mode -- naturals are the light key
+     in a dark rack too, because that is what a keyboard looks like. */
+  --key-white: #8fe3a4;
+  --key-black: #04140a;
+
+  --jack-hi: #2e6b3e;
+  --jack-lo: #0c2413;
+  --jack-out-hi: #357a47;
+  --jack-out-lo: #0f2b17;
+  --jack-ring: #030905;
+  --jack-hole: #010402;
+
+  --led-off: #113d1e;
+  --meter-track: #000;
+  --meter-low: #1e9e4a;
+  --meter-high: #ff5533;
+
+  --wave: #245c33;
+  --wave-kept: #4eb866;
+  --wave-axis: #0f2a18;
+
+  --cable-s: 70%;
+  --cable-l: 55%;
+  --cable-end-s: 60%;
+  --cable-end-l: 38%;
+  --cable-drag-s: 80%;
+  --cable-drag-l: 66%;
+  --cable-grip: #a8ffc0;
+  --cable-shadow: rgb(0 0 0 / 0.6);
+  --cable-hover: brightness(1.35);
+
+  --scope-grid-c: #0f2a18;
+  --scope-axis-c: #1e5230;
+  --env-mark: #16381f;
+}
+
+/* --- terminal 80s, light: the amber tube's other half ----------------
+   Amber was the green tube's rival, and it is what this theme turns into
+   with the lights on: sepia paper with an electric orange running through
+   it. A true amber CRT is a dark screen, which the dark mode above is.
+-------------------------------------------------------------------- */
+:root[data-theme="terminal-80s"][data-mode="light"] {
+  color-scheme: light;
+
+  --bg: #dfc496;
+  --panel: #f2dfb6;
+  --panel-edge: #bc9c64;
+  --hairline: #d2b584;
+  --hairline-dash: #c8aa77;
+  --rule: #c3a470;
+
+  --ink: #351c02;
+  --ink-dim: #633b07;
+  --ink-faint: #85581a;
+
+  --accent: #ff7a18;
+  --accent-line: #b04400;
+  --accent-rgb: 255 122 24;
+  --on-accent: #2a1000;
+  --danger: #9e1b0e;
+  --on-danger: #ffefea;
+
+  --unit-top: #fbedcc;
+  --unit-bottom: #f0dcb1;
+  --unit-bevel: #fff8e4;
+  --unit-shadow: rgb(80 45 5 / 0.18);
+  --spine-top: #e2c793;
+  --spine-bottom: #efdcb4;
+  --rear-top: #eddcb2;
+  --rear-bottom: #e3cf9f;
+
+  --well: #eedbb0;
+  --recess: rgb(80 45 5 / 0.09);
+  --recess-soft: rgb(80 45 5 / 0.06);
+  --recess-edge: rgb(80 45 5 / 0.17);
+  --screen-top: #fbefd0;
+  --screen-bottom: #f3e2b8;
+  --screen-edge: #c9aa72;
+  --legend-bg: rgb(251 239 208 / 0.86);
+
+  --control: #ebd7ab;
+  --control-hover: #e0c998;
+  --control-top: #fcf0d6;
+  --control-bottom: #f2deb6;
+  --control-bevel: #fff8e4;
+  --control-pressed-top: #e5d0a2;
+  --control-pressed-bottom: #eedcb2;
+  --shadow-raised: rgb(80 45 5 / 0.18);
+  --shadow-pressed: rgb(80 45 5 / 0.3);
+  --shadow-jack: rgb(80 45 5 / 0.34);
+  --shadow-hole: rgb(0 0 0 / 0.5);
+
+  --field: #fff7e4;
+  --kbd: #fff7e4;
+  --kbd-edge: #d2b584;
+  --sunken: rgb(80 45 5 / 0.34);
+
+  --knob-track: #dcc493;
+  --knob-cap: #fcf0d6;
+  --knob-cap-edge: #bba068;
+  --knob-pointer: #351c02;
+  /* Keyboard: a pale surface and a dark one, tinted to the theme. Unlike
+     the ink, these do not swap with the mode -- naturals are the light key
+     in a dark rack too, because that is what a keyboard looks like. */
+  --key-white: #fdf3dc;
+  --key-black: #40250a;
+
+  --jack-hi: #dcc38f;
+  --jack-lo: #b29a62;
+  --jack-out-hi: #e0c08a;
+  --jack-out-lo: #b6975e;
+  --jack-ring: #77602f;
+  --jack-hole: #2b1d06;
+
+  --led-off: #e7c894;
+  --meter-track: #dcc493;
+  /* The green tube is still in the building. */
+  --meter-low: #6e8a3a;
+  --meter-high: #9e1b0e;
+
+  --wave: #c7af7d;
+  --wave-kept: #85581a;
+  --wave-axis: #dcc79a;
+
+  --cable-s: 62%;
+  --cable-l: 38%;
+  --cable-end-s: 66%;
+  --cable-end-l: 26%;
+  --cable-drag-s: 70%;
+  --cable-drag-l: 32%;
+  --cable-grip: #351c02;
+  --cable-shadow: rgb(80 45 5 / 0.24);
+  --cable-hover: brightness(0.84) saturate(1.3);
+
+  --scope-grid-c: #e0cc9c;
+  --scope-axis-c: #bfa268;
+  --env-mark: #dcc79a;
+}
