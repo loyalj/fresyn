@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { deletePreset, loadPresets, savePreset, type ModulePreset } from '../patch/myLibrary'
+import { deletePreset, findPreset, loadPresets, savePreset, type ModulePreset } from '../patch/myLibrary'
+import { ConfirmButton, useConfirm } from './ConfirmButton'
 
 interface Props {
   /** The module type, which is what presets are kept per. */
@@ -27,6 +28,10 @@ export function PresetButton({ type, moduleId, current, onApply }: Props) {
   const [presets, setPresets] = useState<ModulePreset[]>([])
   const [name, setName] = useState('')
   const [where, setWhere] = useState({ left: 0, top: 0 })
+  /** Why the last save or delete did not happen, when storage refused it. */
+  const [failed, setFailed] = useState<string | null>(null)
+  /** A save over a preset already there, asked about before it goes ahead. */
+  const replace = useConfirm()
   const button = useRef<HTMLButtonElement>(null)
   const sheet = useRef<HTMLDivElement>(null)
 
@@ -40,6 +45,7 @@ export function PresetButton({ type, moduleId, current, onApply }: Props) {
   useEffect(() => {
     if (!open) return
     setPresets(loadPresets(type))
+    setFailed(null)
     const away = (e: PointerEvent) => {
       if (sheet.current?.contains(e.target as Node) || button.current?.contains(e.target as Node)) return
       setOpen(false)
@@ -48,12 +54,26 @@ export function PresetButton({ type, moduleId, current, onApply }: Props) {
     return () => window.removeEventListener('pointerdown', away, true)
   }, [open, type])
 
+  const trimmed = name.trim()
+  /** The preset a save under this name would overwrite, if any. */
+  const existing = trimmed ? findPreset(type, trimmed) : undefined
+
   const save = () => {
-    const n = name.trim()
-    if (!n) return
-    if (savePreset(type, n, current())) {
+    if (!trimmed) return
+    // Overwriting a preset throws its knobs away for good -- presets are
+    // outside the rack's undo -- so the first press asks, and the second,
+    // by click or by Enter, is the answer.
+    if (existing && !replace.armed) {
+      replace.arm()
+      return
+    }
+    replace.disarm()
+    if (savePreset(type, trimmed, current())) {
       setPresets(loadPresets(type))
       setName('')
+      setFailed(null)
+    } else {
+      setFailed('Could not save: this browser is not letting the page store anything')
     }
   }
 
@@ -100,18 +120,23 @@ export function PresetButton({ type, moduleId, current, onApply }: Props) {
                   >
                     {p.name}
                   </button>
-                  <button
+                  {/* Two presses, as in the library: there is no undo for a
+                      preset, and the × sits right beside the row you meant
+                      to load. */}
+                  <ConfirmButton
                     className="preset-delete"
-                    onClick={() => {
-                      deletePreset(type, p.name)
+                    onConfirm={() => {
+                      if (!deletePreset(type, p.name)) {
+                        setFailed('Could not delete: this browser is not letting the page store anything')
+                      }
                       setPresets(loadPresets(type))
                     }}
+                    ask="Delete?"
                     aria-label={`Delete ${p.name}`}
                     title="Delete this preset"
-                    type="button"
                   >
                     ×
-                  </button>
+                  </ConfirmButton>
                 </li>
               ))}
             </ul>
@@ -124,16 +149,29 @@ export function PresetButton({ type, moduleId, current, onApply }: Props) {
             >
               <input
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => {
+                  setName(e.target.value)
+                  replace.disarm()
+                }}
                 placeholder="Name this setting…"
                 aria-label="Preset name"
                 spellCheck={false}
                 autoFocus
               />
-              <button className="dock-toggle" type="submit" disabled={!name.trim()}>
-                Save
+              <button
+                className={`dock-toggle preset-submit${replace.armed ? ' confirm' : ''}`}
+                type="submit"
+                disabled={!trimmed}
+                title={existing ? `Replace the knobs saved as ${existing.name}` : undefined}
+              >
+                {replace.armed ? 'Replace?' : 'Save'}
               </button>
             </form>
+            {failed && (
+              <div className="preset-failed" role="alert">
+                {failed}
+              </div>
+            )}
           </div>,
           document.body,
         )}

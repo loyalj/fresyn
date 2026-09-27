@@ -34,16 +34,33 @@ export class EqModule extends DspModule {
   private high = new Section()
   private smooth!: Smoothed[]
   private last = new Float64Array(6).fill(NaN)
+  /**
+   * How many times the curve has been redesigned. Nothing reads it in the
+   * app; it is here so a check can see the EQ goes quiet once its knobs have.
+   */
+  tunings = 0
 
   prepare() {
     this.smooth = Array.from({ length: 6 }, (_, i) => new Smoothed(this.params[i], this.ctx.sampleRate))
+    for (let i = 0; i < 6; i++) this.last[i] = this.smooth[i].next()
+    this.tune()
+  }
+
+  /** Every knob where it was turned to, so the curve has stopped changing. */
+  get settled() {
+    for (let i = 0; i < 6; i++) if (!this.smooth[i].settled) return false
+    return true
   }
 
   process(slots: Float32Array) {
     let changed = false
     for (let i = 0; i < 6; i++) {
-      this.smooth[i].set(this.params[i])
-      const v = this.smooth[i].next()
+      const s = this.smooth[i]
+      s.set(this.params[i])
+      // A smoother at rest returns the value it returned last time, which is
+      // already what the sections were designed for.
+      if (s.settled) continue
+      const v = s.next()
       if (v !== this.last[i]) {
         this.last[i] = v
         changed = true
@@ -56,6 +73,7 @@ export class EqModule extends DspModule {
   }
 
   private tune() {
+    this.tunings++
     const sr = this.ctx.sampleRate
     const clampF = (f: number) => Math.min(f, sr * MAX_FRACTION)
     shelf(this.low, sr, clampF(this.last[P_LOW_FREQ]), this.last[P_LOW_GAIN], false)

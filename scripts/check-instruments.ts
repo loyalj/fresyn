@@ -17,6 +17,12 @@
  * Run with: npm run check:instruments
  * Set INSTRUMENT_WAVS to a folder to also write a short demo of each voice.
  */
+// First, before the library, on purpose: the instruments once imported their
+// building blocks back out of the library that lists them, and a program that
+// reached for the instruments before the library threw at load. Imported in
+// this order the bundle evaluates them in this order, so the check below is
+// that regression.
+import { INSTRUMENTS } from '../src/patch/instruments'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { GraphEngine, type EngineEvent } from '../src/dsp/GraphEngine'
@@ -32,6 +38,17 @@ let failures = 0
 function check(name: string, ok: boolean, detail = '') {
   if (!ok) failures++
   console.log(`  ${ok ? 'ok  ' : 'FAIL'}  ${name}${detail ? '  ' + detail : ''}`)
+}
+
+console.log('\nthe instruments load on their own')
+{
+  let built = false
+  try {
+    built = INSTRUMENTS.length > 0 && INSTRUMENTS[0].make().patch.modules.length > 0
+  } catch {
+    built = false
+  }
+  check('importing the instruments before the library works', built)
 }
 
 /** A note, as the roll would hand it over: on, then off, by pitch. */

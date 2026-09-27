@@ -17,8 +17,12 @@ export interface SongEvent {
   frame: number
   track: string
   kind: 'on' | 'off'
-  /** Semitones. Meaningless on an `off`, and on a track with no keyboard. */
-  pitch: number
+  /**
+   * Semitones. Meaningless on a track with no keyboard. Left out of an `off`
+   * to mean every note on the track -- which is what a loop's seam sends, and
+   * not the same thing as a release of pitch zero.
+   */
+  pitch?: number
   velocity: number
 }
 

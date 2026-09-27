@@ -76,7 +76,10 @@ export function disconnectAt(patch: Patch, ref: PortRef): Patch {
 }
 
 export function disconnect(patch: Patch, id: string): Patch {
-  return { ...patch, cables: patch.cables.filter((c) => c.id !== id) }
+  const cables = patch.cables.filter((c) => c.id !== id)
+  // No such cable is no edit: the same patch back, so nothing lands in the
+  // undo history for a click that changed nothing.
+  return cables.length === patch.cables.length ? patch : { ...patch, cables }
 }
 
 /**
@@ -95,6 +98,11 @@ export function setSample(
   moduleId: string,
   sample: { id: string; name: string } | null,
 ): Patch {
+  const at = patch.modules.findIndex((m) => m.id === moduleId)
+  if (at < 0) return patch
+  const had = patch.modules[at].sample
+  // The same file dropped again, or clearing a panel with nothing in it.
+  if (sample ? had?.id === sample.id && had.name === sample.name : !had) return patch
   const modules = patch.modules.map((m) => {
     if (m.id !== moduleId) return m
     if (!sample) {
@@ -235,6 +243,8 @@ export function pasteModules(
 
 /** Switch a module out of the signal path, or back in. */
 export function toggleBypass(patch: Patch, id: string): Patch {
+  const target = patch.modules.find((m) => m.id === id)
+  if (!target || !defOf(target.type).bypass) return patch
   const modules = patch.modules.map((m) => {
     if (m.id !== id || !defOf(m.type).bypass) return m
     if (m.bypass) {
@@ -248,6 +258,8 @@ export function toggleBypass(patch: Patch, id: string): Patch {
 
 /** Give one cable a colour of its own, or none to hand it back to the rack's. */
 export function setCableColor(patch: Patch, id: string, color: number | undefined): Patch {
+  const target = patch.cables.find((c) => c.id === id)
+  if (!target || target.color === color) return patch
   const cables = patch.cables.map((c) => {
     if (c.id !== id) return c
     if (color === undefined) {
@@ -295,6 +307,8 @@ export function reorderModules(patch: Patch, ids: string[]): Patch {
     remaining.delete(id)
   }
   for (const m of patch.modules) if (remaining.has(m.id)) modules.push(m)
+  // A drag let go where it started.
+  if (modules.every((m, i) => m === patch.modules[i])) return patch
   return { ...patch, modules }
 }
 

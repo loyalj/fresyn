@@ -1,4 +1,6 @@
 import { PolyBlepOsc } from '../PolyBlepOsc'
+import { railed } from '../Rail'
+import { Smoothed } from '../Smoothed'
 import { DspModule } from './types'
 
 const P_FREQ = 0
@@ -32,6 +34,12 @@ const OUT_CARRIER = 1
  */
 export class RingModModule extends DspModule {
   private osc = new PolyBlepOsc(this.ctx.sampleRate)
+  /** A crossfade between the dry signal and the product, so smoothed like any gain. */
+  private mix!: Smoothed
+
+  prepare() {
+    this.mix = new Smoothed(this.params[P_MIX], this.ctx.sampleRate)
+  }
 
   process(slots: Float32Array) {
     const dry = slots[this.ins[IN_SIGNAL]]
@@ -46,8 +54,11 @@ export class RingModModule extends DspModule {
     const jack = this.ins[IN_CARRIER]
     const carrier = jack === 0 ? internal : slots[jack]
 
-    const mix = this.params[P_MIX]
-    slots[this.outs[OUT_MIXED]] = dry * (1 - mix) + dry * carrier * mix
+    this.mix.set(this.params[P_MIX])
+    const mix = this.mix.next()
+    // Railed for the output fed back into the carrier, which squares itself
+    // every sample and overflows almost at once; see `Rail.ts`.
+    slots[this.outs[OUT_MIXED]] = railed(dry * (1 - mix) + dry * carrier * mix)
     slots[this.outs[OUT_CARRIER]] = internal
   }
 }

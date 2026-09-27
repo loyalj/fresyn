@@ -33,12 +33,39 @@ const LEGACY_KEY = 'freeson.patch.v1'
  * Autosave to the browser. Every accessor is guarded: storage throws outright
  * in a private window or with site data blocked, and losing the autosave is
  * never a reason to take the app down with it.
+ *
+ * It is a reason to say so, though. A quota error is the one that matters --
+ * a project with a long arrangement outgrows the few megabytes a browser
+ * gives a page -- and swallowed, it meant a session that looked saved and was
+ * not. So this answers whether it took, and the app tells the user when it
+ * did not.
  */
-export function saveLocalProject(stored: StoredProject) {
+export function saveLocalProject(stored: StoredProject): boolean {
   try {
     localStorage.setItem(PROJECT_KEY, JSON.stringify(stored))
+    return true
   } catch {
-    // Nothing to do; the session simply will not be restored.
+    return false
+  }
+}
+
+/**
+ * The autosave exactly as it is stored, unread.
+ *
+ * For the crash screen: when the app cannot draw, the one thing worth
+ * offering is the work, and the work must not have to go through the code
+ * that just failed to get out. So this is the raw text rather than a parsed
+ * project, and a file made from it opens like any saved project would.
+ */
+export function readLocalProjectText(): string | null {
+  try {
+    return (
+      localStorage.getItem(PROJECT_KEY) ??
+      localStorage.getItem(KEY) ??
+      localStorage.getItem(LEGACY_KEY)
+    )
+  } catch {
+    return null
   }
 }
 
@@ -191,7 +218,13 @@ export async function readPatchFile(
       if (bundle.project) return { error: projectNotPatch(file.name) }
       const loaded = fromStored(bundle.stored)
       if ('error' in loaded) return loaded
-      return { ...loaded, samples: bundle.samples }
+      // What the archive found wrong with its audio comes first: a sample
+      // stored under the wrong name is about the file, not the patch in it.
+      return {
+        ...loaded,
+        warnings: [...bundle.warnings, ...loaded.warnings],
+        samples: bundle.samples,
+      }
     } catch (e) {
       return { error: `${file.name} could not be unpacked: ${(e as Error).message}` }
     }
@@ -304,7 +337,11 @@ export async function readProjectFile(
       const bundle = await readProjectBundle(bytes)
       const loaded = fromStoredProject(bundle.stored)
       if ('error' in loaded) return loaded
-      return { ...loaded, samples: bundle.samples }
+      return {
+        ...loaded,
+        warnings: [...bundle.warnings, ...loaded.warnings],
+        samples: bundle.samples,
+      }
     } catch (e) {
       return { error: `${file.name} could not be unpacked: ${(e as Error).message}` }
     }

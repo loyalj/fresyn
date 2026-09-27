@@ -103,7 +103,13 @@ export class SvfModule extends DspModule {
       const fb = (mode === MODE_COMB_NEG ? -1 : 1) * COMB_MAX_FEEDBACK * res
       // Saturated on the way round, as the Delay's loop is, so a comb fed
       // something loud at full feedback flattens rather than climbing.
-      const y = x + fb * Math.tanh(this.comb.read(sr / cutoff))
+      let y = x + fb * Math.tanh(this.comb.read(sr / cutoff))
+      // tanh(NaN) is NaN, so saturation is no protection here: one bad sample
+      // pushed into the line would come round and be pushed again for ever.
+      if (y - y !== 0) {
+        this.comb.reset()
+        y = 0
+      }
       this.comb.push(y)
       slots[this.outs[0]] = y * (1 - 0.5 * Math.abs(fb))
       return
@@ -122,6 +128,16 @@ export class SvfModule extends DspModule {
     const v2 = this.ic2 + a2 * this.ic1 + a3 * v3
     this.ic1 = 2 * v1 - this.ic1
     this.ic2 = 2 * v2 - this.ic2
+    // The ladder's backstop, for the same reason: a NaN in either integrator
+    // is fed back into both on every sample after, and the filter would be
+    // silent until the patch was rebuilt. Cleared, it is back on the next one.
+    const s = this.ic1 + this.ic2
+    if (s - s !== 0) {
+      this.ic1 = 0
+      this.ic2 = 0
+      slots[this.outs[0]] = 0
+      return
+    }
 
     let out: number
     switch (mode) {

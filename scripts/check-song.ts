@@ -45,7 +45,9 @@ import {
 } from '../src/song/edit'
 import { fromStoredProject, toStoredProject } from '../src/song/project'
 import { renderSong, renderStems } from '../src/audio/renderSong'
-import { updateConsole, updateStrip } from '../src/song/edit'
+import { Transport } from '../src/audio/Transport'
+import type { AudioEngine } from '../src/audio/AudioEngine'
+import { setPatternNotes, updateConsole, updateStrip, updateTrack } from '../src/song/edit'
 import { SongPlayer, loadProject } from '../src/song/runtime'
 import { framesPerTick, songEnd, songEvents, type SongEvent } from '../src/song/schedule'
 import { fill, playheadTick } from '../src/song/transport'
@@ -595,7 +597,7 @@ console.log('\nlooping does not drift')
 
   // Every seam closes whatever was still sounding, or a note held across the
   // loop point would have nothing left to end it.
-  const seams = out.events.filter((e) => e.kind === 'off' && e.frame === 24000)
+  const seams = out.events.filter((e) => e.kind === 'off' && e.frame === 24000 && e.pitch === undefined)
   check('the seam releases every track', seams.length === s.tracks.length, `got ${seams.length}`)
   check(
     'and it sorts before the note that follows',
@@ -626,6 +628,117 @@ console.log('\nthe playhead')
     playheadTick(-12000, 0, 0, 120, SR, loop) === PPQ / 2,
     `got ${playheadTick(-12000, 0, 0, 120, SR, loop)}`,
   )
+}
+
+console.log('\nthe edges of a song')
+{
+  // The last note ends exactly where the song does. The window is half-open,
+  // so that release sits on the one tick no window reaches -- and it is the
+  // last note of every song.
+  const s = song({
+    patterns: [
+      { id: 'a', name: 'A', length: PPQ * 2, notes: [{ track: 'lead', tick: PPQ, length: PPQ, pitch: 3, velocity: 1 }] },
+    ],
+  })
+  const out = fill(s, SR, { tick: 0, frame: 0 }, 24000 * 8, null)
+  const last = out.events.filter((e) => e.kind === 'off')
+  check(
+    'the final note-off is emitted',
+    last.length === 1 && last[0].frame === 48000 && last[0].pitch === 3,
+    JSON.stringify(last),
+  )
+  check('and the song then ends', out.ended)
+  const again = fill(s, SR, out.cursor, 24000 * 16, null)
+  check('a fill after the end emits nothing twice', again.events.length === 0, `got ${again.events.length}`)
+
+  // Filled a little at a time, the edge is still emitted exactly once.
+  let cursor = { tick: 0, frame: 0 }
+  const tiled: SongEvent[] = []
+  for (let f = 1000; f <= 24000 * 4; f += 1000) {
+    const o = fill(s, SR, cursor, f, null)
+    tiled.push(...o.events)
+    cursor = o.cursor
+  }
+  check('tiled fills emit it once', tiled.filter((e) => e.kind === 'off').length === 1)
+
+  // Looping: a release on the seam is heard, and the press at the top of the
+  // loop is not doubled by it.
+  const looped = fill(s, SR, { tick: 0, frame: 0 }, 48000 * 3, { from: PPQ, to: PPQ * 2 })
+  const ons = looped.events.filter((e) => e.kind === 'on')
+  check('a loop does not double its first press', ons.length === 5, `got ${ons.length}`)
+  const wraps = looped.events.filter((e) => e.kind === 'off' && e.pitch === undefined)
+  check('the seam sends a release with no pitch', wraps.length > 0 && wraps.every((e) => !('pitch' in e)))
+}
+
+console.log('\na chord held across the seam')
+{
+  // A pad held longer than the loop. Its own releases are past the seam, so
+  // only the seam can let go of it; a seam that released pitch zero would
+  // leave three voices held and the next pass would steal the fourth.
+  const gatesPatch: Patch = {
+    modules: [mod('key1', 'keys'), mod('one', 'cv', { offset1: 1 }), mod('vca1', 'vca'), mod('rec1', 'rec')],
+    cables: [
+      cable('one', 'out1', 'vca1', 'in'),
+      cable('key1', 'gate', 'vca1', 'cv'),
+      cable('vca1', 'out', 'rec1', 'l'),
+    ],
+  }
+  const pad = (pitch: number) => ({ track: 'lead', tick: 0, length: PPQ * 4, pitch, velocity: 1 })
+  const s = song({ patterns: [{ id: 'a', name: 'A', length: PPQ * 4, notes: [pad(2), pad(5), pad(9)] }] })
+  const out = fill(s, SR, { tick: 0, frame: 0 }, 24000 * 3, { from: 0, to: PPQ })
+  const target = noteTarget(gatesPatch)!
+  const lead = engineEvents(
+    out.events.filter((e) => e.track === 'lead'),
+    target,
+  )
+  const gates = run(gatesPatch, lead, 24000 * 3, 128, { 'key1.voices': 4 }).left
+  check('the first pass holds three', gates[12000] === 3, `got ${gates[12000]}`)
+  check('the second pass holds three, not four', gates[36000] === 3, `got ${gates[36000]}`)
+  check('and so does the third', gates[60000] === 3, `got ${gates[60000]}`)
+}
+
+console.log('\nthe playhead around a loop')
+{
+  const loop = { from: PPQ * 2, to: PPQ * 3 }
+  check(
+    'a start before the loop plays up to it unwrapped',
+    playheadTick(24000, 0, 0, 120, SR, loop) === PPQ,
+    `got ${playheadTick(24000, 0, 0, 120, SR, loop)}`,
+  )
+  check(
+    'and wraps once it is past the end',
+    playheadTick(24000 * 3.5, 0, 0, 120, SR, loop) === PPQ * 2.5,
+    `got ${playheadTick(24000 * 3.5, 0, 0, 120, SR, loop)}`,
+  )
+
+  // Through the transport itself, with an engine that is only a clock.
+  let onFrame: (frame: number) => void = () => {}
+  const fake = {
+    sampleRate: SR,
+    start: async () => {},
+    onFrame: (fn: (frame: number) => void) => {
+      onFrame = fn
+      return () => {}
+    },
+    schedule: () => {},
+    unschedule: () => {},
+    allNotesOff: () => {},
+  }
+  const transport = new Transport(fake as unknown as AudioEngine, song())
+  transport.setLoop({ from: 0, to: PPQ * 8 })
+  await transport.play(0)
+  onFrame(0)
+  onFrame(24000 * 10)
+  check('ten beats into an eight-beat loop is beat two', transport.state.tick === PPQ * 2, `got ${transport.state.tick}`)
+  // Shortened to three beats while playing. Wrapping everything elapsed into
+  // the new length would draw beat one and a half; the audio is at two and a
+  // half and plays on to three.
+  transport.setLoop({ from: 0, to: PPQ * 3 })
+  onFrame(24000 * 10.5)
+  check('after the loop changes it carries on from where it was', transport.state.tick === PPQ * 2.5, `got ${transport.state.tick}`)
+  onFrame(24000 * 11.5)
+  check('and wraps at the new end', transport.state.tick === PPQ * 0.5, `got ${transport.state.tick}`)
+  transport.stop()
 }
 
 console.log('\nend to end: a loop plays the rack')
@@ -917,6 +1030,12 @@ console.log('\nbouncing the arrangement')
   check('and no longer than that plus its tail', mix.seconds <= 3.01, `${mix.seconds.toFixed(3)}s`)
   check('and reports its peak', mix.peak > 0 && Number.isFinite(mix.peak), `${mix.peak}`)
 
+  // The limiter looks ahead and so runs late; a bounce takes that back off
+  // the front, or a loop would open on a sliver of silence at every seam.
+  // A few samples are the oscillator's own attack; uncorrected it is 80-odd.
+  const first = mix.left.findIndex((x) => Math.abs(x) > 1e-6)
+  check('the first note starts on the first samples', first >= 0 && first < 32, `first sound at ${first}`)
+
   // Nothing placed is nothing to bounce, and must not be an error.
   const empty = await renderSong({ ...s, playlist: [] }, band(), RAW)
   check('an empty playlist bounces silence', empty.peak === 0, `peak ${empty.peak}`)
@@ -1024,8 +1143,11 @@ console.log('\nthe player a game would run')
     player.render(bl, br)
     out.set(bl.subarray(0, Math.min(512, 96000 - i)), i)
   }
+  // The bounce takes the limiter's lookahead off the front; a player running
+  // live does not, so it is the same audio that many samples later.
+  const lag = player.latency
   let worst = 0
-  for (let i = 0; i < 96000; i++) worst = Math.max(worst, Math.abs(reference.left[i] - out[i]))
+  for (let i = 0; i + lag < 96000; i++) worst = Math.max(worst, Math.abs(reference.left[i] - out[i + lag]))
   check('a block of 512 matches the bounce', worst < 1e-6, `worst ${worst}`)
   check('the silent buffer was left alone', other[0] === 0)
 }
@@ -1588,6 +1710,104 @@ console.log('\nthe song over a pattern')
     !contextNotes(song, 'lead', 2 * BAR).some((x) => x.tick === 2 * BAR),
   )
   check('a placement with nothing under it has nothing drawn', contextNotes(song, 'lead', 6 * BAR).length === 0)
+}
+
+console.log('\na file that says something the editor never would')
+{
+  const scale = { root: 0, mode: 'major' }
+  // Once, these walked forever: a fractional row never lands on another row.
+  check('a scale step from a fractional pitch finishes', Number.isInteger(stepInScale(4.5, 1, scale)))
+  check('and a count of degrees from one does too', Number.isInteger(degreesBetween(0.5, 7.25, scale)))
+  check('a fractional root does not hang either', Number.isInteger(stepInScale(2, 3, { root: 0.4, mode: 'major' })))
+
+  const parsed = parseSong({
+    tempo: 120,
+    tracks: [
+      { id: 'lead', name: 'Lead', patch: 'lead', gain: 1 },
+      { id: '__proto__', name: 'Sneaky', patch: '__proto__', gain: 1 },
+    ],
+    patterns: [
+      {
+        id: 'a',
+        name: 'A',
+        length: 3,
+        notes: [
+          { track: 'lead', tick: 10.4, length: 99.6, pitch: 4.5, velocity: 0 },
+          { track: '__proto__', tick: 0, length: 10, pitch: 0, velocity: 1 },
+        ],
+      },
+    ],
+    playlist: [
+      { pattern: 'a', tick: 0 },
+      { pattern: 'a', tick: 0 },
+      { pattern: 'a', tick: 1920.2 },
+    ],
+    markers: [
+      { tick: 0, name: 'Intro' },
+      { tick: 0.2, name: 'Also intro' },
+    ],
+  })
+  if (!parsed) {
+    check('a strange file still reads', false)
+  } else {
+    const n = parsed.patterns[0].notes[0]
+    check('ticks, lengths and pitches are whole', n.tick === 10 && n.length === 100 && n.pitch === 5, JSON.stringify(n))
+    check('a silent note is lifted to the quietest the editor allows', n.velocity === 0.01, String(n.velocity))
+    check('a pattern is never shorter than the editor allows', parsed.patterns[0].length === PPQ, String(parsed.patterns[0].length))
+    check('a duplicate placement is dropped', parsed.playlist.length === 2, JSON.stringify(parsed.playlist))
+    check('a placement tick is whole', parsed.playlist[1]?.tick === 1920)
+    check('two markers on one tick are one', parsed.markers?.length === 1 && parsed.markers[0].name === 'Intro')
+    check('a track called __proto__ is refused', parsed.tracks.length === 1 && parsed.tracks[0].id === 'lead')
+    check('and its notes with it', parsed.patterns[0].notes.length === 1)
+    check('nothing leaked onto the prototype', Object.getPrototypeOf(parsed) === Object.prototype)
+  }
+
+  // Through the project reader, where track ids become keys of the racks.
+  const project = fromStoredProject({
+    version: 1,
+    name: 'Proto',
+    song: {
+      tempo: 120,
+      tracks: [
+        { id: 'lead', name: 'Lead', patch: 'lead', gain: 1 },
+        { id: '__proto__', name: 'Sneaky', patch: '__proto__', gain: 1 },
+        { id: 'toString', name: 'Borrowed', patch: 'toString', gain: 1 },
+      ],
+      patterns: [{ id: 'a', name: 'A', length: PPQ * 4, notes: [] }],
+      playlist: [],
+    },
+    racks: JSON.parse('{"lead": {"version": 1, "patch": {"modules": [], "cables": []}}, "__proto__": {"version": 1, "patch": {"modules": [], "cables": []}}}'),
+  })
+  if ('error' in project) {
+    check('a project with a __proto__ track reads', false, project.error)
+  } else {
+    check('a project with a __proto__ track reads, without it', project.song.tracks.every((t) => t.id !== '__proto__'))
+    check('the racks keep their ordinary prototype', Object.getPrototypeOf(project.racks) === Object.prototype)
+    check('a track named like a built-in gets no borrowed rack', !('toString' in project.racks && Object.prototype.hasOwnProperty.call(project.racks, 'toString')))
+  }
+
+  // Changing meter can fold two placements onto one bar; they merge.
+  const folded = setMeter(
+    song({ playlist: [{ pattern: 'a', tick: 0 }, { pattern: 'a', tick: PPQ }] }),
+    { beats: 1, unit: 4 },
+  )
+  check('a meter change never leaves two copies on one bar', new Set(folded.playlist.map((x) => x.tick)).size === folded.playlist.length, JSON.stringify(folded.playlist))
+}
+
+console.log('\nsong edits that change nothing')
+{
+  const s = song()
+  check('updating a track to what it already is', updateTrack(s, 'lead', { name: 'Lead', gain: 1 }) === s)
+  check('updating a track that is not there', updateTrack(s, 'nope', { name: 'X' }) === s)
+  check('but a real change is an edit', updateTrack(s, 'lead', { name: 'Tune' }) !== s)
+  check('reordering into the same order', reorderTracks(s, ['lead', 'drum']) === s)
+  check('setting a pattern to its own length', setPatternLength(s, 'a', PPQ * 4) === s)
+  check('setting a pattern to the notes it has', setPatternNotes(s, 'a', s.patterns[0].notes.map((n) => ({ ...n }))) === s)
+  check('but different notes are an edit', setPatternNotes(s, 'a', []) !== s)
+  check('a strip set to what it already is', updateStrip(s, 'lead', { pan: 0, eq: { low: 0, mid: 0, high: 0 } }) === s)
+  check('the desk set to what it already is', updateConsole(s, { master: { limiter: true }, space: {} }) === s)
+  check('but a real desk change is an edit', updateConsole(s, { master: { limiter: false } }) !== s)
+  check('solo on a track that is not there', soloTrack(s, 'nope') === s)
 }
 
 console.log(failures === 0 ? '\nall good\n' : `\n${failures} failed\n`)

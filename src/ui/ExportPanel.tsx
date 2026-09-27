@@ -1,7 +1,7 @@
-import { useState } from 'react'
 import { NORMALIZE_OPTIONS, type Normalize } from '../audio/normalize'
 import type { BitDepth } from '../audio/wav'
 import type { ParamSpec } from '../patch/param'
+import { ConfirmButton } from './ConfirmButton'
 import { Knob } from './Knob'
 
 export interface ExportSettings {
@@ -51,8 +51,20 @@ const SPECS: Record<string, ParamSpec> = {
 const whole = (v: number) => String(Math.round(v))
 
 interface Props {
+  /**
+   * The settings, held by the app per track rather than in here. The panel
+   * is remounted whenever the recorder moves or the rack changes track, and
+   * settings kept inside it went back to the defaults every time.
+   */
+  settings: ExportSettings
+  onSettings: (next: ExportSettings) => void
   onExport: (settings: ExportSettings) => void
   busy: string | null
+  /**
+   * Whether this track already has takes on the panel, which a render
+   * replaces. The button asks first when it would throw some away.
+   */
+  hasTakes?: boolean
 }
 
 /**
@@ -64,11 +76,9 @@ interface Props {
  * a little height back and cost a click before every render -- on a module
  * whose whole job is rendering.
  */
-export function ExportPanel({ onExport, busy }: Props) {
-  const [s, setS] = useState<ExportSettings>(DEFAULT_EXPORT)
-
+export function ExportPanel({ settings: s, onSettings, onExport, busy, hasTakes }: Props) {
   const set = <K extends keyof ExportSettings>(key: K, value: ExportSettings[K]) =>
-    setS((prev) => ({ ...prev, [key]: value }))
+    onSettings({ ...s, [key]: value })
 
   return (
     <div className="export-panel">
@@ -114,8 +124,7 @@ export function ExportPanel({ onExport, busy }: Props) {
             value={`${s.sampleRate}/${s.bitDepth}`}
             onChange={(e) => {
               const [rate, depth] = e.target.value.split('/')
-              set('sampleRate', Number(rate))
-              set('bitDepth', Number(depth) as BitDepth)
+              onSettings({ ...s, sampleRate: Number(rate), bitDepth: Number(depth) as BitDepth })
             }}
           >
             <option value="48000/16">48 kHz &middot; 16-bit</option>
@@ -142,9 +151,17 @@ export function ExportPanel({ onExport, busy }: Props) {
       </div>
 
       <div className="export-actions">
-        <button className="export-go" disabled={!!busy} onClick={() => onExport(s)}>
+        {/* A render replaces the takes on the panel, and takes are outside
+            undo -- so with some there, it asks before it goes. */}
+        <ConfirmButton
+          className="export-go"
+          disabled={!!busy}
+          needed={!!hasTakes}
+          ask="Replace the takes?"
+          onConfirm={() => onExport(s)}
+        >
           {busy ?? (s.count > 1 ? `Render ${s.count} takes` : 'Render')}
-        </button>
+        </ConfirmButton>
       </div>
     </div>
   )

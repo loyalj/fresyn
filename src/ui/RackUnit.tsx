@@ -22,6 +22,8 @@ interface Props {
   isCandidate: (ref: PortRef, kind: JackKind) => boolean
   register: (key: string, el: HTMLElement | null) => void
   onJackDown: (ref: PortRef, kind: JackKind, e: React.PointerEvent) => void
+  /** Patching from the keyboard; see `Jack`. */
+  onJackKey?: (ref: PortRef, kind: JackKind, action: 'press' | 'focus') => void
   onMove: (delta: number) => void
   onDuplicate: () => void
   onRemove: () => void
@@ -73,11 +75,19 @@ export function RackUnit({
         flipped ? ' flipped' : ''
       }${dragging ? ' dragging' : ''}${selected ? ' selected' : ''}${bypassed ? ' bypassed' : ''}`}
       data-module={moduleId}
+      // Focusable by script only, so jumping to a unit can put the focus on
+      // it and the next Tab lands on its first control.
+      tabIndex={-1}
+      role="group"
+      aria-label={`${def.name}, ${moduleId}`}
       style={share === undefined ? undefined : ({ '--share': share } as React.CSSProperties)}
     >
-      {/* The face turned away is hidden from assistive technology as well as
-          from the pointer. */}
-      <div className="unit-face-front" aria-hidden={flipped}>
+      {/* The face turned away is inert: out of the tab order, out of reach
+          of the pointer and of elementFromPoint during a cable drag, and
+          hidden from assistive technology, all in one attribute. Hidden with
+          aria-hidden alone, its knobs were still Tab stops you could not see
+          and its jacks still answered a click through the face in front. */}
+      <div className="unit-face-front" inert={flipped}>
         <ModulePanel
           def={def}
           moduleId={moduleId}
@@ -95,7 +105,7 @@ export function RackUnit({
         />
       </div>
 
-      <div className="unit-face-back" aria-hidden={!flipped}>
+      <div className="unit-face-back" inert={!flipped}>
         <BackPanel
           def={def}
           moduleId={moduleId}
@@ -103,6 +113,7 @@ export function RackUnit({
           isCandidate={rest.isCandidate}
           register={rest.register}
           onJackDown={rest.onJackDown}
+          onJackKey={rest.onJackKey}
           onGrab={onGrab}
           bypassed={bypassed}
           onBypass={onBypass}
@@ -139,10 +150,10 @@ interface ControlProps {
 function UnitControls({ moduleId, onMove, onDuplicate, onRemove }: ControlProps) {
   return (
     <div className="unit-controls">
-      <button title="Move up" aria-label={`Move ${moduleId} up`} onClick={() => onMove(-1)}>
+      <button title="Move up" aria-label={`Move ${moduleId} up`} onClick={() => onMove(-1)} type="button">
         &#9650;
       </button>
-      <button title="Move down" aria-label={`Move ${moduleId} down`} onClick={() => onMove(1)}>
+      <button title="Move down" aria-label={`Move ${moduleId} down`} onClick={() => onMove(1)} type="button">
         &#9660;
       </button>
       {/* Beside the screws rather than on the front, because a copy arrives

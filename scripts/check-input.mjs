@@ -112,15 +112,40 @@ console.log('\narrow keys')
   check('arrows and page keys do not scroll', (await scrollY()) === 0, `scrollY=${await scrollY()}`)
 }
 
-// --- tab ---------------------------------------------------------------
-console.log('\ntab flips instead of moving focus')
+// --- tab and F ---------------------------------------------------------
+// Tab used to turn the rack round, which left a keyboard with no way to get
+// from one control to the next. It moves the focus now, and F flips.
+console.log('\ntab moves focus; F flips')
 {
-  const before = await page.evaluate(() => document.activeElement?.className ?? '')
+  const before = await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 80) ?? '')
+  await clearSeen()
   await page.keyboard.press('Tab')
+  await new Promise((r) => setTimeout(r, 300))
+  const after = await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 80) ?? '')
+  check('Tab moved the focus', before !== after, `${before} -> ${after}`)
+  check('Tab was not taken from the browser', (await lastSeen('keydown'))?.prevented === false)
+  check('Tab did not flip the rack', await page.evaluate(() => !document.querySelector('.rack-flipped')))
+
+  await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : null))
+  await page.keyboard.press('KeyF')
   await new Promise((r) => setTimeout(r, 700))
-  const after = await page.evaluate(() => document.activeElement?.className ?? '')
-  check('focus did not move', before === after, `${before || '<body>'} -> ${after || '<body>'}`)
-  check('the rack flipped', await page.evaluate(() => !!document.querySelector('.rack-flipped')))
+  check('F flips the rack', await page.evaluate(() => !!document.querySelector('.rack-flipped')))
+
+  // Typing an F into a field is typing, not turning the rack round.
+  await page.evaluate(() => {
+    const input = document.createElement('input')
+    input.id = 'fprobe'
+    document.body.appendChild(input)
+    input.focus()
+  })
+  await page.keyboard.type('ff')
+  await new Promise((r) => setTimeout(r, 200))
+  check(
+    'F in a field types, and does not flip',
+    (await page.evaluate(() => document.querySelector('#fprobe').value)) === 'ff' &&
+      (await page.evaluate(() => !!document.querySelector('.rack-flipped'))),
+  )
+  await page.evaluate(() => document.querySelector('#fprobe').remove())
 }
 
 // --- right click -------------------------------------------------------
@@ -155,7 +180,8 @@ console.log('\nthe wheel tunes a knob, and only over a knob')
   // The cable sections above leave the rack turned around, and the knobs
   // are on the front of it.
   if (await page.evaluate(() => !!document.querySelector('.rack-flipped'))) {
-    await page.keyboard.press('Tab')
+    await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : null))
+    await page.keyboard.press('KeyF')
     await new Promise((r) => setTimeout(r, 600))
   }
   await page.evaluate(() => window.scrollTo(0, 0))
@@ -433,7 +459,7 @@ console.log("a knob's value can be said outright")
  * Every key in this app is captured on the window, ahead of whatever has
  * focus. That is what makes the rack playable, and it is also what would make
  * a menu unusable: arrowing down a list would scroll the page, Space would
- * play the instrument instead of choosing a row, and Tab would turn the rack
+ * play the instrument instead of choosing a row, and F would turn the rack
  * around behind the menu you were reading.
  */
 console.log()
@@ -464,22 +490,33 @@ console.log('a menu takes the keyboard off the rack')
   check('arrow keys do not scroll the rack away', (await scrollY()) === 0, `scrollY=${await scrollY()}`)
 
   const wasFlipped = await flipped()
-  await page.keyboard.press('Tab')
+  await page.keyboard.press('KeyF')
   await new Promise((r) => setTimeout(r, 200))
-  check('Tab does not turn the rack around', (await flipped()) === wasFlipped)
+  check('F does not turn the rack around', (await flipped()) === wasFlipped)
 
   await page.keyboard.press('Escape')
   await new Promise((r) => setTimeout(r, 200))
   check('Escape closes it', !(await menuShowing()))
 
-  // And the rack has the keyboard back the moment it does.
+  // And the rack has the keyboard back the moment it does. The focus is
+  // left on the menu's name, which is a button: an arrow does nothing for a
+  // button, so the rack keeps it from scrolling the page, and the menu stays
+  // shut.
   await page.evaluate(() => window.scrollTo(0, 0))
   await clearSeen()
-  await page.keyboard.down('Space')
+  await page.keyboard.press('ArrowDown')
   await new Promise((r) => setTimeout(r, 120))
-  await page.keyboard.up('Space')
   check('the rack has its keys back afterwards', (await lastSeen('keydown'))?.prevented === true)
   check('and still does not scroll', (await scrollY()) === 0, `scrollY=${await scrollY()}`)
+  check('and the menu stays shut', !(await menuShowing()))
+
+  // Space is a button's own key, and with no Trigger on it, it presses the
+  // focused one -- which, for a menu's name, opens that menu.
+  await page.keyboard.press('Space')
+  await new Promise((r) => setTimeout(r, 150))
+  check('Space presses the focused button when nothing claims it', await menuShowing())
+  await page.keyboard.press('Escape')
+  await new Promise((r) => setTimeout(r, 150))
 
   // Closing a menu leaves focus on the word it opened from, which is right
   // for a keyboard user and would quietly change what the sections below are
@@ -542,6 +579,116 @@ console.log('\nescape hatches')
   check('Ctrl+Z in a field belongs to the field', (await lastSeen('keydown'))?.prevented === false)
 
   await page.evaluate(() => document.querySelector('#probe').remove())
+}
+
+// --- the keyboard reaches every control ---------------------------------
+// A knob is a slider, a switch is a radio group, the tempo is a field you can
+// type into. Each takes the keys its kind of control is expected to take.
+console.log('\nthe keyboard sets controls')
+{
+  if (await page.evaluate(() => !!document.querySelector('.rack-flipped'))) {
+    await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : null))
+    await page.keyboard.press('KeyF')
+    await new Promise((r) => setTimeout(r, 700))
+  }
+  await page.evaluate(() => window.scrollTo(0, 0))
+  const knob = '.unit-face-front .knob svg[role="slider"]'
+  const knobValue = () =>
+    page.evaluate((k) => Number(document.querySelector(k)?.getAttribute('aria-valuenow')), knob)
+  const knobBounds = await page.evaluate((k) => {
+    const el = document.querySelector(k)
+    return el ? { min: Number(el.getAttribute('aria-valuemin')), max: Number(el.getAttribute('aria-valuemax')), tab: el.tabIndex } : null
+  }, knob)
+  check('a knob is in the tab order', knobBounds?.tab === 0, JSON.stringify(knobBounds))
+  await page.evaluate((k) => document.querySelector(k).focus(), knob)
+  const start = await knobValue()
+  await clearSeen()
+  await page.keyboard.press('ArrowUp')
+  await new Promise((r) => setTimeout(r, 100))
+  const up = await knobValue()
+  check('ArrowUp turns it up', up > start, `${start} -> ${up}`)
+  check('and the page did not scroll', (await scrollY()) === 0, `scrollY=${await scrollY()}`)
+  await page.keyboard.press('ArrowDown')
+  await new Promise((r) => setTimeout(r, 100))
+  const back = await knobValue()
+  check('ArrowDown turns it back', Math.abs(back - start) < Math.abs(up - start) / 2 + 1e-6, `${up} -> ${back}`)
+  await page.keyboard.press('PageUp')
+  await new Promise((r) => setTimeout(r, 100))
+  const paged = await knobValue()
+  check('Page Up is a bigger step than an arrow', paged - back > up - start, `${back} -> ${paged}`)
+  await page.keyboard.press('Home')
+  await new Promise((r) => setTimeout(r, 100))
+  check('Home goes to the bottom', (await knobValue()) === knobBounds.min, `${await knobValue()}`)
+  await page.keyboard.press('End')
+  await new Promise((r) => setTimeout(r, 100))
+  check('End goes to the top', (await knobValue()) === knobBounds.max, `${await knobValue()}`)
+  await page.keyboard.down('Control')
+  await page.keyboard.press('KeyZ')
+  await page.keyboard.up('Control')
+  await new Promise((r) => setTimeout(r, 100))
+  check('Ctrl+Z still undoes with a knob focused', (await knobValue()) !== knobBounds.max, `${await knobValue()}`)
+
+  // A switch: one stop for the whole row, and the arrows move along it.
+  const lit = () =>
+    page.evaluate(() => {
+      const group = document.querySelector('.unit-face-front .switch [role="radiogroup"]')
+      const radios = [...(group?.querySelectorAll('[role="radio"]') ?? [])]
+      return radios.findIndex((r) => r.getAttribute('aria-checked') === 'true')
+    })
+  const stops = await page.evaluate(() => {
+    const group = document.querySelector('.unit-face-front .switch [role="radiogroup"]')
+    return [...(group?.querySelectorAll('[role="radio"]') ?? [])].filter((r) => r.tabIndex === 0).length
+  })
+  check('a switch is one tab stop', stops === 1, `${stops}`)
+  const was = await lit()
+  await page.evaluate(() =>
+    document.querySelector('.unit-face-front .switch [role="radio"][aria-checked="true"]')?.focus(),
+  )
+  await page.keyboard.press('ArrowRight')
+  await new Promise((r) => setTimeout(r, 100))
+  const moved = await lit()
+  check('ArrowRight moves a switch along', moved !== was && moved >= 0, `${was} -> ${moved}`)
+  await page.keyboard.press('ArrowLeft')
+  await new Promise((r) => setTimeout(r, 100))
+  check('and ArrowLeft brings it back', (await lit()) === was, `${await lit()}`)
+
+  // The tempo is typed, and only lands when it is finished with.
+  const tempo = '.dock-bar input[type="number"]'
+  const field = () => page.evaluate((t) => document.querySelector(t)?.value, tempo)
+  const saved = () =>
+    page.evaluate(() => {
+      try {
+        return JSON.parse(localStorage.getItem('fresyn.project.v1')).song.tempo
+      } catch {
+        return null
+      }
+    })
+  const before = await field()
+  await page.click(tempo, { clickCount: 3 })
+  await page.keyboard.type('1')
+  await new Promise((r) => setTimeout(r, 600))
+  check('typing a first digit is not clamped', (await field()) === '1', `${await field()}`)
+  check('and the song keeps its tempo meanwhile', String(await saved()) === before, `${await saved()}`)
+  await page.keyboard.type('40')
+  await page.keyboard.press('Enter')
+  await new Promise((r) => setTimeout(r, 600))
+  check('Enter sets the tempo typed', (await field()) === '140' && (await saved()) === 140, `${await field()} / ${await saved()}`)
+  await page.click(tempo, { clickCount: 3 })
+  await page.keyboard.type('9')
+  await page.keyboard.press('Escape')
+  await new Promise((r) => setTimeout(r, 200))
+  check('Escape puts it back', (await field()) === '140', `${await field()}`)
+  await page.click(tempo, { clickCount: 3 })
+  await page.keyboard.type('999')
+  await page.evaluate(() => document.activeElement?.blur())
+  await new Promise((r) => setTimeout(r, 600))
+  check('leaving the field clamps what was typed', (await field()) === '300' && (await saved()) === 300, `${await field()}`)
+  // Back as it was, for the sections below.
+  await page.click(tempo, { clickCount: 3 })
+  await page.keyboard.type(before)
+  await page.keyboard.press('Enter')
+  await page.evaluate(() => document.activeElement?.blur())
+  await new Promise((r) => setTimeout(r, 300))
 }
 
 // --- trigger key bindings ----------------------------------------------
@@ -613,7 +760,7 @@ console.log('\ntrigger keys')
   check('clicking the cap starts the wait', await listening())
   check('and it says so', (await capText()) === 'Press a key', `${await capText()}`)
 
-  // Tab flips the rack, so a Trigger may not take it. The refusal has to be
+  // Tab moves the focus, so a Trigger may not take it. The refusal has to be
   // visible: a press that silently did nothing would read as a broken cap.
   await page.keyboard.press('Tab')
   await new Promise((r) => setTimeout(r, 150))
@@ -631,6 +778,10 @@ console.log('\ntrigger keys')
   await new Promise((r) => setTimeout(r, 200))
   check('a key can be assigned', (await capText()) === 'W', `${await capText()}`)
   check('the wait is over', !(await listening()))
+  // The cap keeps the focus, and with Space no longer bound, Space would
+  // press it -- which is a button doing its job, and not what is being
+  // tested below. Put the focus back on the page.
+  await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : null))
 
   check('the new key plays the rack', await sounds('KeyW'))
   check('and the old one no longer does', !(await sounds('Space')))

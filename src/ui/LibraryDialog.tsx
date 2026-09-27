@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { ConfirmButton } from './ConfirmButton'
 import { CATEGORIES, LIBRARY, type Category, type Template } from '../patch/library'
 import {
   buildMyPatch,
@@ -109,8 +110,6 @@ export function LibraryDialog({ onPick, onClose, onSave }: Props) {
   const [mine, setMine] = useState(loadMyPatches)
   const [favourites, setFavourites] = useState(loadFavourites)
   const recent = useMemo(loadRecent, [])
-  /** The row whose delete has been pressed once and is waiting to be confirmed. */
-  const [confirming, setConfirming] = useState<string | null>(null)
   const rows = useRef<(HTMLButtonElement | null)[]>([])
   /** Whatever had focus before this opened, to hand it back on the way out. */
   const restore = useRef<HTMLElement | null>(null)
@@ -153,7 +152,6 @@ export function LibraryDialog({ onPick, onClose, onSave }: Props) {
 
   useEffect(() => {
     lastShelf = shelf
-    setConfirming(null)
     if (!refocus.current) return
     refocus.current = false
     rows.current[0]?.focus()
@@ -174,12 +172,7 @@ export function LibraryDialog({ onPick, onClose, onSave }: Props) {
   const star = (id: string) => setFavourites(toggleFavourite(id))
 
   const remove = (id: string) => {
-    if (confirming !== id) {
-      setConfirming(id)
-      return
-    }
     deleteMyPatch(id)
-    setConfirming(null)
     setMine(loadMyPatches())
     setFavourites(loadFavourites())
     setAt((i) => Math.max(0, Math.min(i, mine.length - 2)))
@@ -333,17 +326,19 @@ export function LibraryDialog({ onPick, onClose, onSave }: Props) {
                       {starred ? '★' : '☆'}
                     </button>
                     {item.mine && (
-                      <button
-                        className={`library-delete${confirming === id ? ' confirm' : ''}`}
-                        onClick={() => remove(id)}
-                        onPointerLeave={() => confirming === id && setConfirming(null)}
+                      <ConfirmButton
+                        // Keyed by shelf as well, so a delete half-asked on
+                        // one shelf is not still asking on the next.
+                        key={`${shelf}:${id}`}
+                        className="library-delete"
+                        onConfirm={() => remove(id)}
+                        ask="Delete?"
                         title="Delete from My patches"
                         aria-label={`Delete ${item.template.name}`}
                         tabIndex={-1}
-                        type="button"
                       >
-                        {confirming === id ? 'Delete?' : '×'}
-                      </button>
+                        ×
+                      </ConfirmButton>
                     )}
                   </div>
                 </li>

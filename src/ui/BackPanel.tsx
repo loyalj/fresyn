@@ -10,6 +10,7 @@ interface Props {
   isCandidate: (ref: PortRef, kind: JackKind) => boolean
   register: (key: string, el: HTMLElement | null) => void
   onJackDown: (ref: PortRef, kind: JackKind, e: React.PointerEvent) => void
+  onJackKey?: (ref: PortRef, kind: JackKind, action: 'press' | 'focus') => void
   /** Begin a reorder drag from this unit's spine. */
   onGrab?: (e: React.PointerEvent) => void
   bypassed?: boolean
@@ -83,6 +84,7 @@ export function BackPanel({
   isCandidate,
   register,
   onJackDown,
+  onJackKey,
   onGrab,
   bypassed,
   onBypass,
@@ -100,6 +102,7 @@ export function BackPanel({
         candidate={isCandidate(ref, kind)}
         register={register}
         onPointerDown={onJackDown}
+        onKey={onJackKey}
       />
     )
   }

@@ -405,6 +405,70 @@ console.log('\nrendering a batch')
       check('the takes are not copies of each other', identical === 0, `${identical} duplicates`)
     }
   }
+
+  // --- takes belong to the track they were rendered from ---------------
+  console.log('\ntakes belong to their track')
+  const takeRows = () => page.evaluate(() => document.querySelectorAll('.take').length)
+
+  // A render with takes on the panel asks first: they are not in undo.
+  await page.click('.export-panel .export-go')
+  await settle(150)
+  const asks = await page.evaluate(() => document.querySelector('.export-panel .export-go')?.textContent)
+  check('rendering over takes asks first', asks === 'Replace the takes?', asks)
+  check('and has not thrown them away yet', (await takeRows()) === 3)
+  await page.mouse.move(5, 5)
+  await settle(100)
+
+  // Renamed after rendering: the files are still called after the sound
+  // the takes are of, as it was called then.
+  if (!(await page.evaluate(() => !!document.querySelector('.dock-body')))) {
+    await page.click('.dock-fold')
+    await settle(200)
+  }
+  const nameField = await page.$('.track.on .track-name')
+  await nameField.click({ clickCount: 3 })
+  await page.keyboard.type('Renamed')
+  await page.evaluate(() => document.activeElement?.blur())
+  await settle(200)
+  for (const f of readdirSync(downloads)) if (f.endsWith('.zip')) rmSync(join(downloads, f))
+  await page.click('.take-panel .export-go')
+  const again = await waitForFile(downloads, '.zip')
+  check('downloads are named after the track the takes came from', again[0] === 'impact.zip', again.join(','))
+
+  // Another track has its own recorder panel: no takes, and its own settings.
+  await page.click('.track-add')
+  await settle(400)
+  check('a new track shows none of them', (await takeRows()) === 0, `${await takeRows()} rows`)
+  // Through the search, Ctrl+K: the menu helper above is scoped to its own
+  // section.
+  await page.evaluate(() => document.activeElement?.blur())
+  await page.keyboard.down('Control')
+  await page.keyboard.press('KeyK')
+  await page.keyboard.up('Control')
+  await settle(150)
+  await page.keyboard.type('Recorder')
+  await page.keyboard.press('Enter')
+  await settle(300)
+  check('its recorder starts from the defaults', (await knobReads('Takes')) === '8', await knobReads('Takes'))
+  check('and still has no takes', (await takeRows()) === 0)
+
+  // Back to the first: its takes and its settings are where they were left.
+  for (const row of await page.$$('.track')) {
+    const name = await row.$eval('.track-name', (i) => i.value)
+    if (name === 'Renamed') await (await row.$('.track-db')).click()
+  }
+  await settle(400)
+  check('the first track has its takes back', (await takeRows()) === 3, `${await takeRows()} rows`)
+  check('and its settings', (await knobReads('Takes')) === '3', await knobReads('Takes'))
+
+  // Discard asks, then goes.
+  await page.click('.take-panel .panel-cancel')
+  await settle(100)
+  const discarding = await page.evaluate(() => document.querySelector('.take-panel .panel-cancel')?.textContent)
+  check('one press on Discard only asks', (await takeRows()) === 3 && discarding === 'Discard all?', discarding)
+  await page.click('.take-panel .panel-cancel')
+  await settle(150)
+  check('the second throws them away', (await takeRows()) === 0)
 }
 
 console.log('\nproblems    :', problems.length ? problems : 'none')

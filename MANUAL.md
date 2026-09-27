@@ -14,8 +14,10 @@ The rack is a stack of **units**, one per module. Each unit has two faces:
 - **The front** is knobs and switches. This is where you shape the sound.
 - **The back** is jacks. This is where you decide what connects to what.
 
-Press **Tab** to turn the rack around. The front is for tweaking, the back is
-for wiring, and you will go back and forth constantly.
+Press **F** to turn the rack around. The front is for tweaking, the back is
+for wiring, and you will go back and forth constantly. (Tab moves between
+controls, as it does on any page: knobs, switches and jacks are all in reach
+of the keyboard.)
 
 **Jacks come in labelled boxes**, the way the back of a mixing desk does.
 Most modules have two: **IN** for what goes into them and **OUT** for what
@@ -162,12 +164,13 @@ and read the tutorial when you want to know why it works.
 | --- | --- |
 | Play a Trigger | Hold the key on its cap — **Space** on every library rack |
 | Trigger one module | Hold its **TRIGGER** button |
-| Turn the rack around | **Tab** |
+| Turn the rack around | **F** (unless a Trigger is on F, which then plays) |
 | Undo | **Ctrl+Z** |
 | Redo | **Ctrl+Shift+Z** or **Ctrl+Y** |
 | Save the project | **Ctrl+S**; **Ctrl+Shift+S** to save as a new file |
 | Open a project | **Ctrl+O** |
 | Patch a cable | Drag from one jack to another (back panel) |
+| Patch from the keyboard | **Tab** to a jack, **Enter** to pick the cable up, **Enter** on the other jack to plug it in; **Esc** puts it down |
 | Unplug a cable | Drag out of a jack and let go anywhere |
 | Unplug a cable | Click the middle of the cable |
 | Clear a jack | Right-click it |
@@ -178,6 +181,7 @@ and read the tutorial when you want to know why it works.
 | Turn a knob finely | Hold **Shift** while dragging |
 | Nudge a knob | **Mouse wheel** over it |
 | Step a knob exactly | **Shift + mouse wheel** |
+| Turn a knob from the keyboard | **Tab** to it, then the **arrows** (**Shift** for exact steps), **Page Up/Down** for big ones, **Home/End** for the ends |
 | Snap a pitch to a note | Hold **Alt** while dragging |
 | Step a pitch by a semitone | **Alt + mouse wheel** |
 | Type a knob's value | Click the number under it |
@@ -214,7 +218,7 @@ knob to copy its value or paste one in; a paste is refused if it measures
 something else, so a decay time cannot land in a cutoff.
 
 The bar across the top is a panel of its own, bolted to the head of the rack:
-it stays put while the rack scrolls under it, so the menus and **Tab** are
+it stays put while the rack scrolls under it, so the menus and **F** are
 always in reach.
 
 A patch is named on its track, in the list down the side of the **Music** dock:
@@ -2105,9 +2109,9 @@ The tutorial rack already has an envelope opening a filter and a VCA. All this
 needs is for that same envelope to also drag the pitch down.
 
 1. Start from the tutorial rack.
-2. Press **Tab** to see the back.
+2. Press **F** to see the back.
 3. Drag a cable from **env1 · Out** to **osc1 · FM**.
-4. Press **Tab** to come back to the front, and set:
+4. Press **F** to come back to the front, and set:
 
 | Module | Knob | Value |
 | --- | --- | --- |
@@ -2426,8 +2430,8 @@ Everything so far has been fired by the gate. A siren is the other kind of
 sound: it starts, and then it is simply *on*.
 
 1. Start from the tutorial rack. You will not need any new modules.
-2. Press **Tab** and patch **lfo1 · Out → osc1 · FM**.
-3. Press **Tab** back and set:
+2. Press **F** and patch **lfo1 · Out → osc1 · FM**.
+3. Press **F** back and set:
 
 | Module | Knob | Value |
 | --- | --- | --- |

@@ -1,9 +1,10 @@
 import type { TrackMix } from '../dsp/SongEngine'
+import { normalizeSong } from './normalize'
 import {
   barTicks,
   DEFAULT_CONSOLE,
   DEFAULT_STRIP,
-  PPQ,
+  minPatternLength,
   type Console,
   type Marker,
   type Meter,
@@ -65,6 +66,10 @@ export function removeTrack(song: Song, id: string): Song {
 }
 
 export function updateTrack(song: Song, id: string, change: Partial<Omit<Track, 'id'>>): Song {
+  const track = song.tracks.find((t) => t.id === id)
+  // Nothing to change is no edit at all, and handing back the same song is
+  // what keeps a click that changed nothing out of the undo history.
+  if (!track || sameFields(track, change)) return song
   return {
     ...song,
     tracks: song.tracks.map((t) => (t.id === id ? { ...t, ...change } : t)),
@@ -80,7 +85,9 @@ export function updateTrack(song: Song, id: string, change: Partial<Omit<Track, 
  * tracks muted, and getting back needs three more presses.
  */
 export function soloTrack(song: Song, id: string): Song {
-  const already = song.tracks.find((t) => t.id === id)?.solo
+  const track = song.tracks.find((t) => t.id === id)
+  if (!track) return song
+  const already = track.solo
   return {
     ...song,
     tracks: song.tracks.map((t) => ({ ...t, solo: !already && t.id === id ? (true as const) : undefined })),
@@ -145,6 +152,7 @@ export function reorderTracks(song: Song, ids: readonly string[]): Song {
     remaining.delete(id)
   }
   for (const t of song.tracks) if (remaining.has(t.id)) tracks.push(t)
+  if (tracks.every((t, i) => t === song.tracks[i])) return song
   return { ...song, tracks }
 }
 
@@ -166,13 +174,16 @@ export function setMeter(song: Song, meter: Meter): Song {
   const bars = (ticks: number) => Math.round(ticks / from)
   const isDefault = meter.beats === 4 && meter.unit === 4
   const { meter: _dropped, ...rest } = song
-  return {
+  // Through the reader's rules on the way out: two placements a bar apart in
+  // 4/4 can round onto the same bar of a shorter one, and so can two markers,
+  // and either would be a state the editor never makes.
+  return normalizeSong({
     ...rest,
     ...(isDefault ? {} : { meter }),
     patterns: song.patterns.map((p) => ({ ...p, length: Math.max(1, bars(p.length)) * to })),
     playlist: song.playlist.map((x) => ({ ...x, tick: bars(x.tick) * to })),
     ...(song.markers ? { markers: song.markers.map((m) => ({ ...m, tick: bars(m.tick) * to })) } : {}),
-  }
+  })
 }
 
 /** The markers, earliest first. */
@@ -234,6 +245,8 @@ export function removePattern(song: Song, id: string): Song {
 }
 
 export function setPatternNotes(song: Song, id: string, notes: Note[]): Song {
+  const pattern = song.patterns.find((p) => p.id === id)
+  if (!pattern || sameNotes(pattern.notes, notes)) return song
   return {
     ...song,
     patterns: song.patterns.map((p) => (p.id === id ? { ...p, notes } : p)),
@@ -241,9 +254,12 @@ export function setPatternNotes(song: Song, id: string, notes: Note[]): Song {
 }
 
 export function setPatternLength(song: Song, id: string, length: number): Song {
+  const next = Math.max(minPatternLength(song), Math.round(length))
+  const pattern = song.patterns.find((p) => p.id === id)
+  if (!pattern || !Number.isFinite(next) || pattern.length === next) return song
   return {
     ...song,
-    patterns: song.patterns.map((p) => (p.id === id ? { ...p, length: Math.max(PPQ, length) } : p)),
+    patterns: song.patterns.map((p) => (p.id === id ? { ...p, length: next } : p)),
   }
 }
 
@@ -381,6 +397,8 @@ export function consoleOf(song: Song): Console {
 
 /** Change one track's channel strip, a field at a time. */
 export function updateStrip(song: Song, id: string, change: Partial<Strip>): Song {
+  const track = song.tracks.find((t) => t.id === id)
+  if (!track || sameFields(stripOf(track), change)) return song
   return {
     ...song,
     tracks: song.tracks.map((t) => (t.id === id ? { ...t, strip: { ...stripOf(t), ...change } } : t)),
@@ -393,6 +411,13 @@ export function updateConsole(
   change: { master?: Partial<Console['master']>; space?: Partial<Console['space']>; delay?: Partial<Console['delay']> },
 ): Song {
   const c = consoleOf(song)
+  if (
+    sameFields(c.master, change.master ?? {}) &&
+    sameFields(c.space, change.space ?? {}) &&
+    sameFields(c.delay, change.delay ?? {})
+  ) {
+    return song
+  }
   return {
     ...song,
     console: {
@@ -412,4 +437,48 @@ export function playlistBars(song: Song, minimum = 8): number {
     end = Math.max(end, place.tick + pattern.length)
   }
   return Math.max(minimum, Math.ceil(end / barTicks(song)) + 1)
+}
+
+/**
+ * Whether applying `change` to `current` would leave it as it was: every field
+ * named is already that value. One level deep, which is as deep as the edits
+ * that use it go -- an EQ is replaced whole, and a new one with the same three
+ * numbers in it is still the same EQ.
+ */
+function sameFields<T extends object>(current: T, change: Partial<T>): boolean {
+  for (const key of Object.keys(change) as (keyof T)[]) {
+    const a = current[key]
+    const b = change[key]
+    if (a === b) continue
+    if (typeof a === 'object' && a !== null && typeof b === 'object' && b !== null) {
+      const ka = Object.keys(a)
+      const kb = Object.keys(b)
+      if (ka.length === kb.length && ka.every((k) => (a as Record<string, unknown>)[k] === (b as Record<string, unknown>)[k])) {
+        continue
+      }
+    }
+    return false
+  }
+  return true
+}
+
+/** Two note lists with the same notes in the same order. */
+function sameNotes(a: readonly Note[], b: readonly Note[]): boolean {
+  if (a === b) return true
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i]
+    const y = b[i]
+    if (x === y) continue
+    if (
+      x.track !== y.track ||
+      x.tick !== y.tick ||
+      x.length !== y.length ||
+      x.pitch !== y.pitch ||
+      x.velocity !== y.velocity
+    ) {
+      return false
+    }
+  }
+  return true
 }

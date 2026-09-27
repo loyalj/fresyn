@@ -1,3 +1,4 @@
+import { railed } from '../Rail'
 import { Smoothed } from '../Smoothed'
 import { DspModule } from './types'
 
@@ -51,8 +52,10 @@ export class CvUtilModule extends DspModule {
 
     // Smoothed, because these knobs multiply the signal directly: a raw jump
     // in a gain is a click, and at audio rate it is zipper noise.
-    const a = slots[this.ins[IN_1]] * this.gain1.next() + this.offset1.next()
-    const b = slots[this.ins[IN_2]] * this.gain2.next() + this.offset2.next()
+    // Railed, because a gain above one round a feedback cable doubles every
+    // sample and is at infinity inside twenty milliseconds; see `Rail.ts`.
+    const a = railed(slots[this.ins[IN_1]] * this.gain1.next() + this.offset1.next())
+    const b = railed(slots[this.ins[IN_2]] * this.gain2.next() + this.offset2.next())
 
     slots[this.outs[OUT_1]] = a
     slots[this.outs[OUT_2]] = b

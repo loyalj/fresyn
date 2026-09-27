@@ -94,8 +94,14 @@ function run<T>(
   )
 }
 
+/**
+ * Stamped with when it went in, which is what `pruneSamples` leaves alone for
+ * a while: a file dropped a moment ago may not have reached the autosave yet,
+ * and another tab starting up should not take it for an orphan.
+ */
 export function putSample(sample: StoredSample): Promise<void> {
-  return run('readwrite', (store) => store.put(sample) as IDBRequest<IDBValidKey>).then(() => {})
+  const stamped: StoredSample & { addedAt: number } = { ...sample, addedAt: Date.now() }
+  return run('readwrite', (store) => store.put(stamped) as IDBRequest<IDBValidKey>).then(() => {})
 }
 
 export function getSample(id: string): Promise<StoredSample | null> {
@@ -111,6 +117,64 @@ export function removeSample(id: string): Promise<void> {
 export function allSamples(): Promise<StoredSample[]> {
   return run('readonly', (store) => store.getAll() as IDBRequest<StoredSample[]>).then(
     (found) => found ?? [],
+  )
+}
+
+/** How long a sample is safe from pruning after it was stored. */
+const PRUNE_GRACE_MS = 60 * 60 * 1000
+
+/**
+ * Delete every stored sample nothing refers to any more, and say how many.
+ *
+ * Every file dropped on a Sampler is stored, and a file dropped by mistake,
+ * replaced, or left in a patch that was then thrown away is still stored --
+ * so without this the database only ever grows. `keep` is every id something
+ * still names: the open project, the saved-patches shelf, anything else that
+ * holds a patch.
+ *
+ * Deliberately timid, because deleting audio somebody wanted is far worse
+ * than keeping audio nobody does. A null `keep` -- the caller could not read
+ * one of the places a patch lives, so does not actually know what is in use
+ * -- deletes nothing. Nor does anything stored within the last hour, which
+ * covers a drop not yet autosaved and a second tab working on something this
+ * one has never seen. And any failure part way through stops where it is:
+ * what was not reached is kept.
+ */
+export function pruneSamples(keep: Iterable<string> | null): Promise<number> {
+  if (keep === null) return Promise.resolve(0)
+  const wanted = new Set(keep)
+  const cutoff = Date.now() - PRUNE_GRACE_MS
+  return open().then(
+    (db) =>
+      new Promise<number>((resolve) => {
+        if (!db) {
+          resolve(0)
+          return
+        }
+        let removed = 0
+        try {
+          const tx = db.transaction(STORE, 'readwrite')
+          const request = tx.objectStore(STORE).openCursor()
+          request.onsuccess = () => {
+            const cursor = request.result
+            if (!cursor) return
+            const value = cursor.value as Partial<StoredSample> & { addedAt?: unknown }
+            const recent = typeof value.addedAt === 'number' && value.addedAt > cutoff
+            if (typeof value.id === 'string' && !wanted.has(value.id) && !recent) {
+              cursor.delete()
+              removed++
+            }
+            cursor.continue()
+          }
+          request.onerror = () => resolve(0)
+          tx.oncomplete = () => resolve(removed)
+          // An aborted transaction deletes nothing, whatever was counted.
+          tx.onerror = () => resolve(0)
+          tx.onabort = () => resolve(0)
+        } catch {
+          resolve(0)
+        }
+      }),
   )
 }
 

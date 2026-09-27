@@ -8,3 +8,6 @@ dist
 
 # Unfiltered ideas, kept local. Not a plan and not a queue.
 BRAINSTORM.md
+
+# Scratch worktrees made by Claude Code
+.claude/worktrees/

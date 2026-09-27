@@ -43,10 +43,11 @@ export function RackIndex({ tracks, trackId, onSelectTrack, entries, picked, onJ
         <select
           className="rack-index-title"
           value={trackId}
-          onChange={(e) => {
-            onSelectTrack(e.target.value)
-            e.target.blur()
-          }}
+          // The focus stays here. It used to be thrown to the page after a
+          // pick, which also meant the arrow keys could only ever move one
+          // track: a closed select changes on each arrow, and the first
+          // change blurred it.
+          onChange={(e) => onSelectTrack(e.target.value)}
           aria-label="Patch in the rack"
           title="Switch the rack to another track's patch"
         >
@@ -58,9 +59,15 @@ export function RackIndex({ tracks, trackId, onSelectTrack, entries, picked, onJ
         </select>
         {/* Turning the rack round belongs with the rack rather than with the
             app's menus: it is the control the rack is worked with, and here
-            it sits beside the name of what it turns. Tab and View > Back
+            it sits beside the name of what it turns. F and View > Back
             panel still do it where the card is not shown. */}
-        <button className="flip-button" onClick={onFlip} title="Turn the rack around (Tab)" type="button">
+        <button
+          className="flip-button"
+          onClick={onFlip}
+          title="Turn the rack around (F)"
+          aria-pressed={flipped}
+          type="button"
+        >
           {flipped ? 'Front' : 'Back'}
         </button>
       </div>
@@ -73,6 +80,7 @@ export function RackIndex({ tracks, trackId, onSelectTrack, entries, picked, onJ
               }${e.bypassed ? ' bypassed' : ''}`}
               onClick={() => onJump(e.id)}
               title={`Jump to ${e.id}`}
+              type="button"
             >
               <span className={`led ${inView.has(e.id) ? 'on' : ''}`} />
               <span className="rack-index-name">{e.name}</span>

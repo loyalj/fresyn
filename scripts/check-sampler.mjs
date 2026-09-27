@@ -173,7 +173,7 @@ console.log('\nit reaches the audio thread')
 {
   // Patch it to the mixer and play it: the meters are driven from the audio
   // thread, so a bar that moves is the sample arriving in the worklet.
-  await page.keyboard.press('Tab')
+  await page.keyboard.press('KeyF')
   await settle(FLIP_SETTLE)
   const centre = (m, p) =>
     page.evaluate(
@@ -197,7 +197,7 @@ console.log('\nit reaches the audio thread')
     await page.mouse.up()
     await settle(200)
   }
-  await page.keyboard.press('Tab')
+  await page.keyboard.press('KeyF')
   await settle(FLIP_SETTLE)
 
   // Its own Trigger button, so nothing else in the rack is sounding.

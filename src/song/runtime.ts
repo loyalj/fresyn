@@ -116,6 +116,15 @@ export class SongPlayer {
     return this.engine.currentFrame
   }
 
+  /**
+   * How many samples late the output is: the master limiter looking ahead.
+   * A game playing live can ignore it; anything writing a file that has to
+   * tile drops this many samples off the front.
+   */
+  get latency() {
+    return this.engine.latency
+  }
+
   /** Which tracks have something a note can actually be played on. */
   get playable(): readonly string[] {
     return [...this.targets.keys()]

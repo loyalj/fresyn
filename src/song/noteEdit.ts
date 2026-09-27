@@ -1,4 +1,4 @@
-import type { Note } from './types'
+import { MIN_VELOCITY, type Note } from './types'
 
 /**
  * Edits to a group of notes in one pattern, for the roll.
@@ -95,7 +95,7 @@ export function shiftVelocity(
   const out = [...notes]
   for (const i of selected) {
     const n = out[i]
-    if (n) out[i] = { ...n, velocity: round2(clamp(n.velocity + dVelocity, 0.01, 1)) }
+    if (n) out[i] = { ...n, velocity: round2(clamp(n.velocity + dVelocity, MIN_VELOCITY, 1)) }
   }
   return { notes: out, selected: [...selected] }
 }
@@ -233,7 +233,7 @@ export function humanizeNotes(
       ...n,
       tick,
       length: Math.max(1, Math.min(n.length, lengthTicks - tick)),
-      velocity: round2(clamp(n.velocity + (random() * 2 - 1) * velocity, 0.01, 1)),
+      velocity: round2(clamp(n.velocity + (random() * 2 - 1) * velocity, MIN_VELOCITY, 1)),
     }
   }
   return { notes: out, selected: [...selected] }

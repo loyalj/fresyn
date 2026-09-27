@@ -51,12 +51,16 @@ const NAMED: Record<string, string> = {
 /**
  * Keys a binding may not take.
  *
- * Two reasons, and they are different. Tab is the rack's own -- it flips the
- * unit round -- and a Trigger that claimed it would shadow that silently,
- * because the bindings the rack builds are installed alongside the app's.
- * Escape and the function keys are the browser's and the user's way out of a
- * page: the input layer swallows whatever it has claimed, so binding F5 would
- * mean the rack could no longer be reloaded from the keyboard.
+ * All of them are the browser's and the user's, not the rack's. Tab is how a
+ * keyboard moves from one control to the next, and a Trigger on it would
+ * trap the focus wherever it happened to be. Escape and the function keys
+ * are the way out of a page: the input layer swallows whatever it has
+ * claimed, so binding F5 would mean the rack could no longer be reloaded
+ * from the keyboard.
+ *
+ * F, which turns the rack round, is not on the list. A Trigger may have it,
+ * and then plays rather than flips -- the flip is also a button and a menu
+ * row, and a letter is too good a key to play from to hold back.
  */
 export function isReserved(code: string): boolean {
   return code === 'Tab' || code === 'Escape' || /^F\d{1,2}$/.test(code)

@@ -1079,7 +1079,7 @@ console.log('the sequencer panel')
 console.log()
 console.log('controls on the back panel')
 {
-  await page.keyboard.press('Tab')
+  await page.keyboard.press('KeyF')
   await settle(700)
 
   // Scrolled into view before measuring, and taken from the back face only:
@@ -1171,7 +1171,7 @@ console.log('controls on the back panel')
     `${arrowed.slice(0, 3).join(',')} -> ${(await unitIds()).slice(0, 3).join(',')}`,
   )
 
-  await page.keyboard.press('Tab')
+  await page.keyboard.press('KeyF')
   await settle(700)
 }
 
@@ -1222,7 +1222,7 @@ console.log('\nundo and redo')
   check('and it brought the module back', (await unitCount()) === before)
 
   // A cable edit is undoable in the same history.
-  await page.keyboard.press('Tab')
+  await page.keyboard.press('KeyF')
   await settle(700)
   const cables = () =>
     page.evaluate(() => document.querySelectorAll('.cables g.cable:not(.cable-dragging)').length)
@@ -1251,7 +1251,7 @@ console.log('\nundo and redo')
   await settle(300)
   check('undo re-plugs the cable', (await cables()) === cablesBefore)
 
-  await page.keyboard.press('Tab')
+  await page.keyboard.press('KeyF')
   await settle(700)
 }
 
@@ -1379,7 +1379,7 @@ console.log('jacks on the back panel')
     check(`${name} was added`, await addModule(name))
   }
 
-  await page.keyboard.press('Tab')
+  await page.keyboard.press('KeyF')
   await settle(700)
   check(
     'the rack is showing its back',
@@ -1452,7 +1452,7 @@ console.log('jacks on the back panel')
 
   await page.setViewport({ width: 1200, height: 1500 })
   await settle(400)
-  await page.keyboard.press('Tab')
+  await page.keyboard.press('KeyF')
   await settle(700)
 }
 

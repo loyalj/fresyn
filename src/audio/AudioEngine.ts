@@ -1,4 +1,5 @@
 import workletUrl from '../dsp/worklet.ts?worker&url'
+import type { FromWorklet, ProcessorOptions, ToWorklet } from '../dsp/protocol'
 import type { SampleRecord } from '../dsp/samples'
 import type { MixLevels, TrackEvent, TrackMix } from '../dsp/SongEngine'
 import type { Console } from '../song/types'
@@ -17,6 +18,40 @@ export type LevelFrames = Record<string, Float32Array>
 
 /** How a track reaches the mix. Solo and mute are resolved before they get here. */
 export type { MixLevels, TrackMix }
+
+/**
+ * Where the audio device is, for the UI to show.
+ *
+ * - `idle`: nothing has asked for sound yet. The context is only opened by a
+ *   gesture, so this is how every session begins.
+ * - `starting`: the context and the worklet are being built.
+ * - `running`: sound is coming out, or would be if anything were playing.
+ * - `suspended`: built, but the browser has paused it -- a context opened
+ *   without a gesture, an iOS interruption, a device being unplugged. The
+ *   next `start()` asks for it back, and must come from a gesture to get it.
+ * - `failed`: building it threw, or the processor died mid-render. Nothing
+ *   is left open; the next `start()` builds everything again from scratch.
+ */
+export type EngineState = 'idle' | 'starting' | 'running' | 'suspended' | 'failed'
+
+export interface EngineStatus {
+  state: EngineState
+  /** Why, for `failed`; a sentence fit to show as it is. */
+  error?: string
+}
+
+/**
+ * How long `start()` waits for a suspended context to come back before it
+ * gives up waiting and returns anyway.
+ *
+ * `resume()` is not guaranteed to settle. Called without a gesture it stays
+ * pending until one arrives, which may be never, and everything awaiting
+ * `start()` -- a preview, the transport -- would hang with it. A resume that
+ * is going to succeed does so in a few milliseconds, so a short bound costs
+ * nothing, and the context still comes up later on its own if it can: the
+ * status reports it when it does.
+ */
+const RESUME_GRACE_MS = 250
 
 interface TrackState {
   compiled: CompiledPatch
@@ -41,10 +76,19 @@ export interface RackInput {
 export class AudioEngine {
   private ctx?: AudioContext
   private node?: AudioWorkletNode
-  private starting?: Promise<void>
+  /**
+   * The build in progress or the one that finished, so every caller shares
+   * it. Cleared whenever what it built is torn down -- a failed build, a dead
+   * processor -- so that the next `start()` builds again instead of handing
+   * back the same broken result forever.
+   */
+  private starting?: Promise<boolean>
   private tracks = new Map<string, TrackState>()
   /**
-   * Which gates are being held right now, as `track/module`.
+   * Which gates are being held right now, as modules by track.
+   *
+   * Nested rather than joined into one `track/module` string, which would
+   * come apart wrongly the day an id had a slash in it.
    *
    * A set rather than a flag because the rack is played one Trigger at a
    * time: each one has its own key and its own gate, and holding two at once
@@ -52,7 +96,10 @@ export class AudioEngine {
    * context takes a moment to open, and the gate is recorded here whether the
    * node exists yet or not.
    */
-  private open = new Set<string>()
+  private open = new Map<string, Set<string>>()
+
+  private statusNow: EngineStatus = { state: 'idle' }
+  private statusListeners = new Set<(status: EngineStatus) => void>()
 
   /**
    * Display frames arrive ~30 times a second. They are handed out by
@@ -84,8 +131,58 @@ export class AudioEngine {
     for (const w of compiled.warnings) console.warn(`[fresyn patch ${id}]`, w)
   }
 
+  /**
+   * True only while sound can actually come out: the context is running and
+   * the processor in it is alive. The context's own state is not enough on
+   * its own -- a processor that threw leaves its context happily `running`
+   * and completely silent.
+   */
   get isRunning() {
-    return this.ctx?.state === 'running'
+    return this.statusNow.state === 'running'
+  }
+
+  /**
+   * The current status. The object is replaced, never mutated, when anything
+   * changes, so it can be compared by identity (`useSyncExternalStore` wants
+   * exactly that).
+   */
+  get status(): EngineStatus {
+    return this.statusNow
+  }
+
+  /** Subscribe to status changes. Returns the unsubscribe. */
+  onStatus(fn: (status: EngineStatus) => void): () => void {
+    this.statusListeners.add(fn)
+    return () => {
+      this.statusListeners.delete(fn)
+    }
+  }
+
+  private setStatus(state: EngineState, error?: string) {
+    const now = this.statusNow
+    if (now.state === state && now.error === error) return
+    this.statusNow = error === undefined ? { state } : { state, error }
+    for (const fn of this.statusListeners) fn(this.statusNow)
+  }
+
+  /**
+   * Read the context's state into the status, once the build is done. While
+   * it is still being built this says nothing: a fresh context passes through
+   * `suspended` on its way up, and reporting that would flash a warning at
+   * every first press.
+   */
+  private syncStatus() {
+    const ctx = this.ctx
+    if (!ctx || !this.node) return
+    // Anything but `running` -- `suspended`, or Safari's `interrupted` for a
+    // phone call or another app taking the audio session -- is the same thing
+    // to the user: built, and silent until asked back.
+    this.setStatus(ctx.state === 'running' ? 'running' : 'suspended')
+  }
+
+  /** Every message to the processor goes through here, so all of them are typed. */
+  private post(msg: ToWorklet) {
+    this.node?.port.postMessage(msg)
   }
 
   /** The context's rate, or the usual default before one has been opened. */
@@ -131,33 +228,33 @@ export class AudioEngine {
   /** Hand the audio thread a window of events to play at exact samples. */
   schedule(events: readonly TrackEvent[]) {
     if (events.length === 0) return
-    this.node?.port.postMessage({ type: 'schedule', events })
+    this.post({ type: 'schedule', events })
   }
 
   /** Move the transport clock, dropping anything queued against the old one. */
   seek(frame: number) {
-    this.node?.port.postMessage({ type: 'seek', frame })
+    this.post({ type: 'seek', frame })
   }
 
   /** Drop what is queued without moving the clock. */
   unschedule() {
-    this.node?.port.postMessage({ type: 'unschedule' })
+    this.post({ type: 'unschedule' })
   }
 
   /** Release every note being held, which is what stopping needs. */
   allNotesOff() {
-    this.node?.port.postMessage({ type: 'allNotesOff' })
+    this.post({ type: 'allNotesOff' })
   }
 
   setMix(mix: Record<string, TrackMix>) {
     this.mix = mix
-    this.node?.port.postMessage({ type: 'mix', mix })
+    this.post({ type: 'mix', mix })
   }
 
   /** The song's desk: the shared effects and the master bus. */
   setConsole(console: Console) {
     this.desk = console
-    this.node?.port.postMessage({ type: 'console', console })
+    this.post({ type: 'console', console })
   }
 
   /** Subscribe to the Mix view's levels: every track after its strip, and the master. */
@@ -172,7 +269,7 @@ export class AudioEngine {
   watch(trackId: string) {
     if (this.watched === trackId) return
     this.watched = trackId
-    this.node?.port.postMessage({ type: 'watch', track: trackId })
+    this.post({ type: 'watch', track: trackId })
   }
 
   /**
@@ -192,7 +289,7 @@ export class AudioEngine {
    */
   setSamples(samples: SampleRecord[]) {
     this.samples = samples
-    this.node?.port.postMessage({ type: 'samples', samples })
+    this.post({ type: 'samples', samples })
   }
 
   /** Current knob values for one track, laid out for its compiled patch. */
@@ -207,27 +304,82 @@ export class AudioEngine {
     return flat
   }
 
-  /** Safe to call on every interaction; only the first one does work. */
-  async start(): Promise<void> {
-    if (!this.starting) this.starting = this.boot()
-    return this.starting
+  /**
+   * Open the audio device, or bring it back. Safe to call on every
+   * interaction, and meant to be: each call is a gesture the browser may
+   * need before it lets the context run.
+   *
+   * Resolves `true` once the graph exists, whether or not the context has
+   * actually started running -- see `RESUME_GRACE_MS` for why that is not
+   * waited on indefinitely -- and `false` if it could not be built, with the
+   * reason in `status`. It never rejects: almost every caller fires it and
+   * forgets, and a failure is the status's to report, not an unhandled
+   * rejection's.
+   */
+  async start(): Promise<boolean> {
+    let attempt = this.starting
+    if (!attempt) {
+      attempt = this.boot()
+      this.starting = attempt
+    }
+    const built = await attempt
+    if (!built) {
+      // Forget the failure so the next call tries again, but only if nothing
+      // has started a newer attempt in the meantime.
+      if (this.starting === attempt) this.starting = undefined
+      return false
+    }
+    await this.resume()
+    return this.node !== undefined
   }
 
-  private async boot() {
-    const ctx = new AudioContext({ latencyHint: 'interactive' })
-    await ctx.audioWorklet.addModule(workletUrl)
+  /**
+   * Ask a suspended context to run, waiting a moment for it but no longer.
+   *
+   * Asked on every `start()` rather than only the first: a context can be
+   * suspended long after it was built, by the browser rather than by us, and
+   * the user's next click is the first chance to get it back.
+   */
+  private async resume() {
+    const ctx = this.ctx
+    if (!ctx || ctx.state === 'running' || ctx.state === 'closed') return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    await Promise.race([
+      // A rejection here is a browser refusing, which the status already
+      // shows as `suspended`; there is nothing more to say about it.
+      ctx.resume().catch(() => {}),
+      new Promise<void>((done) => {
+        timer = setTimeout(done, RESUME_GRACE_MS)
+      }),
+    ])
+    clearTimeout(timer)
+    if (this.ctx === ctx) this.syncStatus()
+  }
 
-    const node = new AudioWorkletNode(ctx, 'fresyn-voice', {
-      numberOfInputs: 0,
-      numberOfOutputs: 1,
-      outputChannelCount: [2],
-      // Hand over the racks and their knob positions at construction so the
-      // node never renders a block with stale defaults.
-      // Samples travel at construction for the same reason: a message posted
-      // before the node starts is never delivered, and a rack that booted
-      // without its audio would be silent until something else happened to
-      // send it.
-      processorOptions: {
+  /**
+   * Build the context, the worklet and the node, and hand the node
+   * everything held here.
+   *
+   * Also the rebuild after a failure: everything the processor needs --
+   * racks, knob positions, samples, mix, desk, watched track, held gates --
+   * is kept on this side, so a fresh node built from it is the same rack.
+   * What is not kept is the transport's queue and clock; those belong to
+   * the transport, which should stop when it sees `failed`.
+   */
+  private async boot(): Promise<boolean> {
+    this.setStatus('starting')
+    let ctx: AudioContext | undefined
+    try {
+      const opened = new AudioContext({ latencyHint: 'interactive' })
+      ctx = opened
+      this.ctx = opened
+      opened.onstatechange = () => this.onContextState(opened)
+      await opened.audioWorklet.addModule(workletUrl)
+      // Torn down while the module loaded; whatever did that has already
+      // said why.
+      if (this.ctx !== opened) return false
+
+      const options: ProcessorOptions = {
         tracks: [...this.tracks].map(([id, t]) => ({
           id,
           patch: t.compiled,
@@ -237,32 +389,101 @@ export class AudioEngine {
         watch: this.watched,
         mix: this.mix,
         ...(this.desk ? { console: this.desk } : {}),
-      },
-    })
-    node.port.onmessage = (e) => {
-      if (e.data?.type !== 'frame') return
-      if (e.data.levels) for (const fn of this.levelListeners) fn(e.data.levels)
-      if (e.data.mix) for (const fn of this.mixListeners) fn(e.data.mix)
-      if (e.data.scopes) for (const fn of this.scopeListeners) fn(e.data.scopes)
-      // Last, so a transport filling its next window does it after the panels
-      // have had this frame rather than between two of them.
-      if (typeof e.data.frame === 'number') {
-        for (const fn of this.frameListeners) fn(e.data.frame)
       }
-    }
-    node.connect(ctx.destination)
+      const node = new AudioWorkletNode(opened, 'fresyn-voice', {
+        numberOfInputs: 0,
+        numberOfOutputs: 1,
+        outputChannelCount: [2],
+        // Hand over the racks and their knob positions at construction so the
+        // node never renders a block with stale defaults.
+        // Samples travel at construction for the same reason: a message posted
+        // before the node starts is never delivered, and a rack that booted
+        // without its audio would be silent until something else happened to
+        // send it.
+        processorOptions: options,
+      })
+      node.port.onmessage = (e: MessageEvent<FromWorklet>) => this.receive(e.data)
+      // An exception in the processor -- in its constructor or in any block
+      // it renders -- stops it for good, and says so only here. Without this
+      // the context would carry on `running` with nothing in it, and the rack
+      // would simply go quiet with every light still green.
+      node.onprocessorerror = () => {
+        if (this.node !== node) return
+        this.teardown('The audio engine stopped after an internal error.')
+      }
+      node.connect(opened.destination)
+      this.node = node
 
-    this.ctx = ctx
-    this.node = node
-    if (ctx.state === 'suspended') await ctx.resume()
-    // Catch the node up on anything held while it was booting. Whatever was
-    // pressed and let go in that window is no longer in the set, so a key
-    // tapped during the very first start correctly makes no sound rather than
-    // sticking open.
-    for (const held of this.open) {
-      const [track, module] = held.split('/')
-      node.port.postMessage({ type: 'gate', open: true, track, module })
+      // Catch the node up on anything held while it was booting. Whatever was
+      // pressed and let go in that window is no longer in the set, so a key
+      // tapped during the very first start correctly makes no sound rather than
+      // sticking open.
+      for (const [track, modules] of this.open) {
+        for (const module of modules) this.post({ type: 'gate', open: true, track, module })
+      }
+      // Only a context already running is reported here. One still suspended
+      // is left as `starting` for `start()` to resume and then report, so a
+      // context that was only on its way up does not flash as paused.
+      if (opened.state === 'running') this.syncStatus()
+      return true
+    } catch (err) {
+      // Close what was opened, so a failed start leaks no context -- browsers
+      // allow only a handful -- and the next start begins from nothing. A
+      // context that is no longer ours was torn down by whatever replaced
+      // it, and the status already says why.
+      if (!ctx) this.setStatus('failed', describe(err))
+      else if (this.ctx === ctx) this.teardown(describe(err))
+      else ctx.close().catch(() => {})
+      return false
     }
+  }
+
+  private receive(msg: FromWorklet) {
+    if (msg.type !== 'frame') return
+    if (msg.levels) for (const fn of this.levelListeners) fn(msg.levels)
+    for (const fn of this.mixListeners) fn(msg.mix)
+    if (msg.scopes) for (const fn of this.scopeListeners) fn(msg.scopes)
+    // Last, so a transport filling its next window does it after the panels
+    // have had this frame rather than between two of them.
+    for (const fn of this.frameListeners) fn(msg.frame)
+  }
+
+  /**
+   * The context changed state under us: the browser suspended it, iOS
+   * interrupted it, the output device went away, or it came back.
+   */
+  private onContextState(ctx: AudioContext) {
+    if (this.ctx !== ctx) return
+    if (ctx.state === 'closed') {
+      this.teardown('The audio device was closed.')
+      return
+    }
+    this.syncStatus()
+  }
+
+  /**
+   * Drop the node and the context and forget the build, so that the next
+   * `start()` makes new ones. The status says why.
+   *
+   * Handlers are cut before anything is closed: the close would otherwise
+   * report back through `onstatechange` as a second, confusing failure.
+   */
+  private teardown(error: string) {
+    const ctx = this.ctx
+    const node = this.node
+    this.ctx = undefined
+    this.node = undefined
+    this.starting = undefined
+    if (node) {
+      node.port.onmessage = null
+      node.onprocessorerror = null
+      node.disconnect()
+    }
+    if (ctx) {
+      ctx.onstatechange = null
+      if (ctx.state !== 'closed') ctx.close().catch(() => {})
+    }
+    this.setStatus('failed', error)
   }
 
   /**
@@ -281,7 +502,7 @@ export class AudioEngine {
       // Seed newly added modules with their defaults.
       values: { ...initialValues(patch), ...pick(values ?? held ?? {}, patch) },
     })
-    this.node?.port.postMessage({
+    this.post({
       type: 'track',
       id,
       patch: compiled,
@@ -291,10 +512,8 @@ export class AudioEngine {
 
   removeTrack(id: string) {
     this.tracks.delete(id)
-    for (const held of [...this.open]) {
-      if (held.startsWith(`${id}/`)) this.open.delete(held)
-    }
-    this.node?.port.postMessage({ type: 'removeTrack', id })
+    this.open.delete(id)
+    this.post({ type: 'removeTrack', id })
   }
 
   /**
@@ -312,7 +531,7 @@ export class AudioEngine {
       track.values[key] = value
       const index = track.compiled.paramIndex[key]
       if (index === undefined) continue
-      this.node?.port.postMessage({ type: 'param', track: trackId, index, value })
+      this.post({ type: 'param', track: trackId, index, value })
     }
   }
 
@@ -326,6 +545,9 @@ export class AudioEngine {
     sampleRate: number,
     onEnded?: () => void,
   ): Promise<() => void> {
+    // Bounded, like every start: a preview asked for without a gesture comes
+    // back with the context still suspended, and plays once it resumes
+    // rather than leaving the caller waiting on a promise that never ends.
     await this.start()
     const ctx = this.ctx
     if (!ctx || left.length === 0) return () => {}
@@ -357,10 +579,15 @@ export class AudioEngine {
    * opened: the audio thread is caught up in `boot`.
    */
   gate(open: boolean, trackId: string, moduleId: string) {
-    const key = `${trackId}/${moduleId}`
-    if (open) this.open.add(key)
-    else this.open.delete(key)
-    this.node?.port.postMessage({ type: 'gate', open, track: trackId, module: moduleId })
+    let held = this.open.get(trackId)
+    if (open) {
+      if (!held) this.open.set(trackId, (held = new Set()))
+      held.add(moduleId)
+    } else if (held) {
+      held.delete(moduleId)
+      if (held.size === 0) this.open.delete(trackId)
+    }
+    this.post({ type: 'gate', open, track: trackId, module: moduleId })
   }
 }
 
@@ -372,4 +599,10 @@ function pick(values: Record<string, number>, patch: Patch) {
     if (live.has(key.slice(0, key.lastIndexOf('.')))) out[key] = value
   }
   return out
+}
+
+/** An error of any shape, as one sentence for the status. */
+function describe(err: unknown): string {
+  if (err instanceof Error && err.message) return `Audio could not start: ${err.message}`
+  return 'Audio could not start.'
 }

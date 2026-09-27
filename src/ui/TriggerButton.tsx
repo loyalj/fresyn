@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { isReserved, keyLabel } from '../input/keyLabel'
 
 interface Props {
@@ -37,6 +37,21 @@ export function TriggerButton({
 }: Props) {
   /** A key that was refused, held just long enough to say why. */
   const [refused, setRefused] = useState<string | null>(null)
+  /**
+   * Whether this button is what is holding the gate open: a pointer pressed
+   * on it, or Enter or Space with it focused.
+   *
+   * Leaving the button only lets go of a press it made. Without this, every
+   * pointer that crossed the button on its way somewhere else sent a release
+   * to the engine -- harmless on a plain gate, and a note cut short when the
+   * same Trigger was being held from its key at the time.
+   */
+  const pressed = useRef<'pointer' | 'key' | null>(null)
+  const letGo = () => {
+    if (!pressed.current) return
+    pressed.current = null
+    onUp()
+  }
 
   useEffect(() => {
     if (!listening) {
@@ -93,9 +108,34 @@ export function TriggerButton({
     <div className="trigger-row">
       <button
         className={`trigger${latched ? ' latched' : ''}`}
-        onPointerDown={onDown}
-        onPointerUp={onUp}
-        onPointerLeave={onUp}
+        onPointerDown={(e) => {
+          if (e.button !== 0 || pressed.current) return
+          pressed.current = 'pointer'
+          onDown()
+        }}
+        onPointerUp={letGo}
+        onPointerLeave={letGo}
+        onPointerCancel={letGo}
+        onKeyDown={(e) => {
+          // A key the rack has bound -- this Trigger's own Space, most often
+          // -- has already played it by the time it gets here, and says so
+          // by having been taken from the browser. Only a key nothing else
+          // claimed presses the button from here.
+          if (e.defaultPrevented || e.repeat) return
+          if (e.key !== 'Enter' && e.key !== ' ') return
+          e.preventDefault()
+          if (pressed.current) return
+          pressed.current = 'key'
+          onDown()
+        }}
+        onKeyUp={(e) => {
+          if (pressed.current !== 'key' || (e.key !== 'Enter' && e.key !== ' ')) return
+          e.preventDefault()
+          letGo()
+        }}
+        onBlur={() => {
+          if (pressed.current === 'key') letGo()
+        }}
         aria-label="Trigger"
         // Latch is a state, not a gesture: :active only lasts as long as the
         // finger does, so the one mode that outlives the press needs saying.

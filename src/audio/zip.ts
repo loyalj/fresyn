@@ -12,6 +12,9 @@ export interface ZipEntry {
  * of variations needs to arrive as one file rather than as sixteen downloads
  * the browser will start blocking after the first few.
  */
+/** General-purpose flag bit 11: file names are UTF-8. */
+const UTF8_NAMES = 0x0800
+
 export function makeZip(entries: ZipEntry[]): Uint8Array<ArrayBuffer> {
   const encoder = new TextEncoder()
   const locals: Uint8Array[] = []
@@ -27,7 +30,10 @@ export function makeZip(entries: ZipEntry[]): Uint8Array<ArrayBuffer> {
     const lv = new DataView(local.buffer)
     lv.setUint32(0, 0x04034b50, true) // local file header
     lv.setUint16(4, 20, true) // version needed
-    lv.setUint16(6, 0, true) // flags
+    // Bit 11: the name is UTF-8. It always is -- TextEncoder is the only way
+    // a name gets in -- and without the flag a reader is entitled to take it
+    // as code page 437, which turns a sample called "café.wav" into mojibake.
+    lv.setUint16(6, UTF8_NAMES, true) // flags
     lv.setUint16(8, 0, true) // method: stored
     lv.setUint16(10, 0, true) // mod time
     lv.setUint16(12, 0x2821, true) // mod date: 2000-01-01
@@ -43,7 +49,7 @@ export function makeZip(entries: ZipEntry[]): Uint8Array<ArrayBuffer> {
     cv.setUint32(0, 0x02014b50, true) // central directory header
     cv.setUint16(4, 20, true) // version made by
     cv.setUint16(6, 20, true) // version needed
-    cv.setUint16(8, 0, true)
+    cv.setUint16(8, UTF8_NAMES, true) // flags, as in the local header
     cv.setUint16(10, 0, true)
     cv.setUint16(12, 0, true)
     cv.setUint16(14, 0x2821, true)

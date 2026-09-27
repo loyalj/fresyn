@@ -17,7 +17,26 @@ export class Section {
     const y = this.b0 * x + this.z1
     this.z1 = this.b1 * x - this.a1 * y + this.z2
     this.z2 = this.b2 * x - this.a2 * y
+    // The same backstop the ladder has. A NaN that got into the state would
+    // be fed back into it on every sample after, and the section would put
+    // out nothing else until it was rebuilt; cleared, it recovers on the next
+    // sample. `s - s` is zero for any finite sum and NaN otherwise.
+    const s = this.z1 + this.z2 + y
+    if (s - s !== 0) {
+      this.z1 = 0
+      this.z2 = 0
+      return 0
+    }
     return y
+  }
+
+  /** The same curve as another section, keeping this one's own state. */
+  copy(from: Section) {
+    this.b0 = from.b0
+    this.b1 = from.b1
+    this.b2 = from.b2
+    this.a1 = from.a1
+    this.a2 = from.a2
   }
 
   set(b0: number, b1: number, b2: number, a0: number, a1: number, a2: number) {

@@ -28,6 +28,12 @@ const TRAVEL = 220
  * sweep that 220 pixels of drag crosses, which is for finding a value.
  */
 const WHEEL_STEP = 0.01
+/**
+ * One press of Page Up or Page Down, as a fraction of the range: ten of them
+ * cross it. The arrows move a wheel notch, and Shift with an arrow moves the
+ * last digit of the readout, the same exact step Shift gives the wheel.
+ */
+const PAGE_STEP = 0.1
 /** Shift makes the drag five times finer. */
 const FINE = 5
 /** What one notch of the wheel reports as, indexed by deltaMode. */
@@ -274,6 +280,50 @@ export function Knob({ spec, value, onChange, step, format }: Props) {
     setEntry(readout)
   }, [readout])
 
+  // --- keyboard --------------------------------------------------------
+  /**
+   * The knob from the keyboard, with the keys a slider is expected to have.
+   *
+   * The steps are the wheel's: an arrow is one coarse notch, Shift with an
+   * arrow is one exact one, so a value found with one is found the same way
+   * with the other. Up and right are more, as dragging up is more.
+   *
+   * A coarse step that lands back on the value it left is pushed on to the
+   * next detent instead. Without that a knob counting whole takes, whose
+   * detent is wider than a notch near the bottom of its range, would never
+   * move from the keyboard at all.
+   */
+  const onKeyDown = useCallback(
+    (e: React.KeyboardEvent<SVGSVGElement>) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      const up = e.key === 'ArrowUp' || e.key === 'ArrowRight' || e.key === 'PageUp'
+      const down = e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'PageDown'
+      let next: number
+      if (e.key === 'Home') next = spec.min
+      else if (e.key === 'End') next = spec.max
+      else if (up || down) {
+        const dir = up ? 1 : -1
+        const page = e.key === 'PageUp' || e.key === 'PageDown'
+        if (e.shiftKey && !page) {
+          next = clampValue(spec, nudge(value, step ?? stepFor(spec, value), dir))
+        } else {
+          const t0 = normalize(spec, value) + dir * (page ? PAGE_STEP : WHEEL_STEP)
+          next = quantize(denormalize(spec, t0 < 0 ? 0 : t0 > 1 ? 1 : t0))
+          if (next === value) next = clampValue(spec, nudge(value, step ?? stepFor(spec, value), dir))
+        }
+      } else if (e.key === 'Enter') {
+        // The readout is where a value is typed; Enter on the knob opens it,
+        // as a click on the number does.
+        e.preventDefault()
+        startEntry()
+        return
+      } else return
+      e.preventDefault()
+      if (next !== value) emit(next)
+    },
+    [spec, value, step, quantize, emit, startEntry],
+  )
+
   const menuItems = (): MenuItem[] => {
     const takeable = held && held.unit === unitOf(spec) ? held : null
     return [
@@ -330,6 +380,10 @@ export function Knob({ spec, value, onChange, step, format }: Props) {
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
         onDoubleClick={() => emit(spec.default)}
+        onKeyDown={onKeyDown}
+        // In the tab order, like any slider: a knob reached only by a pointer
+        // is a knob a keyboard cannot set.
+        tabIndex={0}
         role="slider"
         aria-label={spec.label}
         aria-valuenow={Number(value.toFixed(3))}

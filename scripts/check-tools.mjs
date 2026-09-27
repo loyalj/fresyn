@@ -128,7 +128,7 @@ console.log('\nmodule search')
 
 console.log('\na cable let go of over nothing')
 {
-  await press('Tab')
+  await press('KeyF')
   await wait(FLIP_SETTLE)
   const from = await centreOf('.jack[data-module="osc1"][data-port="env"]')
   check('a free output to start from', !!from)
@@ -215,7 +215,7 @@ console.log('\ncable colours')
 
 console.log('\ncopying modules')
 {
-  await press('Tab')
+  await press('KeyF')
   await wait(FLIP_SETTLE)
   const spine = await page.$('.unit-flip[data-module="lpf1"] .unit-face-front .unit-spine')
   await spine.click()
@@ -333,6 +333,12 @@ console.log('\npatterns, kept house')
   await page.click('.playlist-row.on button[aria-label^="Delete"]')
   await wait(SAVE)
   check('and deletes its own', (await stored()).song.patterns.length === 2)
+  // Undoable, so no confirm -- but it says so, since the placements went too.
+  check(
+    'and says how to get it back',
+    await page.evaluate(() => /Removed .+ Ctrl\+Z to undo/.test(document.querySelector('.notice-text')?.textContent ?? '')),
+    await page.evaluate(() => document.querySelector('.notice-text')?.textContent ?? ''),
+  )
   await press('KeyZ', ['Control'])
   await wait(SAVE)
   check('which undoes', (await stored()).song.patterns.length === 3)
@@ -377,6 +383,39 @@ console.log('\ntracks, kept house')
   check('a track can be given a colour', typeof (await stored()).song.tracks[0].color === 'number')
   const db = await page.evaluate(() => document.querySelector('.track-db')?.textContent)
   check('its level reads in decibels', /dB$/.test(db ?? ''), String(db))
+
+  // Two different actions in quick succession are two steps of undo. Every
+  // dock edit used to go out under one key, so these folded into one, and a
+  // single Ctrl+Z took both back.
+  await (await page.$$('.track .track-flag[aria-label^="Mute"]'))[0].click()
+  await (await page.$$('.track .track-flag[aria-label^="Solo"]'))[1].click()
+  await wait(SAVE)
+  let t = (await stored()).song.tracks
+  check('mute then solo, quickly', !!t[0].mute && !!t[1].solo, JSON.stringify(t.map((x) => [x.mute, x.solo])))
+  check(
+    'the buttons say whether they are down',
+    await page.evaluate(() => document.querySelectorAll('.track .track-flag[aria-pressed="true"]').length === 2),
+  )
+  await press('KeyZ', ['Control'])
+  await wait(SAVE)
+  t = (await stored()).song.tracks
+  check('one undo takes back only the solo', !!t[0].mute && !t[1].solo, JSON.stringify(t.map((x) => [x.mute, x.solo])))
+  await press('KeyZ', ['Control'])
+  await wait(SAVE)
+  t = (await stored()).song.tracks
+  check('and the next, the mute', !t[0].mute && !t[1].solo, JSON.stringify(t.map((x) => [x.mute, x.solo])))
+
+  // Removing a track is undoable, so it asks nothing -- and says so.
+  await (await page.$$('.track .track-remove'))[1].click()
+  await wait(SAVE)
+  check('a track removes with one click', (await stored()).song.tracks.length === ids.length - 1)
+  check(
+    'and says how to get it back',
+    await page.evaluate(() => /Removed .+ -- Ctrl\+Z to undo/.test(document.querySelector('.notice-text')?.textContent ?? '')),
+  )
+  await press('KeyZ', ['Control'])
+  await wait(SAVE)
+  check('which it does', (await stored()).song.tracks.length === ids.length)
 }
 
 console.log('\nthe roll comes back as it was left')
@@ -438,6 +477,36 @@ console.log('\npresets, the rack index and the compact rack')
     await wait(SAVE)
     const loaded = (await rack()).modules.find((m) => m.id === other.id).params.cutoff
     check('and put back on another of its kind', loaded === cutoff, `${loaded} vs ${cutoff}`)
+    await press('Escape')
+    await wait(100)
+
+    // Saving over a name already there asks first, whatever its case, since
+    // the knobs it held are gone for good.
+    await lpf.click()
+    await wait(150)
+    await page.type('.preset-sheet input', 'dark')
+    await press('Enter')
+    await wait(150)
+    const asking = await page.evaluate(() => document.querySelector('.preset-sheet [type="submit"]')?.textContent)
+    check('saving over a preset asks first', asking === 'Replace?', asking)
+    await press('Enter')
+    await wait(150)
+    const after = await page.evaluate(() => [...document.querySelectorAll('.preset-load')].map((b) => b.textContent))
+    check('and the second press replaces it', after.length === 1 && after[0] === 'dark', after.join(','))
+
+    // And deleting one takes two presses.
+    await page.click('.preset-sheet .preset-delete')
+    await wait(100)
+    const once = await page.evaluate(() => ({
+      rows: document.querySelectorAll('.preset-load').length,
+      says: document.querySelector('.preset-delete')?.textContent,
+    }))
+    check('one press on delete only asks', once.rows === 1 && once.says === 'Delete?', JSON.stringify(once))
+    await page.click('.preset-sheet .preset-delete')
+    await wait(100)
+    check('the second deletes it', (await page.evaluate(() => document.querySelectorAll('.preset-load').length)) === 0)
+    await press('Escape')
+    await wait(100)
   }
 
   const options = await page.evaluate(() => [...document.querySelectorAll('.rack-index option')].map((o) => o.value).filter(Boolean))
@@ -450,6 +519,13 @@ console.log('\npresets, the rack index and the compact rack')
   })
   check('and choosing one brings it into view', seen)
   check('picked, so it is lit when it arrives', await page.evaluate(() => !!document.querySelector('.unit-flip[data-module="mix1"].selected')))
+  // And the focus goes with it, so the next Tab is inside that unit rather
+  // than back at the top of the page.
+  check(
+    'with the focus on it',
+    await page.evaluate(() => document.activeElement?.matches('.unit-flip[data-module="mix1"]') ?? false),
+    await page.evaluate(() => document.activeElement?.className ?? ''),
+  )
 
   const tall = await page.evaluate(() => document.querySelector('.rack').scrollHeight)
   check('Compact rack is on the View menu', await pickMenu('View', 'Compact rack'))

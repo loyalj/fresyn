@@ -1,54 +1,6 @@
-import type { CompiledPatch } from '../patch/compile'
-import type { Console } from '../song/types'
-import { SongEngine, type TrackEvent, type TrackMix, type TrackSetup } from './SongEngine'
-import { bankFrom, type SampleRecord } from './samples'
-
-/**
- * Initial state handed to the processor at construction. The tracks must
- * arrive this way rather than by message: a message posted before
- * `startRendering()` is never delivered to the processor, so a message-driven
- * setup renders silence offline.
- */
-export interface ProcessorOptions {
-  /** One rack per track. A single rack is a song with one track in it. */
-  tracks: TrackSetup[]
-  /** Open the gate on the first sample. Used by offline renders. */
-  autoGate?: boolean
-  seed?: number
-  /**
-   * Audio the patches play, for the same reason the tracks come this way: a
-   * message posted before `startRendering()` never arrives, so an offline
-   * render that waited for one would render silence where the samples should
-   * be.
-   */
-  samples?: SampleRecord[]
-  /** Which track's scopes and meters to report; the rack on the bench. */
-  watch?: string
-  /**
-   * How the tracks reach the mix, and the song's desk. Here as well as by
-   * message, for the reason everything else is: set before the processor
-   * existed, a message would have gone nowhere and the song would have
-   * played at the wrong levels until something else changed.
-   */
-  mix?: Record<string, TrackMix>
-  console?: Console
-}
-
-type EngineMessage =
-  | { type: 'param'; track: string; index: number; value: number }
-  | { type: 'gate'; track: string; module: string; open: boolean }
-  | { type: 'track'; id: string; patch: CompiledPatch; params: number[] }
-  | { type: 'removeTrack'; id: string }
-  | { type: 'mix'; mix: Record<string, TrackMix> }
-  | { type: 'console'; console: Console }
-  | { type: 'watch'; track: string }
-  | { type: 'samples'; samples: SampleRecord[] }
-  // The transport, filling a window of the song a few hundred milliseconds
-  // ahead of what is being heard.
-  | { type: 'schedule'; events: TrackEvent[] }
-  | { type: 'seek'; frame: number }
-  | { type: 'unschedule' }
-  | { type: 'allNotesOff' }
+import type { FromWorklet, ProcessorOptions, ToWorklet } from './protocol'
+import { SongEngine } from './SongEngine'
+import { bankFrom } from './samples'
 
 class FresynProcessor extends AudioWorkletProcessor {
   private engine: SongEngine
@@ -56,19 +8,22 @@ class FresynProcessor extends AudioWorkletProcessor {
 
   constructor(options?: { processorOptions?: ProcessorOptions }) {
     super(options)
-    const init = options?.processorOptions
-    if (!init?.tracks?.length) throw new Error('fresyn: no tracks supplied')
+    // No tracks is a valid start rather than an error. An empty project still
+    // opens the device -- the tracks arrive by message as they are added --
+    // and a throw here would kill the node before it rendered a block, which
+    // the page would see only as audio that never came.
+    const init = options?.processorOptions ?? {}
 
-    this.engine = new SongEngine(sampleRate, init.tracks, init.seed, bankFrom(init.samples))
+    this.engine = new SongEngine(sampleRate, init.tracks ?? [], init.seed, bankFrom(init.samples))
     if (init.watch) this.engine.watch(init.watch)
     if (init.mix) this.engine.setMix(init.mix)
     if (init.console) this.engine.setConsole(init.console)
     if (init.autoGate) this.engine.setGate(true)
 
-    this.port.onmessage = (e: MessageEvent<EngineMessage>) => this.handle(e.data)
+    this.port.onmessage = (e: MessageEvent<ToWorklet>) => this.handle(e.data)
   }
 
-  private handle(msg: EngineMessage) {
+  private handle(msg: ToWorklet) {
     switch (msg.type) {
       case 'param':
         this.engine.setParam(msg.track, msg.index, msg.value)
@@ -156,7 +111,7 @@ class FresynProcessor extends AudioWorkletProcessor {
     // module to keep reusing one buffer.
     this.framesSinceReport += left.length
     if (this.framesSinceReport >= sampleRate / 30) {
-      this.port.postMessage({
+      const report: FromWorklet = {
         type: 'frame',
         // Where the transport has reached. The only clock either side agrees
         // on: the main thread counts in wall time, which drifts against the
@@ -168,7 +123,8 @@ class FresynProcessor extends AudioWorkletProcessor {
         // Every track's level after its strip, and the master's: what the
         // Mix view's meters read. Small, so it always travels.
         mix: this.engine.mixLevels(),
-      })
+      }
+      this.port.postMessage(report)
       this.framesSinceReport = 0
     }
 

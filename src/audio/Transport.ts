@@ -95,8 +95,23 @@ export class Transport {
     if (tempoChanged) this.resync()
   }
 
+  /**
+   * The playhead is worked out from where playback was anchored plus the
+   * frames since, wrapped by the loop -- so the anchor has to move when the
+   * loop does. Kept at the old one, a loop shortened mid-play would wrap
+   * everything elapsed so far into the new length and draw the playhead in a
+   * bar the audio is nowhere near. Re-anchored at the last reported frame and
+   * the tick drawn for it, which is exactly where the playhead already is:
+   * nothing jumps, and from here on it counts against the new loop.
+   */
   setLoop(loop: Loop | null) {
+    const same =
+      loop === this.loop ||
+      (loop !== null && this.loop !== null && loop.from === this.loop.from && loop.to === this.loop.to)
     this.loop = loop
+    if (same || !this.playing || this.pending !== null) return
+    this.startFrame = this.lastFrame
+    this.startTick = this.tick
   }
 
   /** Which module in which patch each track's notes are played on. */

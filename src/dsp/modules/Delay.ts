@@ -45,22 +45,38 @@ export class DelayModule extends DspModule {
   private line = new DelayLine(MAX_TIME * this.ctx.sampleRate)
   private damper = new OnePole()
   private time!: Smoothed
+  private cvAmount!: Smoothed
+  private feedback!: Smoothed
+  private damping!: Smoothed
+  private mix!: Smoothed
 
   prepare() {
-    this.time = new Smoothed(
-      this.params[P_TIME] * this.ctx.sampleRate,
-      this.ctx.sampleRate,
-      TIME_GLIDE_MS,
-    )
+    const sr = this.ctx.sampleRate
+    this.time = new Smoothed(this.params[P_TIME] * sr, sr, TIME_GLIDE_MS)
+    // The rest at the rack's usual eight milliseconds. A game writing these
+    // mid-song, or a hand throwing Mix across, is a step in a gain otherwise,
+    // and a step in a gain is a click.
+    this.cvAmount = new Smoothed(this.params[P_CV_AMOUNT], sr)
+    this.feedback = new Smoothed(this.params[P_FEEDBACK], sr)
+    this.damping = new Smoothed(this.params[P_DAMPING], sr)
+    this.mix = new Smoothed(this.params[P_MIX], sr)
   }
 
   process(slots: Float32Array) {
-    const dry = slots[this.ins[IN_SIGNAL]]
+    let dry = slots[this.ins[IN_SIGNAL]]
+    // Kept out of the line, where it would come round again for as long as
+    // there was any feedback at all.
+    if (dry - dry !== 0) dry = 0
+
+    this.cvAmount.set(this.params[P_CV_AMOUNT])
+    this.feedback.set(this.params[P_FEEDBACK])
+    this.damping.set(this.params[P_DAMPING])
+    this.mix.set(this.params[P_MIX])
 
     // In octaves, as every CV amount in the rack is, so a unit of CV halves
     // or doubles the distance rather than moving it by some number of
     // milliseconds that means nothing at the other end of the knob.
-    const cv = slots[this.ins[IN_CV]] * this.params[P_CV_AMOUNT]
+    const cv = slots[this.ins[IN_CV]] * this.cvAmount.next()
     let seconds = this.params[P_TIME] * Math.pow(2, cv)
     if (!(seconds >= MIN_TIME)) seconds = MIN_TIME
     else if (seconds > MAX_TIME) seconds = MAX_TIME
@@ -70,14 +86,22 @@ export class DelayModule extends DspModule {
 
     // Damped on the way out rather than only inside the loop, so the knob
     // still does something with the feedback all the way down.
-    const wet = this.damper.process(read, this.params[P_DAMPING])
+    let wet = this.damper.process(read, this.damping.next())
+    // Belt and braces for whatever the check on the way in did not catch: a
+    // NaN in the line or the damper is otherwise there until the patch is
+    // rebuilt, since tanh(NaN) is NaN and the loop feeds it straight back.
+    if (wet - wet !== 0) {
+      this.line.reset()
+      this.damper.reset()
+      wet = 0
+    }
 
     // Saturating what goes in bounds the loop whatever the feedback is set
     // to: nothing in the line can exceed full scale, so a runaway is not
     // something the knob can ask for.
-    this.line.push(Math.tanh(dry + wet * this.params[P_FEEDBACK]))
+    this.line.push(Math.tanh(dry + wet * this.feedback.next()))
 
-    const mix = this.params[P_MIX]
+    const mix = this.mix.next()
     slots[this.outs[OUT_MIXED]] = dry * (1 - mix) + wet * mix
     // The repeats on their own, for sending them somewhere the dry signal
     // does not go.

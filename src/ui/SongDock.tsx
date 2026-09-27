@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AudioEngine } from '../audio/AudioEngine'
 import type { Transport } from '../audio/Transport'
 import { loadPrefs, savePrefs } from '../patch/storage'
@@ -11,7 +11,6 @@ import {
   removeMarker,
   renameMarker,
   setMeter,
-  removePattern,
   reorderTracks,
   setPatternLength,
   updatePattern,
@@ -56,7 +55,6 @@ interface Props {
   projectName: string
   onProjectName: (name: string) => void
   song: Song
-  onSong: (next: Song) => void
   onNotes: (notes: Note[]) => void
   trackId: string
   onSelectTrack: (id: string) => void
@@ -66,10 +64,23 @@ interface Props {
   patternId: string
   onSelectPattern: (id: string) => void
   onAddPattern: (from?: string) => void
+  /** Delete a pattern and its placements. The app says how to undo it. */
+  onRemovePattern: (id: string) => void
   targets: ReadonlyMap<string, NoteTarget>
   view: 'roll' | 'song' | 'mix'
   onView: (view: 'roll' | 'song' | 'mix') => void
-  /** An edit to the song, grouped for undo under `key`: the Mix view's knobs. */
+  /**
+   * Every edit the dock makes to the song, as a function of the song as it
+   * stands when the edit lands rather than as it stood when the dock last
+   * drew -- two edits in one frame would otherwise have the second undo the
+   * first.
+   *
+   * `key` is for continuous controls only: a tempo being stepped, a knob on
+   * the desk being turned. Edits under the same key in quick succession
+   * fold into one step of undo. A discrete action -- placing a pattern,
+   * muting a track, adding a marker -- passes none, and is always its own
+   * step, however quickly the next one follows it.
+   */
   onEdit: (fn: (song: Song) => Song, key?: string) => void
   /** For the Mix view's meters. */
   engine: AudioEngine
@@ -108,7 +119,6 @@ export function SongDock({
   projectName,
   onProjectName,
   song,
-  onSong,
   onNotes,
   trackId,
   onSelectTrack,
@@ -118,6 +128,7 @@ export function SongDock({
   patternId,
   onSelectPattern,
   onAddPattern,
+  onRemovePattern,
   targets,
   view,
   onView,
@@ -197,9 +208,9 @@ export function SongDock({
       // ignores anything outside the pattern, so shortening is a thing you
       // can take back -- and losing half a part to a mis-click on a dropdown
       // is not a trade anybody would make knowingly.
-      onSong(setPatternLength(song, patternId, next * bar))
+      onEdit((s) => setPatternLength(s, patternId, next * barTicks(s)))
     },
-    [onSong, song, patternId, bar],
+    [onEdit, patternId],
   )
 
   const onGrabResize = useCallback(
@@ -283,16 +294,10 @@ export function SongDock({
             Loop
           </button>
 
-          <label className="dock-field">
-            <span>Tempo</span>
-            <input
-              type="number"
-              min={20}
-              max={300}
-              value={Math.round(song.tempo)}
-              onChange={(e) => onSong({ ...song, tempo: clamp(Number(e.target.value), 20, 300) })}
-            />
-          </label>
+          <TempoField
+            tempo={song.tempo}
+            onTempo={(tempo) => onEdit((s) => (s.tempo === tempo ? s : { ...s, tempo }), 'tempo')}
+          />
 
           {/* Beside the tempo, as it is written on a score. Changing it keeps
               every pattern and placement the same number of bars. */}
@@ -304,7 +309,7 @@ export function SongDock({
                 const [beats, unit] = e.target.value.split('/').map(Number)
                 // Only one of the meters offered; anything else is not a change.
                 if (!METERS.includes(e.target.value) || !(beats > 0)) return
-                onSong(setMeter(song, { beats, unit: unit === 8 ? 8 : 4 }))
+                onEdit((s) => setMeter(s, { beats, unit: unit === 8 ? 8 : 4 }))
               }}
             >
               {METERS.map((m) => (
@@ -454,7 +459,7 @@ export function SongDock({
               song={song}
               onEdit={onEdit}
               onTrack={onTrack}
-              onSolo={(id) => onSong(soloTrack(song, id))}
+              onSolo={(id) => onEdit((s) => soloTrack(s, id))}
               engine={engine}
             />
           ) : (
@@ -467,8 +472,8 @@ export function SongDock({
             onAdd={onAddTrack}
             onRemove={onRemoveTrack}
             onChange={onTrack}
-            onSolo={(id) => onSong(soloTrack(song, id))}
-            onReorder={(ids) => onSong(reorderTracks(song, ids))}
+            onSolo={(id) => onEdit((s) => soloTrack(s, id))}
+            onReorder={(ids) => onEdit((s) => reorderTracks(s, ids))}
           />
 
           {view === 'roll' && pattern ? (
@@ -483,10 +488,12 @@ export function SongDock({
               snapOff={grid === 0}
               scale={song.scale}
               trackHues={trackHues}
-              onScale={(scale) => {
-                const { scale: _, ...rest } = song
-                onSong(scale ? { ...song, scale } : rest)
-              }}
+              onScale={(scale) =>
+                onEdit((s) => {
+                  const { scale: _, ...rest } = s
+                  return scale ? { ...s, scale } : rest
+                })
+              }
               playOffset={inContext ? (placedAt ?? Infinity) : 0}
               onChange={setMine}
               transport={transport}
@@ -496,19 +503,20 @@ export function SongDock({
               song={song}
               patternId={patternId}
               onSelectPattern={onSelectPattern}
-              onRenamePattern={(id, name) => onSong(updatePattern(song, id, { name }))}
-              onColorPattern={(id, color) => onSong(updatePattern(song, id, { color }))}
+              // Renamed a keystroke at a time, so folded like a track name is.
+              onRenamePattern={(id, name) => onEdit((s) => updatePattern(s, id, { name }), `pattern-name:${id}`)}
+              onColorPattern={(id, color) => onEdit((s) => updatePattern(s, id, { color }))}
               onAddPattern={onAddPattern}
-              onRemovePattern={(id) => onSong(removePattern(song, id))}
-              onToggle={(id, tick) => onSong(togglePlacement(song, id, tick))}
-              onMove={(id, from, to) => onSong(movePlacement(song, id, from, to))}
+              onRemovePattern={onRemovePattern}
+              onToggle={(id, tick) => onEdit((s) => togglePlacement(s, id, tick))}
+              onMove={(id, from, to) => onEdit((s) => movePlacement(s, id, from, to))}
               section={section}
               onSection={onSection}
-              onAddMarker={(tick) => onSong(addMarker(song, tick))}
-              onRenameMarker={(tick, name) => onSong(renameMarker(song, tick, name))}
+              onAddMarker={(tick) => onEdit((s) => addMarker(s, tick))}
+              onRenameMarker={(tick, name) => onEdit((s) => renameMarker(s, tick, name))}
               onRemoveMarker={(tick) => {
                 if (section === tick) onSection(null)
-                onSong(removeMarker(song, tick))
+                onEdit((s) => removeMarker(s, tick))
               }}
               transport={transport}
             />
@@ -522,3 +530,78 @@ export function SongDock({
 }
 
 const clamp = (n: number, lo: number, hi: number) => (n < lo ? lo : n > hi ? hi : n)
+
+const TEMPO_MIN = 20
+const TEMPO_MAX = 300
+
+/**
+ * The tempo, typed.
+ *
+ * What is typed is held here until it is finished with -- Enter, or moving
+ * away -- and only then clamped and sent. Clamped on every keystroke, as it
+ * was, the first digit of 140 was a 1, which is below the floor, which made
+ * it 20: the field could not be typed into at all, only stepped. Escape puts
+ * back whatever the song says. The same rules as typing into a knob's
+ * readout.
+ *
+ * The arrow keys and the spinner still step it straight away, since a step
+ * is never a half-typed number. They go out under one undo key, so a run of
+ * them is one step back.
+ */
+function TempoField({ tempo, onTempo }: { tempo: number; onTempo: (tempo: number) => void }) {
+  const shown = String(Math.round(tempo))
+  /** The text being typed, or null while the field just shows the tempo. */
+  const [draft, setDraft] = useState<string | null>(null)
+  /** Set by a key or a spinner click, whose change is a step rather than typing. */
+  const stepping = useRef(false)
+
+  const commit = (text: string) => {
+    setDraft(null)
+    const n = Number(text)
+    if (text.trim() === '' || !Number.isFinite(n)) return
+    const next = clamp(Math.round(n), TEMPO_MIN, TEMPO_MAX)
+    if (next !== Math.round(tempo)) onTempo(next)
+  }
+
+  return (
+    <label className="dock-field">
+      <span>Tempo</span>
+      <input
+        type="number"
+        min={TEMPO_MIN}
+        max={TEMPO_MAX}
+        value={draft ?? shown}
+        aria-label="Tempo, beats per minute"
+        onPointerDown={() => {
+          stepping.current = true
+        }}
+        onKeyDown={(e) => {
+          stepping.current = e.key === 'ArrowUp' || e.key === 'ArrowDown'
+          if (e.key === 'Enter') {
+            commit(e.currentTarget.value)
+          } else if (e.key === 'Escape') {
+            // Handled here, so the rack's own Escape does not also fire.
+            e.stopPropagation()
+            setDraft(null)
+          }
+        }}
+        onChange={(e) => {
+          const text = e.target.value
+          // A step from the arrows or the spinner lands as it is made; typing
+          // waits. A click that only put the caret in the field changes
+          // nothing, so it never gets here.
+          if (stepping.current && draft === null && text !== '') {
+            stepping.current = false
+            commit(text)
+            return
+          }
+          stepping.current = false
+          setDraft(text)
+        }}
+        onBlur={(e) => {
+          if (draft !== null) commit(e.currentTarget.value)
+        }}
+      />
+    </label>
+  )
+}

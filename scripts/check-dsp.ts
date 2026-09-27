@@ -13,7 +13,20 @@ import { GraphEngine } from '../src/dsp/GraphEngine'
 import { LadderFilter, ladderResponse } from '../src/dsp/LadderFilter'
 import type { SampleBank } from '../src/dsp/samples'
 import { SCOPE_CAPTURE } from '../src/dsp/modules/Scope'
-import { svfResponse } from '../src/dsp/modules/Svf'
+import { bell, Section } from '../src/dsp/Biquad'
+import { Limiter } from '../src/dsp/Console'
+import { streamFor } from '../src/dsp/Rng'
+import { Smoothed } from '../src/dsp/Smoothed'
+import { SongEngine } from '../src/dsp/SongEngine'
+import { ChorusModule } from '../src/dsp/modules/Chorus'
+import { DelayModule } from '../src/dsp/modules/Delay'
+import { DriveModule } from '../src/dsp/modules/Drive'
+import { EqModule } from '../src/dsp/modules/Eq'
+import { FormantModule } from '../src/dsp/modules/Formant'
+import { ReverbModule } from '../src/dsp/modules/Reverb'
+import { SvfModule, svfResponse } from '../src/dsp/modules/Svf'
+import type { DspModule } from '../src/dsp/modules/types'
+import { WavefoldModule } from '../src/dsp/modules/Wavefold'
 import { compile } from '../src/patch/compile'
 import { fft } from '../src/ui/fft'
 import { defaultPatch, triggerPatch } from '../src/patch/defaultPatch'
@@ -3410,6 +3423,303 @@ console.log('\nchorus')
   }, { frames: SR / 4 }).scope0).rms
   check('the flanger notches where the delay is half a cycle', flanged(500) < 0.05 && flanged(1000) > 0.6,
     `${flanged(500).toFixed(3)} at 500 Hz, ${flanged(1000).toFixed(3)} at 1 kHz`)
+}
+
+// --- survival, smoothing and the master limiter ------------------------
+/**
+ * A module run on its own, outside any patch, with its jacks as slots in a
+ * small array -- the way the song console hosts its Space and Delay. Lets a
+ * check put a NaN or a knob jump exactly where it wants one.
+ */
+function bench(mod: DspModule, inputs: number, outputs: number, params: number[]) {
+  const slots = new Float32Array(1 + inputs + outputs)
+  mod.ins = Int32Array.from({ length: inputs }, (_, i) => 1 + i)
+  mod.outs = Int32Array.from({ length: outputs }, (_, i) => 1 + inputs + i)
+  mod.params = Float32Array.from(params)
+  mod.prepare()
+  return {
+    slots,
+    /** One sample: inputs in, the first output (and the second, if any) back. */
+    step(...ins: number[]) {
+      for (let i = 0; i < inputs; i++) slots[1 + i] = ins[i] ?? 0
+      mod.process(slots)
+      return slots[1 + inputs]
+    },
+    out(i: number) {
+      return slots[1 + inputs + i]
+    },
+  }
+}
+
+const ctx = { sampleRate: SR }
+const sine = (hz: number, i: number, amp = 0.5) => amp * Math.sin((2 * Math.PI * hz * i) / SR)
+
+console.log('\none bad sample does not kill anything for good')
+{
+  // Each of these holds state that feeds back, and before the guards a
+  // single NaN arriving in it stayed there until the patch was rebuilt.
+  // Fed one, then a tone: the tone has to come out the other side.
+  const cases: [string, () => { step: (x: number) => number }][] = [
+    ['Space', () => bench(new ReverbModule(ctx), 1, 2, [0.6, 2, 0.4, 1])],
+    ['Delay', () => bench(new DelayModule(ctx), 2, 2, [0.05, 0, 0.8, 0.3, 1])],
+    ['SVF lowpass', () => bench(new SvfModule(ctx), 2, 1, [800, 0.7, 0, 0])],
+    ['SVF comb', () => bench(new SvfModule(ctx), 2, 1, [300, 0.9, 0, 5])],
+    ['Flanger', () => bench(new ChorusModule(ctx), 2, 2, [1, 0.5, 0.5, 0.5, 0.6, 0.5])],
+    ['Phaser', () => bench(new ChorusModule(ctx), 2, 2, [2, 0.5, 0.5, 0.5, 0.6, 0.5])],
+    ['Formant', () => bench(new FormantModule(ctx), 3, 1, [2, 1, 0.5, 0, 0])],
+    ['EQ', () => bench(new EqModule(ctx), 1, 1, [6, 200, -6, 1000, 6, 5000])],
+    ['Drive', () => bench(new DriveModule(ctx), 2, 1, [8, 0, 0.2, 1, 0])],
+    ['Wavefolder', () => bench(new WavefoldModule(ctx), 2, 1, [4, 0.3, 0])],
+  ]
+  for (const [name, make] of cases) {
+    const m = make()
+    for (let i = 0; i < 2400; i++) m.step(sine(220, i))
+    m.step(NaN)
+    m.step(Infinity)
+    let bad = 0
+    let sumSq = 0
+    const after = SR / 2
+    for (let i = 0; i < after; i++) {
+      const y = m.step(sine(220, i))
+      if (!Number.isFinite(y)) bad++
+      else if (i >= after / 2) sumSq += y * y
+    }
+    const rms = Math.sqrt(sumSq / (after / 2))
+    check(`${name} comes back after a NaN`, bad === 0 && rms > 0.01, `${bad} bad samples, rms ${rms.toFixed(4)} after`)
+  }
+
+  const section = new Section()
+  bell(section, SR, 1000, 6, 1)
+  section.process(NaN)
+  let y = 0
+  for (let i = 0; i < 1000; i++) y = section.process(sine(1000, i))
+  check('and so does a bare biquad', Number.isFinite(y) && Math.abs(y) > 0, `${y}`)
+}
+
+console.log('\none bad track does not silence the song')
+{
+  // A drone on one track, sent hard to the console's Space and Delay, whose
+  // feedback is where a NaN used to live for the rest of the session.
+  const drone = compile({
+    modules: [
+      { id: 'osc1', type: 'osc', params: { pitch: 220, wave: 3, envAmount: 0 } },
+      { id: 'mix1', type: 'mixer', params: {} },
+    ],
+    cables: [cable('osc1', 'out', 'mix1', 'in1')],
+  })
+  const play = (poison: number) => {
+    const song = new SongEngine(SR, [{ id: 'a', patch: drone }])
+    song.setMix({ a: { gain: 1, audible: true, space: 1, delay: 1 } })
+    song.setGate(true)
+    // Reached into for the check alone: the one way to put a NaN on a
+    // track's output without writing a broken module to do it.
+    const track = (song as unknown as { tracks: { engine: { render(l: Float32Array, r: Float32Array): void } }[] }).tracks[0]
+    const render = track.engine.render.bind(track.engine)
+    let block = 0
+    track.engine.render = (l, r) => {
+      render(l, r)
+      if (block++ === 20) {
+        l[3] = poison
+        r[3] = poison
+        l[9] = 1e30
+      }
+    }
+    const L = new Float32Array(128)
+    const R = new Float32Array(128)
+    const out = new Float32Array(SR)
+    for (let i = 0; i < SR; i += 128) {
+      song.render(L, R)
+      out.set(L.subarray(0, Math.min(128, SR - i)), i)
+    }
+    return out
+  }
+  const clean = play(0)
+  const poisoned = play(NaN)
+  const tail = (b: Float32Array) => stats(b.subarray(SR / 2))
+  check('the song keeps playing after a NaN on a track', stats(poisoned).nan === 0 && tail(poisoned).rms > tail(clean).rms * 0.9,
+    `${stats(poisoned).nan} bad samples, rms ${tail(poisoned).rms.toFixed(4)} against ${tail(clean).rms.toFixed(4)} clean`)
+}
+
+console.log('\nthe master limiter')
+{
+  const lim = new Limiter(SR)
+  const ceiling = Math.pow(10, -1 / 20)
+  const out = { l: 0, r: 0 }
+  let over = 0
+  let bad = 0
+  let worst = 0
+  const rng = streamFor(7, 'limiter')
+  for (let i = 0; i < SR; i++) {
+    // Loud noise with worse spikes in it, and the odd thing that is not a
+    // number at all.
+    let l = (rng() * 2 - 1) * 3 + (i % 997 === 0 ? 20 : 0)
+    let r = (rng() * 2 - 1) * 3
+    if (i === 5000) l = NaN
+    if (i === 6000) r = Infinity
+    if (i === 7000) l = -Infinity
+    lim.process(l, r, out)
+    if (!Number.isFinite(out.l) || !Number.isFinite(out.r)) bad++
+    const a = Math.max(Math.abs(out.l), Math.abs(out.r))
+    if (a > ceiling) over++
+    if (a > worst) worst = a
+  }
+  check('nothing passes the ceiling', over === 0, `${over} over, loudest ${worst.toFixed(6)} against ${ceiling.toFixed(6)}`)
+  check('and nothing that is not a number gets out', bad === 0, `${bad} bad`)
+
+  // Lookahead, which is what makes it a limiter rather than a clipper: a
+  // lone spike in a quiet tone is turned down *before* it arrives, over a
+  // ramp, rather than by a step on the loud sample itself.
+  const la = new Limiter(SR)
+  const n = 4000
+  const spikeAt = 2000
+  const y = new Float64Array(n)
+  const x = (i: number) => (i === spikeAt ? 4 : sine(440, i, 0.3))
+  for (let i = 0; i < n; i++) {
+    la.process(x(i), x(i), out)
+    y[i] = out.l
+  }
+  const d = la.latency
+  const arrives = spikeAt + d
+  check('the mix comes out a fixed lookahead late', d > 0 && d < SR * 0.005 && Math.abs(y[1000 + d] - x(1000)) < 1e-6, `${d} samples`)
+  check('the spike is held to the ceiling', Math.abs(y[arrives]) <= ceiling + 1e-9, `${y[arrives].toFixed(6)}`)
+  // The gain on the sample before the spike, which a clipper leaves at 1.
+  const before = y[arrives - 1] / x(spikeAt - 1)
+  check('and the gain was already on its way down before it got there', before < 0.9, `gain ${before.toFixed(3)} a sample early`)
+  let biggest = 0
+  for (let i = arrives - d; i < arrives - 1; i++) biggest = Math.max(biggest, Math.abs(y[i + 1] / x(i + 1 - d) - y[i] / x(i - d)))
+  check('down a ramp rather than a step', biggest < 0.1, `largest gain step ${biggest.toFixed(4)}`)
+}
+
+console.log('\nsmoothers arrive')
+{
+  const s = new Smoothed(1, SR)
+  s.set(0)
+  let i = 0
+  while (!s.settled && i < SR) {
+    s.next()
+    i++
+  }
+  // A one-pole left to itself is still creeping through denormals seconds
+  // later; this one has to get there, exactly, well inside a second.
+  check('a knob turned to zero reaches exactly zero', s.next() === 0 && i < SR / 4, `${i} samples`)
+
+  const eq = new EqModule(ctx)
+  const rig = bench(eq, 1, 1, [0, 200, 0, 1000, 0, 5000])
+  eq.params[0] = 9
+  eq.params[5] = 3000
+  for (let j = 0; j < SR / 2; j++) rig.step(sine(200, j))
+  const moved = eq.tunings
+  for (let j = 0; j < SR; j++) rig.step(sine(200, j))
+  check('the EQ stops redesigning once its knobs are still', eq.settled && eq.tunings === moved,
+    `${moved} designs while moving, ${eq.tunings - moved} more a second after`)
+}
+
+console.log('\na knob thrown does not click')
+{
+  /** The largest sample-to-sample step in a stretch of output. */
+  const jumpiest = (buf: Float64Array, from: number, to: number) => {
+    let worst = 0
+    for (let i = from + 1; i < to; i++) worst = Math.max(worst, Math.abs(buf[i] - buf[i - 1]))
+    return worst
+  }
+  // Delay Mix from dry to wet on a low tone: without a glide the output
+  // jumps from one to the other on a single sample.
+  {
+    const del = new DelayModule(ctx)
+    const rig = bench(del, 2, 2, [0.123, 0, 0.5, 0.3, 0])
+    const y = new Float64Array(SR)
+    for (let i = 0; i < SR; i++) {
+      if (i === SR / 2) {
+        del.params[4] = 1
+        del.params[2] = 0.9
+      }
+      y[i] = rig.step(sine(110, i))
+    }
+    const steady = jumpiest(y, SR / 4, SR / 2)
+    const thrown = jumpiest(y, SR / 2, SR / 2 + 2000)
+    check('Delay Mix and Feedback glide', thrown < steady * 3 + 0.01, `largest step ${thrown.toFixed(4)} against ${steady.toFixed(4)} at rest`)
+  }
+  // Space Size, which moves all four read positions: stepped, each line
+  // jumps to a different part of its history on the same sample.
+  {
+    const rev = new ReverbModule(ctx)
+    const rig = bench(rev, 1, 2, [0.2, 3, 0.3, 1])
+    const y = new Float64Array(SR)
+    for (let i = 0; i < SR; i++) {
+      if (i === SR / 2) {
+        rev.params[0] = 1
+        rev.params[3] = 0.5
+      }
+      y[i] = rig.step(sine(110, i))
+    }
+    const steady = jumpiest(y, SR / 4, SR / 2)
+    const thrown = jumpiest(y, SR / 2, SR / 2 + 4000)
+    check('Space Size glides', thrown < steady * 2 + 0.005, `largest step ${thrown.toFixed(4)} against ${steady.toFixed(4)} at rest`)
+  }
+}
+
+console.log('\nthe shapers do not alias')
+{
+  /**
+   * The share of a signal's energy that is not on a harmonic of `hz`: what
+   * folded back from above Nyquist, which is by construction nowhere near
+   * one when `hz` does not divide the sample rate.
+   */
+  const aliased = (buf: Float64Array, hz: number) => {
+    const n = 8192
+    const re = new Float32Array(n)
+    const im = new Float32Array(n)
+    for (let i = 0; i < n; i++) {
+      // Hann, so a harmonic's energy stays within a few bins of it.
+      re[i] = buf[buf.length - n + i] * (0.5 - 0.5 * Math.cos((2 * Math.PI * i) / n))
+    }
+    fft(re, im)
+    let harmonic = 0
+    let other = 0
+    for (let k = 2; k < n / 2; k++) {
+      const p = re[k] * re[k] + im[k] * im[k]
+      const f = (k * SR) / n
+      const h = Math.round(f / hz)
+      if (h >= 1 && Math.abs(f - h * hz) < (4 * SR) / n) harmonic += p
+      else other += p
+    }
+    return other / (harmonic + other)
+  }
+  const HZ = 3217
+  const run = (mod: DspModule, params: number[], ins: number) => {
+    const rig = bench(mod, ins, 1, params)
+    const y = new Float64Array(16384)
+    for (let i = 0; i < y.length; i++) y[i] = rig.step(sine(HZ, i, 0.9))
+    return y
+  }
+  /** The same curves, sample by sample with no averaging: what the module used to do. */
+  const naive = (shape: (v: number) => number, gain: number) => {
+    const y = new Float64Array(16384)
+    for (let i = 0; i < y.length; i++) y[i] = shape(sine(HZ, i, 0.9) * gain)
+    return y
+  }
+  const clip = (v: number) => (v > 1 ? 1 : v < -1 ? -1 : v)
+  const tri = (v: number) => {
+    const w = v - 4 * Math.round(v * 0.25)
+    return w > 1 ? 2 - w : w < -1 ? -2 - w : w
+  }
+  const pairs: [string, Float64Array, Float64Array][] = [
+    ['tanh at 32x', run(new DriveModule(ctx), [32, 0, 0, 1, 0], 2), naive(Math.tanh, 32)],
+    ['clip at 32x', run(new DriveModule(ctx), [32, 1, 0, 1, 0], 2), naive(clip, 32)],
+    ['the wavefolder at 8x', run(new WavefoldModule(ctx), [8, 0, 0], 2), naive(tri, 8)],
+  ]
+  for (const [name, smooth, raw] of pairs) {
+    const a = aliased(smooth, HZ)
+    const b = aliased(raw, HZ)
+    check(`${name} folds back far less`, a < b * 0.5, `${(a * 100).toFixed(2)}% off-harmonic, against ${(b * 100).toFixed(2)}% without`)
+  }
+
+  // And a quiet signal still comes out as it went in: the averaging is the
+  // curve, not a filter with a sound of its own.
+  const quiet = run(new DriveModule(ctx), [1, 1, 0, 1, 0], 2)
+  let off = 0
+  for (let i = 8000; i < 16000; i++) off = Math.max(off, Math.abs(quiet[i] - 0.5 * (sine(HZ, i, 0.9) + sine(HZ, i - 1, 0.9))))
+  check('below the rails a clip is still a straight wire', off < 0.02, `worst ${off.toFixed(4)} from the input`)
 }
 
 // --- determinism -----------------------------------------------------

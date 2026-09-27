@@ -184,6 +184,22 @@ export function barTicks(song: { meter?: Meter }): number {
   return (m.beats * PPQ * 4) / m.unit
 }
 
+/**
+ * The shortest a pattern can be: a beat, or a bar where a bar is shorter than
+ * that -- one bar of 1/8 is half a beat, and a one-bar pattern has to be
+ * allowed in any meter. Shared by the length picker and the file reader, so a
+ * pattern the editor would refuse cannot arrive through a file instead.
+ */
+export function minPatternLength(song: { meter?: Meter }): number {
+  return Math.min(PPQ, barTicks(song))
+}
+
+/**
+ * The quietest a note can be. Not zero: a note at no velocity is a note that
+ * cannot be heard or seen in the lane, and cannot be dragged back up either.
+ */
+export const MIN_VELOCITY = 0.01
+
 /** Ticks in one beat: a quarter note in 3/4, an eighth in 6/8. */
 export function beatTicks(song: { meter?: Meter }): number {
   return (PPQ * 4) / (song.meter?.unit ?? 4)

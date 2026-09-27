@@ -1,7 +1,4 @@
-import { defOf } from './defs'
-import type { Built } from './library'
-import { wire } from './library'
-import type { Patch } from './types'
+import { rack, type Built, type Unit } from './build'
 
 /**
  * Off-the-shelf voices: racks that play like an instrument the moment they
@@ -65,43 +62,6 @@ export interface Instrument {
 }
 
 // --- building ------------------------------------------------------------
-
-/** `[id, type, knobs]`, in rack order. Ids use the Modules menu's slugs. */
-type Unit = [id: string, type: string, knobs?: Record<string, number>]
-
-/**
- * A rack from a list of units and the cables between them.
- *
- * Knobs are checked against the catalogue as the rack is made, so a typo
- * throws here -- and so in the check -- instead of shipping a voice with a
- * knob quietly left at its default.
- */
-function rack(units: Unit[], cables: string[]): Built {
-  const patch: Patch = {
-    modules: units.map(([id, type]) => ({
-      id,
-      type,
-      params: {},
-      ...(type === 'gate' ? { key: 'Space' } : {}),
-    })),
-    cables: [],
-  }
-  const values: Record<string, number> = {}
-  for (const [id, type, knobs] of units) {
-    const specs = defOf(type).params
-    for (const [knob, value] of Object.entries(knobs ?? {})) {
-      const spec = specs.find((s) => s.id === knob)
-      if (!spec) throw new Error(`${id} (${type}) has no knob "${knob}"`)
-      // Out of range is a typo too: the panel would clamp it, and the voice
-      // would ship sounding like a setting nobody chose.
-      if (value < spec.min || value > spec.max) {
-        throw new Error(`${id}.${knob} = ${value} is outside ${spec.min}..${spec.max}`)
-      }
-      values[`${id}.${knob}`] = value
-    }
-  }
-  return { patch: wire(patch, ...cables), values }
-}
 
 /**
  * The top of every pitched voice: Space into a Keyboard with this many

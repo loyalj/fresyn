@@ -78,8 +78,13 @@ export function fill(
       // through the rest of the session. Closing a gate that is already shut
       // costs nothing, so this is done for every track rather than by working
       // out which ones are actually holding something.
+      //
+      // With no pitch, which the engine reads as every voice rather than a
+      // voice on pitch zero: a chord pad holding three notes across the seam
+      // has three voices to let go of, and naming any one pitch would leave
+      // the other two sounding on every pass until the polyphony ran out.
       for (const t of song.tracks) {
-        events.push({ frame: Math.round(frame), track: t.id, kind: 'off', pitch: 0, velocity: 0 })
+        events.push({ frame: Math.round(frame), track: t.id, kind: 'off', velocity: 0 })
       }
       tick = loop.from
       continue
@@ -91,7 +96,22 @@ export function fill(
     const reach = (untilFrame - frame) / fpt
     const windowEnd = Math.min(tick + reach, end)
 
-    for (const e of songEventTicks(song, tick, windowEnd)) {
+    // The window is half-open, so a note-off landing exactly on the end would
+    // belong to the next window -- and there is no next window: the song
+    // stops or wraps first. That is the last note of every song, which would
+    // otherwise hang until the stop, or through the whole tail of a bounce.
+    // So a window reaching the end also takes the releases sitting on it.
+    // Only releases: a press on `end` belongs past the loop or the song, and
+    // one at the start of the loop is picked up by the window after the wrap.
+    const edge =
+      windowEnd === end
+        ? songEventTicks(song, end, end + 1).filter((e) => e.kind === 'off' && e.tick === end)
+        : []
+
+    const inWindow = songEventTicks(song, tick, windowEnd)
+    if (edge.length) inWindow.push(...edge)
+
+    for (const e of inWindow) {
       // Measured from the cursor rather than from the start of the song, so
       // that a loop's tenth pass is stamped where it is actually playing.
       events.push({
@@ -130,10 +150,18 @@ export function playheadTick(
   const elapsed = (frame - startFrame) / fpt
   if (!loop || !(loop.to > loop.from)) return startTick + elapsed
 
+  // Only wrapped once it is actually past the end of the loop, which is what
+  // `fill` does with the audio. A start before the loop plays straight up to
+  // it first, and drawing that folded into the loop would put the playhead a
+  // bar or two away from what is sounding. A start at or past the end is
+  // wrapped straight to the top, again as `fill` does.
   const length = loop.to - loop.from
-  const into = startTick - loop.from + elapsed
+  const start = startTick >= loop.to ? loop.from : startTick
+  const at = start + elapsed
+  if (at < loop.to && (at >= loop.from || start < loop.from)) return at
   // A true modulo: the playhead can be asked about a frame slightly before
   // the one playback started on, and a negative remainder would draw it past
   // the end of the loop rather than just inside it.
+  const into = at - loop.from
   return loop.from + (((into % length) + length) % length)
 }

@@ -1,3 +1,4 @@
+import { normalizeSong } from './normalize'
 import { SCALES } from './scale'
 import {
   DEFAULT_CONSOLE,
@@ -83,8 +84,6 @@ export function parseSong(input: unknown): Song | null {
     playlist.push({ pattern: str(item.pattern), tick: num(item.tick, 0, 0, Number.MAX_SAFE_INTEGER) })
   }
 
-  if (tracks.length === 0 || patterns.length === 0) return null
-
   const song: Song = {
     tempo: num(data.tempo, 120, 20, 300),
     tracks,
@@ -137,7 +136,12 @@ export function parseSong(input: unknown): Song | null {
     }
   }
 
-  return song
+  // Everything above is about reading what is there; this is about what a
+  // song is allowed to be, and is the same rule an edit is held to. Last, so
+  // that the check for an empty song sees what survived it.
+  const normal = normalizeSong(song)
+  if (normal.tracks.length === 0 || normal.patterns.length === 0) return null
+  return normal
 }
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '')

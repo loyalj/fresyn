@@ -94,7 +94,10 @@ export class ChorusModule extends DspModule {
       this.wetR = 0
     }
 
-    const x = slots[this.ins[IN_SIGNAL]]
+    let x = slots[this.ins[IN_SIGNAL]]
+    // Kept out of the lines and the all-passes, where it would outlive the
+    // sample it arrived on; the check below catches anything made inside.
+    if (x - x !== 0) x = 0
     const depth = this.depth.next()
     let center = this.center.next() + slots[this.ins[IN_CV]]
     if (!(center >= 0)) center = 0
@@ -137,6 +140,19 @@ export class ChorusModule extends DspModule {
       const f = 80 * Math.pow(2, center * 6)
       wetL = this.allpass(this.apL, x + fb * Math.tanh(this.wetL), f * Math.pow(2, 2 * depth * lfoL), sr)
       wetR = this.allpass(this.apR, x + fb * Math.tanh(this.wetR), f * Math.pow(2, 2 * depth * lfoR), sr)
+    }
+    // tanh(NaN) is NaN, so the saturation in the loop is no protection from
+    // one bad sample: it would go round the line or the all-passes for ever.
+    // Anything but a number clears every mode's state, which is the same
+    // reset a mode change does, and the next sample is clean.
+    const s = wetL + wetR
+    if (s - s !== 0) {
+      this.lineL.reset()
+      this.lineR.reset()
+      this.apL.fill(0)
+      this.apR.fill(0)
+      wetL = 0
+      wetR = 0
     }
     this.wetL = wetL
     this.wetR = wetR

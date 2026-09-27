@@ -81,10 +81,16 @@ export function saveMyPatch(
   return write(MINE_KEY, next) ? { updated: at >= 0 } : null
 }
 
-export function deleteMyPatch(id: string) {
-  write(MINE_KEY, loadMyPatches().filter((p) => p.id !== id))
+/**
+ * Take a rack off the shelf. False when storage refused the write, in which
+ * case it is still there -- the star and the recent entry are only tidied
+ * once the rack itself has gone.
+ */
+export function deleteMyPatch(id: string): boolean {
+  if (!write(MINE_KEY, loadMyPatches().filter((p) => p.id !== id))) return false
   write(FAVOURITES_KEY, loadFavourites().filter((f) => f !== id))
   write(RECENT_KEY, loadRecent().filter((r) => r !== id))
+  return true
 }
 
 /** The rack a saved entry holds, read back through the patch reader. */
@@ -141,18 +147,32 @@ export function loadPresets(type: string): ModulePreset[] {
 }
 
 /**
+ * Whether two preset names are the same preset. Case is not a difference: a
+ * "Robot" and a "robot" side by side in a list of six is a mistake, not a
+ * choice, so saving one replaces the other -- and deleting, asking and saving
+ * all have to agree on that, or a delete could miss the preset it names.
+ */
+const samePreset = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
+
+/** The preset of this name for a type, if there is one. */
+export function findPreset(type: string, name: string): ModulePreset | undefined {
+  return loadPresets(type).find((p) => samePreset(p.name, name))
+}
+
+/**
  * Save a module's knobs as a preset for its type. A preset of that name is
  * replaced, as saving again usually means. Returns false when storage refused.
  */
 export function savePreset(type: string, name: string, params: Record<string, number>): boolean {
   const all = allPresets()
-  const list = loadPresets(type).filter((p) => p.name.toLowerCase() !== name.toLowerCase())
+  const list = loadPresets(type).filter((p) => !samePreset(p.name, name))
   all[type] = [...list, { name, params: { ...params } }]
   return write(PRESETS_KEY, all)
 }
 
-export function deletePreset(type: string, name: string) {
+/** Returns false when storage refused, and the preset is still there. */
+export function deletePreset(type: string, name: string): boolean {
   const all = allPresets()
-  all[type] = loadPresets(type).filter((p) => p.name !== name)
-  write(PRESETS_KEY, all)
+  all[type] = loadPresets(type).filter((p) => !samePreset(p.name, name))
+  return write(PRESETS_KEY, all)
 }

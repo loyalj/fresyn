@@ -9,12 +9,18 @@
  */
 import { compile, withBypass } from '../src/patch/compile'
 import {
+  cableId,
   connect as wireUp,
   copyModules,
+  disconnect,
   pasteModules,
+  reorderModules,
   setCableColor,
+  setSample,
   toggleBypass,
 } from '../src/patch/edit'
+import { idFor, pruneSamples } from '../src/audio/sampleStore'
+import { sampleIdsIn } from '../src/patch/sampleRefs'
 import { signalOf } from '../src/patch/defs'
 import { defOf } from '../src/patch/defs'
 import { triggerPatch } from '../src/patch/defaultPatch'
@@ -222,8 +228,10 @@ console.log('\nbundling a rack with its audio')
   const audio = new Uint8Array(512)
   for (let i = 0; i < audio.length; i++) audio[i] = (i * 7) & 0xff
 
-  const zip = makeBundle(stored, [
-    { id: 'ab12-34', name: 'kick.wav', type: 'audio/wav', bytes: audio.buffer as ArrayBuffer },
+  const realId = idFor(audio.buffer as ArrayBuffer)
+  const honest = toStored('Kick rack', setSample(patch, 'smp1', { id: realId, name: 'kick.wav' }), initialValues(patch))
+  const zip = makeBundle(honest, [
+    { id: realId, name: 'kick.wav', type: 'audio/wav', bytes: audio.buffer as ArrayBuffer },
   ])
 
   check('the bundle is a zip', zip[0] === 0x50 && zip[1] === 0x4b)
@@ -236,7 +244,8 @@ console.log('\nbundling a rack with its audio')
   check('with one sample beside it', back.samples.length === 1, `${back.samples.length}`)
 
   const sample = back.samples[0]
-  check('under its own hash', sample?.id === 'ab12-34', String(sample?.id))
+  check('under its own hash', sample?.id === realId, String(sample?.id))
+  check('with nothing to warn about', back.warnings.length === 0, back.warnings.join(' | '))
   check('and its own name', sample?.name === 'kick.wav', String(sample?.name))
 
   // Byte for byte: the file that went in is the file that comes out, which is
@@ -251,6 +260,47 @@ console.log('\nbundling a rack with its audio')
   const stripped = makeBundle(stored, [])
   const thin = await readBundle(stripped.slice().buffer as ArrayBuffer)
   check('a bundle with no audio in it still opens', thin.samples.length === 0)
+
+  // A bundle that files its audio under an id the bytes do not hash to. The
+  // audio goes in under its real id and the patch is pointed at that, so no
+  // other file's name is ever given to these bytes.
+  const liar = makeBundle(stored, [
+    { id: 'ab12-34', name: 'kick.wav', type: 'audio/wav', bytes: audio.buffer as ArrayBuffer },
+  ])
+  const fixed = await readBundle(liar.slice().buffer as ArrayBuffer)
+  check('a sample filed under the wrong id is re-hashed', fixed.samples[0]?.id === realId, String(fixed.samples[0]?.id))
+  const fixedPatch = fromStored(fixed.stored)
+  check(
+    'and the patch is re-pointed at it',
+    !('error' in fixedPatch) && fixedPatch.patch.modules[0].sample?.id === realId,
+    'error' in fixedPatch ? fixedPatch.error : String(fixedPatch.patch.modules[0].sample?.id),
+  )
+  check('with a warning saying so', fixed.warnings.length === 1, fixed.warnings.join(' | '))
+
+  // Names are UTF-8, and the zip says so: bit 11 in both headers.
+  const localFlags = zip[6] | (zip[7] << 8)
+  check('the zip marks its names as UTF-8', (localFlags & 0x0800) !== 0, localFlags.toString(16))
+  const centralAt = zip.findIndex((_, i) => zip[i] === 0x50 && zip[i + 1] === 0x4b && zip[i + 2] === 0x01 && zip[i + 3] === 0x02)
+  const centralFlags = zip[centralAt + 8] | (zip[centralAt + 9] << 8)
+  check('in the central directory too', centralAt > 0 && (centralFlags & 0x0800) !== 0, centralFlags.toString(16))
+}
+
+console.log('\nwhich samples are still wanted')
+{
+  const live: Patch = {
+    modules: [
+      { id: 'smp1', type: 'sampler', params: {}, sample: { id: 'aaaa-1', name: 'a.wav' } },
+      { id: 'smp2', type: 'sampler', params: {} },
+    ],
+    cables: [],
+  }
+  const shelf = [
+    { id: 'x', name: 'Saved', savedAt: 0, stored: toStored('Saved', { modules: [{ id: 'smp1', type: 'sampler', params: {}, sample: { id: 'bbbb-2', name: 'b.wav' } }], cables: [] }, {}) },
+  ]
+  const ids = sampleIdsIn({ bench: { patch: live, values: {} } })
+  sampleIdsIn(shelf, ids)
+  check('a live project and a stored shelf are both walked', ids.has('aaaa-1') && ids.has('bbbb-2') && ids.size === 2, [...ids].join(','))
+  check('pruning with no keep list deletes nothing', (await pruneSamples(null)) === 0)
 }
 
 // --- patches saved before a module was renamed -----------------------
@@ -377,6 +427,68 @@ console.log('\nfiles that are not quite right')
     check('a value under minimum is clamped', v['lpf1.resonance'] === 0, String(v['lpf1.resonance']))
     check('a non-numeric value falls back to the default', v['lpf1.drive'] === 1.5, String(v['lpf1.drive']))
   }
+
+  // A switch is a switch: a stepped knob comes back on one of its steps.
+  const stepped = fromStored({
+    version: 1,
+    patch: { modules: [{ id: 'osc1', type: 'osc', params: { wave: 1.6 } }], cables: [] },
+  })
+  check(
+    'a stepped value is rounded to a step',
+    !('error' in stepped) && stepped.patch.modules[0].params.wave === 2,
+    'error' in stepped ? stepped.error : String(stepped.patch.modules[0].params.wave),
+  )
+
+  // Cables are made again the way the editor makes them.
+  const tangled = fromStored({
+    version: 1,
+    patch: {
+      modules: [
+        { id: 'osc1', type: 'osc', params: {} },
+        { id: 'osc2', type: 'osc', params: {} },
+        { id: 'lpf1', type: 'ladder', params: {} },
+      ],
+      cables: [
+        { id: 'whatever', from: { module: 'osc1', port: 'out' }, to: { module: 'lpf1', port: 'in' }, color: 120 },
+        // A second cable into the same input.
+        { from: { module: 'osc2', port: 'out' }, to: { module: 'lpf1', port: 'in' } },
+        // The same cable again.
+        { from: { module: 'osc1', port: 'out' }, to: { module: 'lpf1', port: 'in' } },
+        // Backwards: an input as the source.
+        { from: { module: 'lpf1', port: 'in' }, to: { module: 'osc2', port: 'fm' } },
+        // A jack the module does not have.
+        { from: { module: 'osc1', port: 'nope' }, to: { module: 'osc2', port: 'fm' } },
+      ],
+    },
+  })
+  if ('error' in tangled) {
+    check('a tangled patch loads', false, tangled.error)
+  } else {
+    check('only the cables the editor could make survive', tangled.patch.cables.length === 1, JSON.stringify(tangled.patch.cables))
+    const kept = tangled.patch.cables[0]
+    check('its id is the editor\'s, not the file\'s', kept?.id === cableId(kept.from, kept.to), kept?.id)
+    check('and it keeps its colour', kept?.color === 120)
+    check('every dropped cable is reported', tangled.warnings.length === 4, tangled.warnings.join(' | '))
+  }
+}
+
+console.log('\nedits that change nothing')
+{
+  const base = triggerPatch()
+  const withSample: Patch = { ...base, modules: [...base.modules, { id: 'smp1', type: 'sampler', params: {}, sample: { id: 'a', name: 'a' } }] }
+  check('the same sample again returns the same patch', setSample(withSample, 'smp1', { id: 'a', name: 'a' }) === withSample)
+  check('clearing a module with no sample returns the same patch', setSample(base, 'osc1', null) === base)
+  check('bypass on a module that has none returns the same patch', toggleBypass(base, 'gate1') === base)
+  check('bypass on a module that is not there returns the same patch', toggleBypass(base, 'nope') === base)
+  check('colouring a cable that is not there returns the same patch', setCableColor(base, 'nope', 40) === base)
+  check('removing a cable that is not there returns the same patch', disconnect(base, 'nope') === base)
+  check(
+    'a reorder into the same order returns the same patch',
+    reorderModules(base, base.modules.map((m) => m.id)) === base,
+  )
+  check('but a real reorder does not', reorderModules(base, [...base.modules].reverse().map((m) => m.id)) !== base)
+  const h = initHistory(base)
+  check('and so none of them is an undo step', commit(h, disconnect(base, 'nope')) === h)
 }
 
 // --- bypass, module clipboard, cable colours ----------------------------

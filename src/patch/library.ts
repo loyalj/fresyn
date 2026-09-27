@@ -1,6 +1,6 @@
+import { add, wire, type Built } from './build'
 import { defOf } from './defs'
 import { triggerPatch } from './defaultPatch'
-import { addModule, connect, nextModuleId } from './edit'
 import { INSTRUMENTS, type InstrumentCategory } from './instruments'
 import type { Patch, PatchModule } from './types'
 
@@ -80,44 +80,10 @@ interface Entry extends Omit<Template, 'build' | 'category' | 'teaches' | 'tutor
   whole?: true
 }
 
-export interface Built {
-  patch: Patch
-  /**
-   * Knob positions, keyed `moduleId.paramId` and sparse: anything a template
-   * does not mention is left wherever the module's own default puts it.
-   */
-  values: Record<string, number>
-}
-
-// --- building blocks ---------------------------------------------------
-
-/** `"osc1.out -> lpf1.in"`, as the manual writes a cable. */
-export function wire(patch: Patch, ...wires: string[]): Patch {
-  let next = patch
-  for (const w of wires) {
-    const [from, to] = w.split(' -> ')
-    const [fromModule, fromPort] = from.split('.')
-    const [toModule, toPort] = to.split('.')
-    const before = next
-    next = connect(next, { module: fromModule, port: fromPort }, { module: toModule, port: toPort })
-    // `connect` silently declines a cable it cannot make, which would leave a
-    // template quietly missing a step and sounding like nothing much.
-    if (next === before) throw new Error(`the cable "${w}" did not connect`)
-  }
-  return next
-}
-
-/**
- * Add a module, at the top.
- *
- * Where the Modules menu puts them, and these racks are meant to be the ones
- * a reader following the tutorial ends up with. What a patch does is decided
- * by its cables rather than by the order of its units, but a template built
- * in an order nobody can actually produce would not match the prose.
- */
-export function add(patch: Patch, type: string): Patch {
-  return addModule(patch, { id: nextModuleId(patch, type), type, params: {} }, 'top')
-}
+// Re-exported so the manual's check and anything else written against the
+// library keep finding them here; they live in `build.ts` so the instruments
+// can use them without importing the library that lists the instruments.
+export { add, wire, type Built }
 
 /** Several of a kind, in order. */
 function addAll(patch: Patch, types: string[]): Patch {

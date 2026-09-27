@@ -1,4 +1,6 @@
+import { ADAA_EPS, saneInput } from '../Adaa'
 import { DcBlocker } from '../DcBlocker'
+import { Smoothed } from '../Smoothed'
 import { DspModule } from './types'
 
 const P_FOLD = 0
@@ -29,8 +31,22 @@ const IN_CV = 1
 export class WavefoldModule extends DspModule {
   /** Folding an off-centre wave leaves DC behind, as asymmetric clipping does. */
   private dc = new DcBlocker(this.ctx.sampleRate)
+  private fold!: Smoothed
+  private symmetry!: Smoothed
+  /** The last input to the fold and its antiderivative there, for the averaging. */
+  private x1 = 0
+  private f1 = 0
+
+  prepare() {
+    // Both of these move where on the folds the wave lands, and a step in
+    // that is a step in the output.
+    this.fold = new Smoothed(this.params[P_FOLD], this.ctx.sampleRate)
+    this.symmetry = new Smoothed(this.params[P_SYMMETRY], this.ctx.sampleRate)
+  }
 
   process(slots: Float32Array) {
+    this.fold.set(this.params[P_FOLD])
+    this.symmetry.set(this.params[P_SYMMETRY])
     // Symmetry is added after the gain, not before it. Folding repeats every
     // four units of its input, so an offset applied first is multiplied by
     // Fold as well -- and at a Fold of 2 the two ends of the Symmetry knob
@@ -41,10 +57,34 @@ export class WavefoldModule extends DspModule {
     // the folds the signal reaches, at the cost of the level going with it.
     // This moves the folding itself and leaves the level alone.
     const fold =
-      this.params[P_FOLD] * Math.pow(2, slots[this.ins[IN_CV]] * this.params[P_CV_AMOUNT])
-    const x = slots[this.ins[IN_SIGNAL]] * fold + this.params[P_SYMMETRY]
-    slots[this.outs[0]] = this.dc.process(triangleFold(x))
+      this.fold.next() * Math.pow(2, slots[this.ins[IN_CV]] * this.params[P_CV_AMOUNT])
+    const x = saneInput(slots[this.ins[IN_SIGNAL]] * fold + this.symmetry.next())
+
+    // Averaged over the step from the last input rather than taken at this
+    // one (see `Adaa.ts`). A folder is the worst aliaser in the rack: every
+    // crease is a corner, and at Fold 16 a high note has dozens of them a
+    // cycle, most of whose harmonics have nowhere to go but back down.
+    const f = foldIntegral(x)
+    const dx = x - this.x1
+    const y = dx > ADAA_EPS || dx < -ADAA_EPS ? (f - this.f1) / dx : triangleFold(0.5 * (x + this.x1))
+    this.x1 = x
+    this.f1 = f
+    slots[this.outs[0]] = this.dc.process(y)
   }
+}
+
+/**
+ * The antiderivative of `triangleFold`, from zero.
+ *
+ * The fold spends as long below zero as above it in each period, so its
+ * integral comes back to where it started every four units: it can be taken
+ * on the wrapped input, and stays small however far past the rails the input
+ * goes -- which keeps the subtraction in the averaging accurate at any Fold.
+ */
+function foldIntegral(v: number) {
+  const w = v - 4 * Math.round(v * 0.25)
+  const a = w < 0 ? -w : w
+  return a <= 1 ? 0.5 * a * a : 2 * a - 0.5 * a * a - 1
 }
 
 /**

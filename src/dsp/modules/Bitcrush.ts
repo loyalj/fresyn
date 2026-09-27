@@ -1,3 +1,4 @@
+import { Smoothed } from '../Smoothed'
 import { DspModule } from './types'
 
 const P_BITS = 0
@@ -33,6 +34,12 @@ export class BitcrushModule extends DspModule {
   private phase = 0
   /** The reading it is holding. */
   private held = 0
+  /** A crossfade, so a step in it is a step between two different signals. */
+  private mix!: Smoothed
+
+  prepare() {
+    this.mix = new Smoothed(this.params[P_MIX], this.ctx.sampleRate)
+  }
 
   process(slots: Float32Array) {
     const dry = slots[this.ins[IN_SIGNAL]]
@@ -56,7 +63,8 @@ export class BitcrushModule extends DspModule {
       this.held = levels > 0 ? step / levels : 0
     }
 
-    const mix = this.params[P_MIX]
+    this.mix.set(this.params[P_MIX])
+    const mix = this.mix.next()
     slots[this.outs[0]] = dry * (1 - mix) + this.held * mix
   }
 }

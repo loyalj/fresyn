@@ -306,7 +306,7 @@ console.log('\nwith nothing patched')
 // --- patch an oscillator into it -------------------------------------
 console.log('\nwith an oscillator patched in')
 {
-  await page.keyboard.press('Tab')
+  await page.keyboard.press('KeyF')
   await settle(FLIP_SETTLE)
 
   const from = await centreOf('osc1', 'out')
@@ -329,7 +329,7 @@ console.log('\nwith an oscillator patched in')
     )
   }
 
-  await page.keyboard.press('Tab')
+  await page.keyboard.press('KeyF')
   await settle(FLIP_SETTLE)
 
   // The stock rack's oscillator comes up with its own envelope at full, so a
@@ -413,7 +413,7 @@ console.log('\nwith a second signal on B')
   const empty = await traceB()
   check('nothing is drawn on B while it is empty', empty && empty.lit < 40, empty ? `${empty.lit} px` : '')
 
-  await page.keyboard.press('Tab')
+  await page.keyboard.press('KeyF')
   await settle(FLIP_SETTLE)
 
   const from = await centreOf('lpf1', 'out')
@@ -436,7 +436,7 @@ console.log('\nwith a second signal on B')
     )
   }
 
-  await page.keyboard.press('Tab')
+  await page.keyboard.press('KeyF')
   await settle(FLIP_SETTLE)
   await settle(600)
 

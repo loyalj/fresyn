@@ -62,7 +62,7 @@ await page.goto(URL, { waitUntil: 'networkidle0' })
 
 // --- flip ------------------------------------------------------------
 console.log('\nflip')
-await page.keyboard.press('Tab')
+await page.keyboard.press('KeyF')
 await new Promise((r) => setTimeout(r, FLIP_SETTLE))
 
 check('rack is flipped', await page.evaluate(() => !!document.querySelector('.rack-flipped')))
@@ -218,9 +218,74 @@ console.log('\ngrabbing along a long cable')
   }
 }
 
+// --- patching from the keyboard ---------------------------------------
+// Enter on a jack picks a cable up, Enter on a jack of the other kind plugs
+// it in, and Escape puts it down -- the drag, without a pointer.
+console.log('\npatching from the keyboard')
+{
+  check(
+    'the face turned away is inert',
+    await page.evaluate(() => [...document.querySelectorAll('.unit-face-front')].every((f) => f.inert)),
+  )
+  const free = await page.evaluate(() => {
+    const jacks = [...document.querySelectorAll('.jack')].filter((j) => !j.classList.contains('occupied'))
+    const out = jacks.find((j) => j.dataset.kind === 'output')
+    const inp = jacks.find((j) => j.dataset.kind === 'input' && j.dataset.module !== out?.dataset.module)
+    return out && inp
+      ? {
+          out: { m: out.dataset.module, p: out.dataset.port, label: out.getAttribute('aria-label'), tab: out.tabIndex },
+          inp: { m: inp.dataset.module, p: inp.dataset.port },
+        }
+      : null
+  })
+  check('there is a free output and a free input', !!free)
+  if (free) {
+    check('a jack is in the tab order', free.out.tab === 0)
+    check('and says whose it is', free.out.label.includes(free.out.m) && free.out.label.includes('output'), free.out.label)
+    const focusJack = (j) =>
+      page.evaluate(
+        ({ m, p }) => document.querySelector(`.jack[data-module="${m}"][data-port="${p}"]`).focus(),
+        j,
+      )
+    const before = await cableCount()
+    await focusJack(free.out)
+    await page.keyboard.press('Enter')
+    await new Promise((r) => setTimeout(r, 150))
+    check('Enter on an output picks a cable up', await page.evaluate(() => !!document.querySelector('.cable-dragging')))
+    check(
+      'and the inputs light up',
+      (await page.evaluate(() => document.querySelectorAll('.jack.candidate').length)) > 0,
+    )
+    await focusJack(free.inp)
+    await page.keyboard.press('Enter')
+    await new Promise((r) => setTimeout(r, 200))
+    check('Enter on an input plugs it in', (await cableCount()) === before + 1, `${before} -> ${await cableCount()}`)
+    check('the input reads as occupied', await isOccupied(free.inp.m, free.inp.p))
+    check('and nothing is left in hand', await page.evaluate(() => !document.querySelector('.cable-dragging')))
+    check(
+      'the jack says it is patched now',
+      await page.evaluate(
+        ({ m, p }) => /patched/.test(document.querySelector(`.jack[data-module="${m}"][data-port="${p}"]`).getAttribute('aria-label')),
+        free.inp,
+      ),
+    )
+
+    // Space works as Enter does, and Escape puts the cable down again.
+    await focusJack(free.out)
+    await page.keyboard.press('Space')
+    await new Promise((r) => setTimeout(r, 150))
+    check('Space picks one up too', await page.evaluate(() => !!document.querySelector('.cable-dragging')))
+    await page.keyboard.press('Escape')
+    await new Promise((r) => setTimeout(r, 150))
+    check('Escape puts it down', await page.evaluate(() => !document.querySelector('.cable-dragging')))
+    check('without patching anything', (await cableCount()) === before + 1)
+    check('and without offering modules for it', await page.evaluate(() => !document.querySelector('.search')))
+  }
+}
+
 // --- flip back -------------------------------------------------------
 console.log('\nflip back')
-await page.keyboard.press('Tab')
+await page.keyboard.press('KeyF')
 await new Promise((r) => setTimeout(r, FLIP_SETTLE))
 check('rack returns to the front', await page.evaluate(() => !document.querySelector('.rack-flipped')))
 check('cables are hidden on the front', (await cableCount()) === 0)

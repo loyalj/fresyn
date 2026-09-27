@@ -19,6 +19,14 @@ export class DcBlocker {
 
   process(x: number): number {
     const y = x - this.x1 + this.r * this.y1
+    // A single NaN or infinity arriving here would otherwise live in `y1`
+    // for ever, and everything after the blocker with it. `y - y` is zero for
+    // any finite number and NaN for anything else.
+    if (y - y !== 0) {
+      this.x1 = 0
+      this.y1 = 0
+      return 0
+    }
     this.x1 = x
     this.y1 = y
     return y

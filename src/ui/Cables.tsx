@@ -18,6 +18,12 @@ export interface DragState {
    * the modules it could go to.
    */
   pulled?: true
+  /**
+   * Picked up with Enter or Space on a jack rather than by a drag. Nothing
+   * is holding a pointer down, so a pointer's release does not plug it in
+   * anywhere unless it lands on a jack, and Escape puts it down.
+   */
+  keyboard?: true
 }
 
 interface Props {

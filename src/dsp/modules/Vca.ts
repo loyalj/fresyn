@@ -1,3 +1,4 @@
+import { railed } from '../Rail'
 import { Smoothed } from '../Smoothed'
 import { DspModule } from './types'
 
@@ -25,6 +26,8 @@ export class VcaModule extends DspModule {
     let gain = this.level.next() + slots[this.ins[IN_CV]] * this.cvAmount.next()
     if (gain < 0) gain = 0
 
-    slots[this.outs[0]] = slots[this.ins[IN_SIGNAL]] * gain
+    // Railed for the patch with the VCA's own output on its CV jack, which
+    // multiplies itself up to infinity in a few milliseconds; see `Rail.ts`.
+    slots[this.outs[0]] = railed(slots[this.ins[IN_SIGNAL]] * gain)
   }
 }

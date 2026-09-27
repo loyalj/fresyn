@@ -1,11 +1,19 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { AudioEngine } from './audio/AudioEngine'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
+import { AudioEngine, type EngineStatus } from './audio/AudioEngine'
 import { Transport } from './audio/Transport'
 import { renderVariation } from './audio/render'
 import { normalize } from './audio/normalize'
 import { renderSong, renderStems, type StemMix } from './audio/renderSong'
 import { SampleLibrary } from './audio/SampleLibrary'
-import { askToPersist } from './audio/sampleStore'
+import { askToPersist, pruneSamples } from './audio/sampleStore'
 import { encodeWav } from './audio/wav'
 import { peakEnvelope } from './audio/waveform'
 import { makeZip, type ZipEntry } from './audio/zip'
@@ -14,6 +22,7 @@ import { useInput } from './input/useInput'
 import { canUseFileHandles, pickFileToOpen, pickFileToSave, writeFile } from './patch/fileAccess'
 import { defOf, MODULE_GROUPS, modulesByGroup } from './patch/defs'
 import { defaultPatch } from './patch/defaultPatch'
+import { sampleIdsIn, sampleIdsInLocalStorage } from './patch/sampleRefs'
 import { type Template } from './patch/library'
 import {
   addModule,
@@ -69,6 +78,7 @@ import {
   nextPatternId,
   nextTrackId,
   patternOnly,
+  removePattern,
   removeTrack,
   setPatternNotes,
   updateTrack,
@@ -82,7 +92,8 @@ import { Cables, type DragState } from './ui/Cables'
 import { nearestCable, type JackGeometry } from './ui/cableGeometry'
 import { EngineContext } from './ui/EngineContext'
 import { SampleContext } from './ui/SampleContext'
-import { ExportPanel, type ExportSettings } from './ui/ExportPanel'
+import { DEFAULT_EXPORT, ExportPanel, type ExportSettings } from './ui/ExportPanel'
+import { UnitBoundary } from './ui/ErrorBoundary'
 import { jackKey, type JackKind } from './ui/Jack'
 import { LibraryDialog } from './ui/LibraryDialog'
 import { ModuleSearch, type SearchPick } from './ui/ModuleSearch'
@@ -102,6 +113,12 @@ import { useRackDrag } from './ui/useRackDrag'
 
 /** Must match the flip transition in app.css. */
 const FLIP_MS = 420
+/**
+ * The key that turns the rack round: a bare F, for Flip. Not Tab, which it
+ * was for a long time -- Tab is how a keyboard gets from one control to the
+ * next, and a page that takes it cannot be used without a pointer.
+ */
+const FLIP_KEY = 'KeyF'
 /**
  * Things on a panel that handle their own clicks. The rack hit-tests cables
  * under the pointer, so without this a click on a unit's remove button would
@@ -225,13 +242,53 @@ export default function App() {
    */
   const transport = useMemo(() => new Transport(engine, initialDoc.song), [engine, initialDoc])
 
-  const [running, setRunning] = useState(false)
+  /**
+   * What the audio is actually doing, read from the engine rather than
+   * guessed from whether a start was asked for: a context can be suspended
+   * by the browser, or a worklet can die, long after it first came up.
+   */
+  const engineStatus = useSyncExternalStore(
+    useCallback((fn: () => void) => engine.onStatus(fn), [engine]),
+    () => engine.status,
+  )
+  const running = engineStatus.state === 'running'
+  /** Which failure the card is showing, so dismissing one does not hide the next. */
+  const [audioDismissed, setAudioDismissed] = useState<EngineStatus | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
 
-  const [takes, setTakes] = useState<Take[]>([])
+  // A rebuilt worklet starts its sample clock again at 0, so a schedule
+  // written against the old one would land nowhere. Stop, and let the next
+  // Play begin from a clean cursor.
+  useEffect(() => {
+    if (engineStatus.state === 'failed') transport.stop()
+  }, [engineStatus, transport])
+
+  /**
+   * A notice that stays until it is dismissed: the autosave has failed, and
+   * the work on screen is not being kept. 'dismissed' until the next save
+   * succeeds, so the same failure is said once rather than every 400 ms,
+   * and a later one after a recovery is said again.
+   */
+  const [autosave, setAutosave] = useState<'ok' | 'failed' | 'dismissed'>('ok')
+
+  /**
+   * Rendered takes, by the track they were rendered from.
+   *
+   * Per track because a take is a recording of one rack: with one list for
+   * the whole app, switching tracks left the last track's takes on the new
+   * track's recorder, and downloading them named the files after whichever
+   * track happened to be on the bench. Outside the history like the
+   * selection -- a take is a file waiting to be written, not an edit.
+   */
+  const [takeSets, setTakeSets] = useState<Readonly<Record<string, Take[]>>>({})
   const [playing, setPlaying] = useState<number | null>(null)
   const [exporting, setExporting] = useState<string | null>(null)
-  const [lastSettings, setLastSettings] = useState<ExportSettings | null>(null)
+  /**
+   * Each track's render settings. Up here rather than in the recorder's
+   * panel, which is remounted whenever the rack changes track or the
+   * recorder moves, and forgot them every time.
+   */
+  const [exportSettings, setExportSettings] = useState<Readonly<Record<string, ExportSettings>>>({})
 
   const [appearance, setAppearance] = useAppearanceState()
 
@@ -384,6 +441,23 @@ export default function App() {
   /** Asked once, and never waited on: see `sampleStore`. */
   useEffect(() => askToPersist(), [])
 
+  /**
+   * Let go of audio nothing refers to any more, once, as the page opens.
+   *
+   * What counts as referred to is everything the browser keeps -- the
+   * autosave, the shelf, the presets -- plus the racks this session opened
+   * with. If any of that cannot be read the answer is null and nothing is
+   * removed: a sample kept by mistake costs some disk, one removed by mistake
+   * is gone. The store also spares anything added in the last hour, so a
+   * sample dropped in another tab a moment ago is not swept up here.
+   */
+  useEffect(() => {
+    const keep = sampleIdsInLocalStorage()
+    if (!keep) return
+    sampleIdsIn(initialDoc.racks, keep)
+    void pruneSamples(keep).catch(() => {})
+  }, [initialDoc])
+
   /** Change the rack on the bench, whichever track that is. */
   const editRack = useCallback(
     (fn: (rack: Rack) => Rack, key?: string) => {
@@ -488,19 +562,6 @@ export default function App() {
     [editRack, trackId],
   )
 
-  /**
-   * An edit from the dock.
-   *
-   * Coalesced under one key, the way a knob drag is: dragging the tempo
-   * spinner or stepping the bar count produces a value per press, and a
-   * history full of one-bar increments is not something anybody wants to walk
-   * back through. A note gesture already arrives as a single change.
-   */
-  const setSong = useCallback(
-    (next: Song) => commitDoc((doc) => ({ ...doc, song: next }), 'song'),
-    [commitDoc],
-  )
-
   const setNotes = useCallback(
     (notes: Parameters<typeof setPatternNotes>[2]) =>
       editSong((s) => setPatternNotes(s, activePattern, notes)),
@@ -520,8 +581,15 @@ export default function App() {
     setSelected(id)
   }, [commitDoc, song])
 
+  /**
+   * Take a track out, rack and all. No confirm: it undoes like any other
+   * edit, and the notice says so -- which is what makes a single click on
+   * an × safe to offer.
+   */
   const onRemoveTrack = useCallback(
     (id: string) => {
+      const gone = song.tracks.find((t) => t.id === id)
+      if (!gone || song.tracks.length <= 1) return
       commitDoc((doc) => {
         const song = removeTrack(doc.song, id)
         if (song === doc.song) return doc
@@ -529,8 +597,20 @@ export default function App() {
         delete racks[id]
         return { ...doc, song, racks }
       })
+      setNotice(`Removed ${gone.name || 'the track'} -- Ctrl+Z to undo`)
     },
-    [commitDoc],
+    [commitDoc, song.tracks],
+  )
+
+  /** A pattern and every placement of it, likewise undoable and said so. */
+  const onRemovePattern = useCallback(
+    (id: string) => {
+      const gone = song.patterns.find((p) => p.id === id)
+      if (!gone || song.patterns.length <= 1) return
+      editSong((s) => removePattern(s, id))
+      setNotice(`Removed ${gone.name || 'the pattern'} -- Ctrl+Z to undo`)
+    },
+    [editSong, song.patterns],
   )
 
   const onTrack = useCallback(
@@ -716,10 +796,39 @@ export default function App() {
     transport.setTargets(targets)
   }, [transport, targets])
 
+  /**
+   * The autosave waiting to be written, if one is. Held so that leaving the
+   * page can write it at once: debounced alone, the last 400 ms of work before
+   * a tab was closed never reached storage.
+   */
+  const pendingSave = useRef<(() => void) | null>(null)
+
   useEffect(() => {
-    const t = setTimeout(() => saveLocalProject(toStoredProject(name, song, racks)), AUTOSAVE_MS)
+    const save = () => {
+      pendingSave.current = null
+      const ok = saveLocalProject(toStoredProject(name, song, racks))
+      setAutosave((was) => (ok ? 'ok' : was === 'ok' ? 'failed' : was))
+    }
+    pendingSave.current = save
+    const t = setTimeout(save, AUTOSAVE_MS)
     return () => clearTimeout(t)
   }, [name, song, racks])
+
+  // `pagehide` is the one a browser reliably fires on the way out, including
+  // into the back-forward cache; a tab going to the background is the other
+  // moment a page may never come back from, on a phone especially.
+  useEffect(() => {
+    const flush = () => pendingSave.current?.()
+    const onHidden = () => {
+      if (document.visibilityState === 'hidden') flush()
+    }
+    window.addEventListener('pagehide', flush)
+    document.addEventListener('visibilitychange', onHidden)
+    return () => {
+      window.removeEventListener('pagehide', flush)
+      document.removeEventListener('visibilitychange', onHidden)
+    }
+  }, [])
 
   useEffect(() => {
     const t = setTimeout(() => saveDock(dock), AUTOSAVE_MS)
@@ -1289,11 +1398,26 @@ export default function App() {
 
   useEffect(() => () => stopPreview.current?.(), [])
 
+  // A take playing belongs to the track it came from; the list it would be
+  // lit in goes away with the track.
+  useEffect(() => stop(), [trackId, stop])
+
+  /** The takes on the bench's recorder: this track's, and no other's. */
+  const takes = takeSets[trackId] ?? []
+  const setTakes = useCallback(
+    (id: string, fn: (prev: Take[]) => Take[]) =>
+      setTakeSets((all) => ({ ...all, [id]: fn(all[id] ?? []) })),
+    [],
+  )
+
   const onRender = useCallback(
     async (settings: ExportSettings) => {
+      // Captured at the start: the render takes a while, and a track switched
+      // to half way through is not the one these takes are of.
+      const id = trackId
+      const source = patchName
       stop()
-      setTakes([])
-      setLastSettings(settings)
+      setTakes(id, () => [])
       setExporting('Rendering')
 
       try {
@@ -1334,9 +1458,11 @@ export default function App() {
             right: level.right,
             envelope: peakEnvelope(level.left, level.right, WAVE_COLUMNS),
             keep: true,
+            source,
+            bitDepth: settings.bitDepth,
           })
         }
-        setTakes(rendered)
+        setTakes(id, () => rendered)
         setNotice(
           `Rendered ${rendered.length} take${rendered.length === 1 ? '' : 's'}` +
             // Said, because the file is quieter than the target it was set to.
@@ -1350,7 +1476,7 @@ export default function App() {
         setExporting(null)
       }
     },
-    [patch, values, stop],
+    [patch, values, stop, trackId, patchName, setTakes],
   )
 
   const onPlayTake = useCallback(
@@ -1379,8 +1505,9 @@ export default function App() {
     const kept = takes.filter((t) => t.keep)
     if (kept.length === 0) return
 
-    const bitDepth = lastSettings?.bitDepth ?? 16
-    const base = slug(patchName)
+    // Named after the sound they were rendered from, as it was called then.
+    const base = slug(kept[0].source)
+    const bitDepth = kept[0].bitDepth
     const files: ZipEntry[] = kept.map((take) => ({
       name:
         kept.length === 1
@@ -1392,7 +1519,7 @@ export default function App() {
     if (files.length === 1) downloadBytes(files[0].data, files[0].name, 'audio/wav')
     else downloadBytes(makeZip(files), `${base}.zip`, 'application/zip')
     setNotice(`Saved ${files.length} take${files.length === 1 ? '' : 's'}`)
-  }, [takes, patchName, lastSettings])
+  }, [takes])
 
   // --- cables --------------------------------------------------------
   const occupied = useMemo(() => {
@@ -1443,6 +1570,48 @@ export default function App() {
       setDrag({ anchor: ref, anchorKind: kind, cursor })
     },
     [patch, editPatch],
+  )
+
+  /**
+   * Patching from the keyboard: Enter or Space on a jack.
+   *
+   * The same cable in hand as a drag, marked as the keyboard's so the
+   * pointer's release does not end it. With nothing in hand, a press picks
+   * a cable up -- pulling it out of a patched input, as grabbing one does.
+   * With a cable in hand, a press on a jack of the other kind plugs it in;
+   * on one of the same kind it starts again from there. Escape puts it down.
+   * As the focus moves between jacks the loose end follows it, so you can
+   * see where it would go.
+   */
+  const onJackKey = useCallback(
+    (ref: PortRef, kind: JackKind, action: 'press' | 'focus') => {
+      const at = geometry[jackKey(ref)]
+      const current = dragRef.current
+      if (action === 'focus') {
+        if (current?.keyboard && at) setDrag({ ...current, cursor: at })
+        return
+      }
+      const cursor = at ?? { x: 0, y: 0 }
+
+      if (current?.keyboard && kind !== current.anchorKind) {
+        setDrag(null)
+        const from = current.anchorKind === 'output' ? current.anchor : ref
+        const to = current.anchorKind === 'output' ? ref : current.anchor
+        editPatch((p) => connect(p, from, to))
+        return
+      }
+
+      if (kind === 'input') {
+        const existing = cableInto(patch, ref)
+        if (existing) {
+          editPatch((p) => disconnect(p, existing.id))
+          setDrag({ anchor: existing.from, anchorKind: 'output', cursor, pulled: true, keyboard: true })
+          return
+        }
+      }
+      setDrag({ anchor: ref, anchorKind: kind, cursor, keyboard: true })
+    },
+    [geometry, patch, editPatch],
   )
 
   // Cables are hit-tested here rather than through SVG hit areas, so that a
@@ -1503,8 +1672,10 @@ export default function App() {
       // it, the way the fastest racks work -- the cable stays in hand until a
       // module is chosen for it, and Escape drops it. One pulled out of a jack
       // and let go of is unplugged, which is what that gesture has always been.
+      // A cable picked up from the keyboard and clicked away is put down:
+      // offering modules for it would be answering a question nobody asked.
       if (!(target instanceof HTMLElement)) {
-        if (!current.pulled) setSearch({ cable: current })
+        if (!current.pulled && !current.keyboard) setSearch({ cable: current })
         return
       }
 
@@ -1539,7 +1710,7 @@ export default function App() {
   const gateOn = useCallback(
     (moduleId: string) => {
       engine.gate(true, trackId, moduleId)
-      void engine.start().then(() => setRunning(true))
+      void engine.start()
     },
     [engine, trackId],
   )
@@ -1638,13 +1809,19 @@ export default function App() {
   // The rack's own shortcuts come last so they win a collision. A cap refuses
   // to take one of them in the first place, so this is only a backstop -- for
   // a patch file that named Tab before that rule existed, say.
+  //
+  // Except the flip, which comes first and so loses one. It is a bare F, and
+  // F is a perfectly good key to play a Trigger from; a rack whose Trigger
+  // is on F plays it, and turns round from the button or the View menu. The
+  // flip used to be Tab, which is the browser's key for moving between
+  // controls and is nobody's to take.
   useInput({
     // A cap waiting for a key needs the keyboard to itself, or the key being
     // assigned would fire whatever it is already bound to on the way past.
     suspended: menuOpen || libraryOpen || search !== null || listening !== null,
     bindings: [
+      { code: FLIP_KEY, onDown: flip },
       ...triggerKeys,
-      { code: 'Tab', onDown: flip },
       { code: 'KeyK', ctrl: true, onDown: () => setSearch({}) },
       { code: 'KeyM', ctrl: true, onDown: toggleDock },
       // Taken from the browser, whose own Save would write out the page.
@@ -1655,7 +1832,18 @@ export default function App() {
       // there, the same keys copy notes.
       { code: 'KeyC', ctrl: true, onDown: () => rackHasKeys() && copyPicked() },
       { code: 'KeyV', ctrl: true, onDown: () => rackHasKeys() && pasteClip() },
-      { code: 'Escape', onDown: () => rackHasKeys() && setPicked(new Set()) },
+      {
+        code: 'Escape',
+        onDown: () => {
+          // A cable picked up from the keyboard is put down before anything
+          // else Escape might mean.
+          if (dragRef.current?.keyboard) {
+            setDrag(null)
+            return
+          }
+          if (rackHasKeys()) setPicked(new Set())
+        },
+      },
       { code: 'KeyZ', ctrl: true, onDown: stepBack },
       { code: 'KeyZ', ctrl: true, shift: true, onDown: stepForward },
       { code: 'KeyY', ctrl: true, onDown: stepForward },
@@ -1678,19 +1866,25 @@ export default function App() {
   })
   const recorder = (
     <>
-      <ExportPanel onExport={(s) => void onRender(s)} busy={exporting} />
+      <ExportPanel
+        settings={exportSettings[trackId] ?? DEFAULT_EXPORT}
+        onSettings={(next) => setExportSettings((all) => ({ ...all, [trackId]: next }))}
+        onExport={(s) => void onRender(s)}
+        busy={exporting}
+        hasTakes={takes.length > 0}
+      />
       <TakeList
         takes={takes}
         playing={playing}
         onPlay={(i) => void onPlayTake(i)}
         onToggleKeep={(i) =>
-          setTakes((prev) => prev.map((t) => (t.index === i ? { ...t, keep: !t.keep } : t)))
+          setTakes(trackId, (prev) => prev.map((t) => (t.index === i ? { ...t, keep: !t.keep } : t)))
         }
-        onKeepAll={(keep) => setTakes((prev) => prev.map((t) => ({ ...t, keep })))}
+        onKeepAll={(keep) => setTakes(trackId, (prev) => prev.map((t) => ({ ...t, keep })))}
         onExport={onDownloadTakes}
         onDiscard={() => {
           stop()
-          setTakes([])
+          setTakes(trackId, () => [])
         }}
       />
     </>
@@ -1785,7 +1979,7 @@ export default function App() {
     {
       label: 'View',
       items: [
-        { kind: 'toggle', label: 'Back panel', shortcut: 'Tab', checked: flipped, onSelect: flip },
+        { kind: 'toggle', label: 'Back panel', shortcut: 'F', checked: flipped, onSelect: flip },
         // Beside the rack's flip, because the dock is the other half of the
         // room: the button on the dock's bar does the same thing.
         { kind: 'toggle', label: 'Music', shortcut: 'Ctrl+M', checked: dock.open, onSelect: toggleDock },
@@ -1845,11 +2039,18 @@ export default function App() {
     },
   ]
 
-  /** Scroll a unit into view and pick it, so it is lit when it arrives. */
-  const jumpTo = (id: string) => {
-    document
-      .querySelector(`.unit-flip[data-module="${CSS.escape(id)}"]`)
-      ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  /**
+   * Scroll a unit into view and pick it, so it is lit when it arrives.
+   *
+   * With `focus`, the focus goes to the unit as well -- for the Jump menu,
+   * which used to blur itself and leave the focus on nothing, so the next
+   * Tab started again from the top of the page. On the unit, the next Tab is
+   * its first control.
+   */
+  const jumpTo = (id: string, focus = false) => {
+    const el = document.querySelector<HTMLElement>(`.unit-flip[data-module="${CSS.escape(id)}"]`)
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    if (focus) el?.focus({ preventScroll: true })
     setPicked(new Set([id]))
   }
 
@@ -1921,8 +2122,7 @@ export default function App() {
             title="Jump to a module in this rack"
             onChange={(e) => {
               const id = e.target.value
-              e.target.blur()
-              if (id) jumpTo(id)
+              if (id) jumpTo(id, true)
             }}
           >
             <option value="">Jump to…</option>
@@ -1951,6 +2151,49 @@ export default function App() {
             dock by its measured height (see noticesRef). The region is always
             there, so a screen reader hears each message arrive. */}
         <div className="notices" ref={noticesRef} role="status" aria-live="polite">
+          {/* Stays until dismissed, unlike the notices below it that fade:
+              it is the one message that means work is being lost. */}
+          {autosave === 'failed' && (
+            <div className="notice notice-warn">
+              <span className="notice-text">
+                Autosave failed — storage is full; save the project to a file
+              </span>
+              <button
+                className="notice-close"
+                onClick={() => setAutosave('dismissed')}
+                aria-label="Dismiss"
+                title="Dismiss"
+                type="button"
+              >
+                ×
+              </button>
+            </div>
+          )}
+          {/* Also kept up until dismissed: with the audio stopped, nothing
+              on the rack makes a sound and nothing else says why. The button
+              is the user gesture a browser wants before it lets audio out. */}
+          {(engineStatus.state === 'failed' || engineStatus.state === 'suspended') &&
+            audioDismissed !== engineStatus && (
+              <div className="notice notice-warn">
+                <span className="notice-text">
+                  {engineStatus.state === 'failed'
+                    ? `Audio stopped${engineStatus.error ? `: ${engineStatus.error}` : ''}`
+                    : 'Audio is paused by the browser'}
+                </span>
+                <button className="notice-action" onClick={() => void engine.start()} type="button">
+                  {engineStatus.state === 'failed' ? 'Retry' : 'Resume'}
+                </button>
+                <button
+                  className="notice-close"
+                  onClick={() => setAudioDismissed(engineStatus)}
+                  aria-label="Dismiss"
+                  title="Dismiss"
+                  type="button"
+                >
+                  ×
+                </button>
+              </div>
+            )}
           {notice && (
             <div className="notice">
               <span className="notice-text">{notice}</span>
@@ -2012,8 +2255,8 @@ export default function App() {
               onPointerLeave={() => setHoveredCable(undefined)}
             >
               {rack.order.flatMap((id) => byId.get(id) ?? []).map((m) => (
+                <UnitBoundary key={m.id} moduleId={m.id} onRemove={() => onRemoveModule(m.id)}>
                 <RackUnit
-                  key={m.id}
                   def={defOf(m.type)}
                   moduleId={m.id}
                   flipped={flipped}
@@ -2093,10 +2336,12 @@ export default function App() {
                   isCandidate={isCandidate}
                   register={registerJack}
                   onJackDown={onJackDown}
+                  onJackKey={onJackKey}
                   onMove={(delta) => onMoveModule(m.id, delta)}
                   onDuplicate={() => onDuplicateModule(m.id)}
                   onRemove={() => onRemoveModule(m.id)}
                 />
+                </UnitBoundary>
               ))}
 
               {flipped && !turning && (
@@ -2128,7 +2373,6 @@ export default function App() {
             projectName={name}
             onProjectName={setProjectName}
             song={song}
-            onSong={setSong}
             onNotes={setNotes}
             trackId={trackId}
             onSelectTrack={setSelected}
@@ -2138,6 +2382,7 @@ export default function App() {
             patternId={activePattern}
             onSelectPattern={setPatternId}
             onAddPattern={onAddPattern}
+            onRemovePattern={onRemovePattern}
             targets={targets}
             view={dockView}
             onView={setDockView}

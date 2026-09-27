@@ -88,6 +88,12 @@ export async function renderSong(
     routing: opts.routing,
   })
 
+  // The limiter looks ahead, so everything comes out this many samples late.
+  // Rendered that much longer and cut off the front again, or a loop would
+  // start with a sliver of silence and end with its first moment in the
+  // tail -- a click at every seam of a file whose one job is to tile.
+  const latency = player.latency
+  const rendered = total + latency
   const left = new Float32Array(total)
   const right = new Float32Array(total)
   const bl = new Float32Array(BLOCK)
@@ -97,16 +103,21 @@ export async function renderSong(
   const chunk = Math.max(BLOCK, Math.round(sr / 2))
   let sinceYield = 0
 
-  for (let i = 0; i < total; i += BLOCK) {
+  for (let i = 0; i < rendered; i += BLOCK) {
     player.render(bl, br)
-    const n = Math.min(BLOCK, total - i)
-    left.set(bl.subarray(0, n), i)
-    right.set(br.subarray(0, n), i)
+    // Where this block lands once the latency is taken off, and which part
+    // of it survives: a block straddling the cut keeps only its later end.
+    const from = Math.max(0, latency - i)
+    const to = Math.min(BLOCK, rendered - i)
+    if (to > from) {
+      left.set(bl.subarray(from, to), i + from - latency)
+      right.set(br.subarray(from, to), i + from - latency)
+    }
 
     sinceYield += BLOCK
     if (sinceYield >= chunk && opts.onProgress) {
       sinceYield = 0
-      await opts.onProgress(i / total)
+      await opts.onProgress(i / rendered)
     }
   }
 

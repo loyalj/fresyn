@@ -180,6 +180,54 @@ console.log('compiled    : %d modules  %s', render.modules, render.order)
 console.log('offline     : peak=%s rms=%s nan=%d frames=%d',
   render.peak.toFixed(4), render.rms.toFixed(4), render.nan, render.frames)
 if (render.warnings.length) console.log('warnings    :', render.warnings)
+
+// The autosave says when it could not save, and is written on the way out
+// rather than only after the debounce.
+{
+  const nudge = async () => {
+    await page.evaluate(() => document.querySelector('.unit-face-front .knob svg[role="slider"]')?.focus())
+    await page.keyboard.press('ArrowUp')
+  }
+  const warning = () =>
+    page.evaluate(() => document.querySelector('.notice-warn .notice-text')?.textContent ?? null)
+  await page.evaluate(() => {
+    const real = Storage.prototype.setItem
+    window.__realSetItem = real
+    Storage.prototype.setItem = function (key, value) {
+      if (key === 'fresyn.project.v1') throw new DOMException('full', 'QuotaExceededError')
+      return real.call(this, key, value)
+    }
+  })
+  await nudge()
+  await new Promise((r) => setTimeout(r, 700))
+  const said = await warning()
+  if (!said || !/Autosave failed/.test(said)) problems.push(`a failed autosave was not reported (${said})`)
+  await nudge()
+  await new Promise((r) => setTimeout(r, 700))
+  const stillOne = await page.evaluate(() => document.querySelectorAll('.notice-warn').length)
+  if (stillOne !== 1) problems.push(`the autosave warning appeared ${stillOne} times`)
+  // Stays until it is dismissed: the plain notices go after four seconds.
+  await new Promise((r) => setTimeout(r, 4300))
+  if (!(await warning())) problems.push('the autosave warning did not stay up')
+
+  await page.evaluate(() => {
+    Storage.prototype.setItem = window.__realSetItem
+  })
+  await nudge()
+  await new Promise((r) => setTimeout(r, 700))
+  if (await warning()) problems.push('the autosave warning did not clear once a save succeeded')
+
+  // Flushed on pagehide, well inside the 400 ms debounce.
+  const savedBefore = await page.evaluate(() => localStorage.getItem('fresyn.project.v1'))
+  await nudge()
+  const flushed = await page.evaluate(() => {
+    window.dispatchEvent(new Event('pagehide'))
+    return localStorage.getItem('fresyn.project.v1')
+  })
+  if (flushed === savedBefore) problems.push('the autosave was not written on pagehide')
+  console.log('autosave    :', said, '| flushed on pagehide:', flushed !== savedBefore)
+}
+
 console.log('problems    :', problems.length ? problems : 'none')
 
 await browser.close()

@@ -1,5 +1,5 @@
-import { makeZip, readZip } from '../audio/zip'
 import type { StoredSample } from '../audio/sampleStore'
+import { archiveDoc, makeArchive, readArchive, repointSamples } from '../patch/archive'
 import { initialValues } from '../patch/edit'
 import { fromStored, toStored, type StoredPatch } from '../patch/serialize'
 import type { Patch } from '../patch/types'
@@ -91,7 +91,11 @@ export function fromStoredProject(input: unknown): LoadedProject | { error: stri
   >
 
   for (const track of song.tracks) {
-    const raw = stored[track.id]
+    // Own properties only. The song reader has already refused ids like
+    // `__proto__`, and this is the other half: a track called `toString`
+    // with no rack in the file should be a track with no rack, not one whose
+    // rack is a function borrowed from every object there is.
+    const raw = Object.prototype.hasOwnProperty.call(stored, track.id) ? stored[track.id] : undefined
     if (raw === undefined) {
       warnings.push(`track "${track.name}" has no rack in this file`)
       continue
@@ -135,7 +139,6 @@ function fromSingleRack(data: Record<string, unknown>): LoadedProject | { error:
 // --- the file -----------------------------------------------------------
 
 const PROJECT_ENTRY = 'project.json'
-const SAMPLE_DIR = 'samples'
 
 /**
  * A project and the audio it plays, in one file.
@@ -152,52 +155,22 @@ export function makeProjectBundle(
   stored: StoredProject,
   samples: readonly StoredSample[],
 ): Uint8Array {
-  const encoder = new TextEncoder()
-  const entries = [
-    { name: PROJECT_ENTRY, data: encoder.encode(JSON.stringify(stored, null, 2)) },
-    ...samples.map((s) => ({
-      name: `${SAMPLE_DIR}/${s.id}/${safeName(s.name)}`,
-      data: new Uint8Array(s.bytes),
-    })),
-  ]
-  return makeZip(entries as { name: string; data: Uint8Array<ArrayBuffer> }[])
+  return makeArchive(PROJECT_ENTRY, stored, samples)
 }
 
+/**
+ * Unpack a project zip. `warnings` lists what was repaired in the archive
+ * itself -- a sample whose bytes do not hash to the id it was filed under --
+ * and belongs alongside the warnings `fromStoredProject` gives for the rest.
+ */
 export async function readProjectBundle(
   bytes: ArrayBuffer,
-): Promise<{ stored: unknown; samples: StoredSample[] }> {
-  const entries = await readZip(new Uint8Array(bytes))
+): Promise<{ stored: unknown; samples: StoredSample[]; warnings: string[] }> {
+  const archive = await readArchive(bytes)
   // A project zip, or a patch bundle from before there were projects: both
   // are read here, and the reader above tells them apart by their contents.
-  const doc = entries.find((e) => e.name === PROJECT_ENTRY || e.name === 'patch.json')
-  if (!doc) throw new Error('that zip has no project in it')
-
-  const samples: StoredSample[] = []
-  for (const entry of entries) {
-    const parts = entry.name.split('/')
-    if (parts.length !== 3 || parts[0] !== SAMPLE_DIR || !parts[1]) continue
-    samples.push({
-      id: parts[1],
-      name: parts[2],
-      type: typeFor(parts[2]),
-      bytes: entry.data.slice().buffer as ArrayBuffer,
-    })
-  }
-
-  return { stored: JSON.parse(new TextDecoder().decode(doc.data)), samples }
-}
-
-/** No separators and nothing exotic: this becomes a path inside the archive. */
-function safeName(name: string): string {
-  const cleaned = name.replace(/[\\/:*?"<>|]+/g, '_').trim()
-  return cleaned || 'audio'
-}
-
-function typeFor(name: string): string {
-  const ext = name.slice(name.lastIndexOf('.') + 1).toLowerCase()
-  if (ext === 'mp3') return 'audio/mpeg'
-  if (ext === 'ogg' || ext === 'oga') return 'audio/ogg'
-  if (ext === 'flac') return 'audio/flac'
-  if (ext === 'm4a' || ext === 'aac') return 'audio/mp4'
-  return 'audio/wav'
+  const name = archive.entries.some((e) => e.name === PROJECT_ENTRY) ? PROJECT_ENTRY : 'patch.json'
+  const doc = archiveDoc(archive, name)
+  if (doc === undefined) throw new Error('that zip has no project in it')
+  return { stored: repointSamples(doc, archive.renamed), samples: archive.samples, warnings: archive.warnings }
 }

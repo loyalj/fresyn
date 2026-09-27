@@ -62,11 +62,15 @@ export function engineEvents(events: readonly SongEvent[], target: NoteTarget): 
           frame: e.frame,
           kind: 'noteOn' as const,
           module: target.module,
-          pitch: e.pitch,
+          pitch: e.pitch ?? 0,
           velocity: e.velocity,
         }
       : // The pitch rides along so a chord knows which of its notes let go.
-        { frame: e.frame, kind: 'noteOff' as const, module: target.module, pitch: e.pitch },
+        // None at all is every note, and is passed on as none rather than as
+        // zero: the engine reads a missing pitch as "release every voice".
+        e.pitch === undefined
+        ? { frame: e.frame, kind: 'noteOff' as const, module: target.module }
+        : { frame: e.frame, kind: 'noteOff' as const, module: target.module, pitch: e.pitch },
   )
 }
 

@@ -58,6 +58,11 @@ function isTextEntry(target: EventTarget | null) {
  * so the same rule is read off the row that holds focus instead.
  */
 function ownsKeyboard(target: EventTarget | null, e?: KeyboardEvent) {
+  // A knob, a switch position or a jack is a control drawn out of elements
+  // that are not form fields, and says so with its role. It takes the keys
+  // its role moves with, as a range input does, and nothing else.
+  const role = roleKeys(target)
+  if (role) return !!e && role.has(e.code) && !(e.ctrlKey || e.metaKey)
   if (isTextEntry(target)) {
     // A slider, a checkbox or a dropdown is not being typed into. It has the
     // keys it moves with, and nothing else: with a fader just touched, Ctrl+Z
@@ -82,6 +87,61 @@ const CONTROL_KEYS = new Set([
   'Space',
   'Enter',
 ])
+
+/** The keys a slider moves with. Space is not one: it still plays. */
+const SLIDER_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End'])
+/** The keys a radio group moves with and chooses with. */
+const RADIO_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'Space'])
+/** The keys that press a button that is not a <button>. */
+const PRESS_KEYS = new Set(['Space', 'Enter'])
+
+/**
+ * The keys an ARIA control owns, read off its role; null for anything else.
+ *
+ * Only a role on the focused element itself counts, so a knob's own slider
+ * takes the arrows while the panel it sits on does not.
+ */
+function roleKeys(target: EventTarget | null): Set<string> | null {
+  if (!(target instanceof Element)) return null
+  const role = target.getAttribute('role')
+  if (role === 'slider') return SLIDER_KEYS
+  if (role === 'radio') return RADIO_KEYS
+  // A native button presses itself, and is left to the rules for buttons
+  // below: a Trigger's key still plays with the Trigger button focused.
+  if (role === 'button' && !(target instanceof HTMLButtonElement)) return PRESS_KEYS
+  return null
+}
+
+/**
+ * Something focused that Space or Enter means something to: a button, a
+ * link, a summary. Left alone when the key is not bound, so that pressing
+ * one from the keyboard works -- the rack only takes Space away from the
+ * page, where it would scroll.
+ */
+const PRESSABLE = 'button, a[href], summary, input, select, textarea, [role="button"], [role="checkbox"], [role="switch"], [role="menuitem"], [role="tab"]'
+
+/**
+ * Something focused that moves with the arrows. The page's own scroll is
+ * what the rack stops the arrows doing, and a control that wants them is not
+ * the page.
+ */
+const STEERABLE = 'input, select, textarea, [role="slider"], [role="radio"], [role="radiogroup"], [role="listbox"], [role="grid"], [role="tablist"], [role="spinbutton"], [contenteditable="true"]'
+
+const ARROWS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End'])
+
+/**
+ * Whether an unclaimed key should still be kept from the browser. Only when
+ * its default would scroll the page: with nothing focused, or with focus on
+ * something the key does nothing for.
+ */
+function blocksScroll(e: KeyboardEvent) {
+  if (isBrowserShortcut(e) || !SCROLL_KEYS.has(e.code)) return false
+  const target = e.target
+  if (!(target instanceof Element) || target === document.body) return true
+  if ((e.code === 'Space' || e.code === 'Enter') && target.matches(PRESSABLE)) return false
+  if (ARROWS.has(e.code) && target.matches(STEERABLE)) return false
+  return true
+}
 
 /** A form control that is set rather than typed into. */
 function isControl(target: EventTarget | null) {
@@ -160,8 +220,10 @@ export class InputManager {
       const binding = this.byCombo.get(comboKey(e))
       if (!binding) {
         // Unclaimed: leave the browser's own shortcuts alone, but still stop
-        // the page scrolling out from under the rack.
-        if (!isBrowserShortcut(e) && SCROLL_KEYS.has(e.code)) e.preventDefault()
+        // the page scrolling out from under the rack -- unless the key is
+        // for whatever has focus, which is how a button is pressed from the
+        // keyboard at all.
+        if (blocksScroll(e)) e.preventDefault()
         return
       }
 
@@ -186,7 +248,9 @@ export class InputManager {
 
       const binding = this.held.get(e.code)
       if (!binding) {
-        if (!isBrowserShortcut(e) && SCROLL_KEYS.has(e.code)) e.preventDefault()
+        // A button activates on Space's keyup, so this has to let it through
+        // on exactly the same terms as the keydown.
+        if (blocksScroll(e)) e.preventDefault()
         return
       }
       e.preventDefault()

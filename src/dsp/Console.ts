@@ -26,7 +26,15 @@ class Glide {
     this.target = v
   }
   next() {
-    this.value += (this.target - this.value) * this.k
+    const d = this.target - this.value
+    // Snapped once the gap is too small to matter, as `Smoothed` does: a
+    // one-pole left to itself never arrives, and the EQ below redesigns its
+    // curve for as long as its gains are still creeping.
+    if (!(Math.abs(d) >= 1e-7 * Math.max(1, Math.abs(this.target)))) {
+      this.value = this.target
+      return this.value
+    }
+    this.value += d * this.k
     return this.value
   }
   /** Close enough to where it is going that stepping the rest is inaudible. */
@@ -42,74 +50,221 @@ const glideK = (sampleRate: number) => 1 - Math.exp(-1 / (GLIDE_S * sampleRate))
  * 5 kHz, with only the gains to turn -- the three knobs a channel strip has
  * room for. Flat, it is skipped entirely, so a strip nobody has touched
  * passes its track through sample for sample.
+ *
+ * Stereo, with one set of gains: the two sides always have the same curve, so
+ * it is designed once and copied across rather than worked out twice.
  */
 export class ThreeBand {
   private low = new Section()
   private mid = new Section()
   private high = new Section()
-  private gains: Glide[]
-  private tuned = [NaN, NaN, NaN]
+  private lowR = new Section()
+  private midR = new Section()
+  private highR = new Section()
+  private g0: Glide
+  private g1: Glide
+  private g2: Glide
+  private tuned0 = NaN
+  private tuned1 = NaN
+  private tuned2 = NaN
+  /** The last sample through, one per side; read straight after `process`. */
+  l = 0
+  r = 0
 
   constructor(private readonly sampleRate: number) {
     const k = glideK(sampleRate)
-    this.gains = [new Glide(0, k), new Glide(0, k), new Glide(0, k)]
+    this.g0 = new Glide(0, k)
+    this.g1 = new Glide(0, k)
+    this.g2 = new Glide(0, k)
   }
 
   set(eq: Eq3) {
-    this.gains[0].target = eq.low
-    this.gains[1].target = eq.mid
-    this.gains[2].target = eq.high
+    this.g0.target = eq.low
+    this.g1.target = eq.mid
+    this.g2.target = eq.high
   }
 
-  /** Flat and staying flat: nothing to do. */
+  /** Flat and staying flat: nothing to do. Spelled out so asking costs nothing. */
   get flat() {
-    return this.gains.every((g) => g.target === 0 && Math.abs(g.value) < 1e-4)
+    return (
+      this.g0.target === 0 && this.g1.target === 0 && this.g2.target === 0 &&
+      Math.abs(this.g0.value) < 1e-4 && Math.abs(this.g1.value) < 1e-4 && Math.abs(this.g2.value) < 1e-4
+    )
   }
 
-  process(x: number) {
-    const lo = this.gains[0].next()
-    const mi = this.gains[1].next()
-    const hi = this.gains[2].next()
-    if (lo !== this.tuned[0] || mi !== this.tuned[1] || hi !== this.tuned[2]) {
-      this.tuned[0] = lo
-      this.tuned[1] = mi
-      this.tuned[2] = hi
+  process(l: number, r: number) {
+    const lo = this.g0.next()
+    const mi = this.g1.next()
+    const hi = this.g2.next()
+    // Only while a gain is moving; at rest the glides hand back exactly what
+    // they did last time, and the sections already hold that curve.
+    if (lo !== this.tuned0 || mi !== this.tuned1 || hi !== this.tuned2) {
+      this.tuned0 = lo
+      this.tuned1 = mi
+      this.tuned2 = hi
       shelf(this.low, this.sampleRate, 200, lo, false)
       bell(this.mid, this.sampleRate, 1000, mi, 0.9)
       shelf(this.high, this.sampleRate, Math.min(5000, this.sampleRate * 0.45), hi, true)
+      this.lowR.copy(this.low)
+      this.midR.copy(this.mid)
+      this.highR.copy(this.high)
     }
-    return this.high.process(this.mid.process(this.low.process(x)))
+    this.l = this.high.process(this.mid.process(this.low.process(l)))
+    this.r = this.highR.process(this.midR.process(this.lowR.process(r)))
   }
 }
 
 /** The ceiling the limiter holds the mix under: -1 dBFS. */
 const CEILING = Math.pow(10, -1 / 20)
 
+/** How far ahead the limiter looks: long enough to turn down gently, short enough not to matter. */
+const LOOKAHEAD_S = 0.0015
+
+/** How long it takes to come back up once a peak has gone by. */
+const RELEASE_S = 0.08
+
 /**
- * A brickwall on the master: the moment a sample would go past -1 dB the
- * whole mix is turned down by exactly enough, and it comes back up over a
- * tenth of a second. Both sides together, so the image does not lurch.
+ * A lookahead limiter on the master: nothing past -1 dB gets out, and nothing
+ * is clipped to get there.
  *
- * No lookahead, which is what keeps it free of latency; a sample that would
- * clip is instead brought down on the very sample it arrives, so nothing
- * ever passes the ceiling.
+ * The mix is delayed by a millisecond and a half, and the limiter reads the
+ * undelayed signal. So it sees a peak coming before the peak reaches the
+ * output, and has that long to bring the gain down -- a smooth ramp rather
+ * than a step on the loud sample itself. A step in gain is a corner in the
+ * waveform, and turning the gain down on one sample and back up over the next
+ * hundred milliseconds is, to the ear, just a clipper with a slow release:
+ * the splat on every drum hit into a hot master.
+ *
+ * How the ramp is built. The gain each incoming sample would need is held at
+ * its lowest for the lookahead window -- so the gain is already down wherever
+ * that peak will be -- and then averaged over the same window, which turns
+ * the held steps into straight ramps that arrive, exactly on the peak's
+ * sample, at no more than it needs. The release is a one-pole on top that can
+ * only ever go slower than the ramp, never faster, so it can make the gain
+ * lower but not let a peak through.
+ *
+ * Both sides together, so the image does not lurch. The latency is the same
+ * whether it is working or not, and whether it is switched on or off, so
+ * pressing the button never moves the music in time.
  */
 export class Limiter {
+  /** Samples of delay between what arrives and what leaves. */
+  readonly latency: number
+  private readonly window: number
+  private readonly delayL: Float64Array
+  private readonly delayR: Float64Array
+  private delayAt = 0
+
+  /**
+   * The lowest gain of the last `window` samples, kept as a queue in which
+   * each entry is lower than the one after it -- the usual sliding-minimum
+   * trick, so finding the minimum never means reading the whole window.
+   */
+  private readonly minGain: Float64Array
+  private readonly minAt: Float64Array
+  private minHead = 0
+  private minCount = 0
+  private clock = 0
+
+  /** The held minimum over the last `window` samples, and their sum, for the average. */
+  private readonly box: Float64Array
+  private boxAt = 0
+  private boxSum: number
+
   private gain = 1
-  private readonly recover: number
+  private readonly release: number
+
   constructor(sampleRate: number) {
-    this.recover = 1 - Math.exp(-1 / (0.1 * sampleRate))
+    this.latency = Math.max(1, Math.round(LOOKAHEAD_S * sampleRate))
+    // One longer than the delay, so that the held minimum still covers a
+    // peak on the very sample that peak leaves the delay.
+    this.window = this.latency + 1
+    this.delayL = new Float64Array(this.latency)
+    this.delayR = new Float64Array(this.latency)
+    this.minGain = new Float64Array(this.window)
+    this.minAt = new Float64Array(this.window)
+    this.box = new Float64Array(this.window).fill(1)
+    this.boxSum = this.window
+    this.release = 1 - Math.exp(-1 / (RELEASE_S * sampleRate))
   }
+
   /** Working, as a gain: 1 when it is doing nothing. */
   get reduction() {
     return this.gain
   }
-  process(l: number, r: number, out: { l: number; r: number }) {
-    const peak = Math.max(Math.abs(l), Math.abs(r))
-    const allowed = peak > CEILING ? CEILING / peak : 1
-    this.gain = Math.min(allowed, this.gain + (1 - this.gain) * this.recover)
-    out.l = l * this.gain
-    out.r = r * this.gain
+
+  /**
+   * One stereo sample in, the one from `latency` samples ago out, turned
+   * down as far as it needs to be. Switched off, `active` false, it still
+   * delays by the same amount and lets its gain drift back to unity.
+   */
+  process(l: number, r: number, out: { l: number; r: number }, active = true) {
+    // Nothing that is not a number gets into the delay, where it would sit
+    // for a millisecond and a half and then make the gain NaN for good.
+    if (l - l !== 0) l = 0
+    if (r - r !== 0) r = 0
+
+    const al = l < 0 ? -l : l
+    const ar = r < 0 ? -r : r
+    const peak = al > ar ? al : ar
+    const need = active && peak > CEILING ? CEILING / peak : 1
+
+    // Into the sliding minimum. Whatever has fallen out of the window goes
+    // from the front -- one sample a time, so at most one entry -- and
+    // anything queued that is no lower than this can never be the minimum
+    // again, so it goes from the back. Expiring first is what keeps the
+    // queue inside its `window` slots.
+    const w = this.window
+    const now = this.clock++
+    if (this.minCount > 0 && this.minAt[this.minHead] <= now - w) {
+      this.minHead = this.minHead + 1 === w ? 0 : this.minHead + 1
+      this.minCount--
+    }
+    while (this.minCount > 0) {
+      const last = (this.minHead + this.minCount - 1) % w
+      if (this.minGain[last] < need) break
+      this.minCount--
+    }
+    const slot = (this.minHead + this.minCount) % w
+    this.minGain[slot] = need
+    this.minAt[slot] = now
+    this.minCount++
+    const held = this.minGain[this.minHead]
+
+    // Averaged over the same window. The running sum is rebuilt from scratch
+    // once a lap, so rounding cannot creep in over an hour of music.
+    this.boxSum += held - this.box[this.boxAt]
+    this.box[this.boxAt] = held
+    if (++this.boxAt === w) {
+      this.boxAt = 0
+      let sum = 0
+      for (let i = 0; i < w; i++) sum += this.box[i]
+      this.boxSum = sum
+    }
+    let target = this.boxSum / w
+    if (target > 1) target = 1
+
+    // Down as fast as the ramp asks, back up at the release.
+    this.gain = target < this.gain ? target : this.gain + (target - this.gain) * this.release
+
+    const i = this.delayAt
+    let ol = this.delayL[i] * this.gain
+    let or = this.delayR[i] * this.gain
+    this.delayL[i] = l
+    this.delayR[i] = r
+    if (++this.delayAt === this.latency) this.delayAt = 0
+
+    // The ramp arrives at exactly the gain it needs, so rounding in the last
+    // bit can leave a peak a hair over. Held to the ceiling, which touches
+    // nothing but that hair.
+    if (active) {
+      if (ol > CEILING) ol = CEILING
+      else if (ol < -CEILING) ol = -CEILING
+      if (or > CEILING) or = CEILING
+      else if (or < -CEILING) or = -CEILING
+    }
+    out.l = ol
+    out.r = or
   }
 }
 
@@ -151,8 +306,7 @@ export const FULL_ROUTING: Routing = { strips: true, sends: true, master: true }
 
 /** One track's channel. */
 export class Strip {
-  readonly eqL: ThreeBand
-  readonly eqR: ThreeBand
+  readonly eq: ThreeBand
   readonly gain: Glide
   readonly pan: Glide
   readonly space: Glide
@@ -162,8 +316,7 @@ export class Strip {
 
   constructor(sampleRate: number) {
     const k = glideK(sampleRate)
-    this.eqL = new ThreeBand(sampleRate)
-    this.eqR = new ThreeBand(sampleRate)
+    this.eq = new ThreeBand(sampleRate)
     this.gain = new Glide(1, k)
     this.pan = new Glide(0, k)
     this.space = new Glide(0, k)
@@ -175,9 +328,7 @@ export class Strip {
     this.pan.target = s.pan ?? 0
     this.space.target = s.space ?? 0
     this.delay.target = s.delay ?? 0
-    const eq = s.eq ?? { low: 0, mid: 0, high: 0 }
-    this.eqL.set(eq)
-    this.eqR.set(eq)
+    this.eq.set(s.eq ?? { low: 0, mid: 0, high: 0 })
     // A strip that has just appeared starts where it was set, rather than
     // fading up from unity.
     if (first) {
@@ -200,8 +351,7 @@ export class Desk {
   private delay: Hosted
   private spaceLevel: Glide
   private delayLevel: Glide
-  private eqL: ThreeBand
-  private eqR: ThreeBand
+  private eq: ThreeBand
   private balance: Glide
   private level: Glide
   private limiter: Limiter
@@ -220,12 +370,21 @@ export class Desk {
     const k = glideK(sampleRate)
     this.spaceLevel = new Glide(d.space.level, k)
     this.delayLevel = new Glide(d.delay.level, k)
-    this.eqL = new ThreeBand(sampleRate)
-    this.eqR = new ThreeBand(sampleRate)
+    this.eq = new ThreeBand(sampleRate)
     this.balance = new Glide(0, k)
     this.level = new Glide(1, k)
     this.limiter = new Limiter(sampleRate)
     this.loudness = new LiveLoudness(sampleRate)
+  }
+
+  /**
+   * How many samples late the desk puts the mix out: the limiter's
+   * lookahead. There whether the limiter is switched on or not, so that the
+   * button never shifts the music, and there for a render that leaves the
+   * master bus out too, so that stems line up with the mix they came from.
+   */
+  get latency() {
+    return this.limiter.latency
   }
 
   set(c: Console) {
@@ -239,8 +398,7 @@ export class Desk {
     dp[3] = c.delay.damping
     this.spaceLevel.target = c.space.level
     this.delayLevel.target = c.delay.level
-    this.eqL.set(c.master.eq)
-    this.eqR.set(c.master.eq)
+    this.eq.set(c.master.eq)
     this.balance.target = c.master.balance
     this.level.target = c.master.level
     this.limiting = c.master.limiter
@@ -280,25 +438,38 @@ export class Desk {
         right[i] += s.slots[3] * sl + echo
       }
     }
-    if (!routing.master) return
+    if (!routing.master) {
+      // No master bus, but still its delay. A stem is meant to be laid
+      // against the full bounce and line up with it, and the full bounce is
+      // the limiter's lookahead late; a stem that was not would sit a
+      // millisecond and a half early, which is a comb filter the moment the
+      // two are played together. Switched off, the limiter is exactly that
+      // delay and nothing else: its gain never leaves one.
+      for (let i = 0; i < n; i++) {
+        this.limiter.process(left[i], right[i], this.out, false)
+        left[i] = this.out.l
+        right[i] = this.out.r
+      }
+      return
+    }
 
-    const eqFlat = this.eqL.flat
+    const eqFlat = this.eq.flat
+    const limiting = this.limiting
     for (let i = 0; i < n; i++) {
       let l = left[i]
       let r = right[i]
       if (!eqFlat) {
-        l = this.eqL.process(l)
-        r = this.eqR.process(r)
+        this.eq.process(l, r)
+        l = this.eq.l
+        r = this.eq.r
       }
       const b = this.balance.next()
       const g = this.level.next()
       l *= (b > 0 ? 1 - b : 1) * g
       r *= (b < 0 ? 1 + b : 1) * g
-      if (this.limiting) {
-        this.limiter.process(l, r, this.out)
-        l = this.out.l
-        r = this.out.r
-      }
+      this.limiter.process(l, r, this.out, limiting)
+      l = this.out.l
+      r = this.out.r
       left[i] = l
       right[i] = r
       const a = Math.max(Math.abs(l), Math.abs(r))

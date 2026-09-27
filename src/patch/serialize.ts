@@ -1,6 +1,8 @@
 import { parseSong } from '../song/serialize'
 import type { Song } from '../song/types'
 import { MODULE_DEFS, defOf } from './defs'
+import { cableId, cableInto, connect, portKind } from './edit'
+import { clampValue } from './param'
 import type { Cable, Patch, PatchModule } from './types'
 
 export const PATCH_FORMAT = 1
@@ -143,9 +145,9 @@ export function fromStored(input: unknown): LoadResult | { error: string } {
     const stored = (typeof m.params === 'object' && m.params !== null ? m.params : {}) as Record<string, unknown>
     for (const spec of defOf(type).params) {
       const v = stored[spec.id] ?? stored[oldName(moved, spec.id)]
-      if (typeof v === 'number' && Number.isFinite(v)) {
-        params[spec.id] = Math.min(spec.max, Math.max(spec.min, v))
-      }
+      // Clamped the way the panel clamps, which also rounds a stepped knob or
+      // a count: a waveform switch at 2.4 is no position the switch has.
+      if (typeof v === 'number' && Number.isFinite(v)) params[spec.id] = clampValue(spec, v)
     }
     // A key binding is taken on trust as far as being a string goes, and no
     // further: a `code` this browser never produces simply never fires, which
@@ -173,7 +175,15 @@ export function fromStored(input: unknown): LoadResult | { error: string } {
     modules.push(built)
   }
 
-  const cables: Cable[] = []
+  // Every cable is made again the way the editor makes one, through
+  // `connect`, rather than taken as written. So a cable has to run from an
+  // output that exists to an input that exists, an input holds one cable as
+  // it does on the panel, and the id is the one the editor would have given
+  // it -- a file that says otherwise was hand-edited, or written by a build
+  // whose modules had other jacks, and a cable the editor could not have made
+  // is one the engine should never be asked to run.
+  let wired: Patch = { modules, cables: [] }
+  const colors = new Map<string, number>()
   for (const entry of Array.isArray(body.cables) ? body.cables : []) {
     if (typeof entry !== 'object' || entry === null) continue
     const c = entry as Record<string, unknown>
@@ -187,14 +197,26 @@ export function fromStored(input: unknown): LoadResult | { error: string } {
     // jacks it actually lands on.
     const from = rename(stored.from)
     const to = rename(stored.to)
+    const name = cableId(from, to)
+    if (portKind(wired, from) !== 'output' || portKind(wired, to) !== 'input') {
+      warnings.push(`dropped the cable ${name}: no such jacks, or the wrong way round`)
+      continue
+    }
+    // The first cable into a jack keeps it. `connect` would let the later one
+    // push it out, which is right for a hand on the panel and arbitrary for a
+    // file, where neither is newer than the other.
+    if (cableInto(wired, to)) {
+      warnings.push(`dropped the cable ${name}: ${to.module}.${to.port} already has one`)
+      continue
+    }
+    wired = connect(wired, from, to)
     const color = typeof c.color === 'number' && Number.isFinite(c.color) ? ((c.color % 360) + 360) % 360 : undefined
-    cables.push({
-      id: typeof c.id === 'string' ? c.id : `${from.module}.${from.port}->${to.module}.${to.port}`,
-      from,
-      to,
-      ...(color !== undefined ? { color } : {}),
-    })
+    if (color !== undefined) colors.set(name, color)
   }
+  const cables: Cable[] = wired.cables.map((c) => {
+    const color = colors.get(c.id)
+    return color === undefined ? c : { ...c, color }
+  })
 
   // Read through the same defensive parser the rest of the file uses: a song
   // that arrives half-legible costs its notes, not the patch it came with.

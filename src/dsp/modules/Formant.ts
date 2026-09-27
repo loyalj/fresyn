@@ -126,6 +126,14 @@ export class FormantModule extends DspModule {
       this.ic2[i] = 2 * v2 - this.ic2[i]
       out += v1 * this.gain[i]
     }
+    // Every band's state feeds the output, so a NaN in any of them shows up
+    // here -- and, left, would stay in that band for good. Clearing the lot
+    // is simpler than finding which, and the next sample is clean.
+    if (out - out !== 0) {
+      this.ic1.fill(0)
+      this.ic2.fill(0)
+      out = 0
+    }
     slots[this.outs[0]] = out
   }
 

@@ -1,3 +1,4 @@
+import { cableId } from './edit'
 import type { Patch } from './types'
 
 /**
@@ -85,9 +86,7 @@ export function triggerPatch(): Patch {
 }
 
 function cable(fromModule: string, fromPort: string, toModule: string, toPort: string) {
-  return {
-    id: `${fromModule}.${fromPort}->${toModule}.${toPort}`,
-    from: { module: fromModule, port: fromPort },
-    to: { module: toModule, port: toPort },
-  }
+  const from = { module: fromModule, port: fromPort }
+  const to = { module: toModule, port: toPort }
+  return { id: cableId(from, to), from, to }
 }

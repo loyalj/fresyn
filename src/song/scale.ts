@@ -32,18 +32,28 @@ export const ROOT_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A',
 
 const stepsOf = (scale: Scale) => SCALES.find((s) => s.id === scale.mode)?.steps ?? null
 
-const mod12 = (n: number) => ((n % 12) + 12) % 12
+/**
+ * Rows are whole semitones, and everything below leans on that: a walk from
+ * one row to the next in steps of one only ever lands on another row if it
+ * started on one. A fractional pitch -- a hand-edited file, a stray bit of
+ * arithmetic -- would step past every row in the scale forever and freeze the
+ * tab, so every pitch is taken to its row on the way in.
+ */
+const mod12 = (n: number) => ((Math.round(n) % 12) + 12) % 12
+
+/** Further than any pitch the roll can show, so reaching it means something went wrong. */
+const MAX_WALK = 1024
 
 /** Whether a row is in the scale. Everything is, with no scale set. */
 export function inScale(pitch: number, scale: Scale | undefined): boolean {
   const steps = scale && stepsOf(scale)
   if (!steps) return true
-  return steps.includes(mod12(pitch - scale.root))
+  return steps.includes(mod12(Math.round(pitch) - Math.round(scale.root)))
 }
 
 /** Whether a row is the key's tonic, which the roll marks. */
 export function isRoot(pitch: number, scale: Scale | undefined): boolean {
-  return !!scale && !!stepsOf(scale) && mod12(pitch - scale.root) === 0
+  return !!scale && !!stepsOf(scale) && mod12(Math.round(pitch) - Math.round(scale.root)) === 0
 }
 
 /**
@@ -51,6 +61,8 @@ export function isRoot(pitch: number, scale: Scale | undefined): boolean {
  * above goes up, which is the way a hand moving a note usually means it.
  */
 export function nearestInScale(pitch: number, scale: Scale | undefined): number {
+  if (!hasScale(scale)) return pitch
+  pitch = Math.round(pitch)
   if (inScale(pitch, scale)) return pitch
   for (let d = 1; d < 12; d++) {
     if (inScale(pitch + d, scale)) return pitch + d
@@ -67,10 +79,16 @@ export function nearestInScale(pitch: number, scale: Scale | undefined): number 
 export function stepInScale(pitch: number, steps: number, scale: Scale | undefined): number {
   if (!scale || !stepsOf(scale)) return pitch + steps
   let p = nearestInScale(pitch, scale)
+  steps = Math.round(steps)
   const dir = Math.sign(steps)
-  for (let i = 0; i < Math.abs(steps); i++) {
+  // Bounded twice over: every scale has a degree in any twelve rows, so the
+  // inner walk is at most twelve long, and the outer one is only as long as
+  // a jump anybody could ask for.
+  const count = Math.min(Math.abs(steps), MAX_WALK)
+  for (let i = 0; i < count; i++) {
+    let guard = 12
     do p += dir
-    while (!inScale(p, scale))
+    while (!inScale(p, scale) && --guard > 0)
   }
   return p
 }
@@ -82,7 +100,10 @@ export function degreesBetween(from: number, to: number, scale: Scale | undefine
   const b = nearestInScale(to, scale)
   let n = 0
   const dir = Math.sign(b - a)
-  for (let p = a; p !== b; p += dir) if (inScale(p + dir, scale)) n += dir
+  // `a` and `b` are whole rows by now, so `p` meets `b` exactly; the bound is
+  // there so that never being true again cannot hang the roll.
+  let guard = MAX_WALK * 12
+  for (let p = a; p !== b && guard-- > 0; p += dir) if (inScale(p + dir, scale)) n += dir
   return n
 }
 

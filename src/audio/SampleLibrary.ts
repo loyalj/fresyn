@@ -104,8 +104,19 @@ export class SampleLibrary {
     return this.keep(stored, data)
   }
 
-  /** Put audio that arrived from somewhere else -- a bundle -- into the library. */
-  async addStored(stored: StoredSample): Promise<LoadedSample | null> {
+  /**
+   * Put audio that arrived from somewhere else -- a bundle -- into the library.
+   *
+   * Filed under the hash of its bytes whatever id it arrived with. The bundle
+   * reader already re-hashes and re-points the patch, so the two agree for
+   * anything that came through it; this is here so that nothing else can put
+   * one file's audio under another file's name, where every patch that named
+   * the real one would play this instead. The id it went in under is the one
+   * on what comes back.
+   */
+  async addStored(arrived: StoredSample): Promise<LoadedSample | null> {
+    const id = idFor(arrived.bytes)
+    const stored = id === arrived.id ? arrived : { ...arrived, id }
     if (this.loaded.has(stored.id)) return this.loaded.get(stored.id)!
     try {
       const data = await decode(stored.bytes)

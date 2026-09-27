@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
+import { AppBoundary } from './ui/ErrorBoundary'
 import { applyAppearance, loadAppearance } from './ui/theme'
 import './app.css'
 
@@ -11,6 +12,10 @@ applyAppearance(loadAppearance())
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    {/* Outermost, so that whatever throws, the page still has a way to hand
+        back the autosave rather than going blank. */}
+    <AppBoundary>
+      <App />
+    </AppBoundary>
   </StrictMode>,
 )

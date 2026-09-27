@@ -1,5 +1,5 @@
-import { makeZip, readZip } from '../audio/zip'
 import type { StoredSample } from '../audio/sampleStore'
+import { archiveDoc, makeArchive, readArchive, repointSamples } from './archive'
 import type { StoredPatch } from './serialize'
 
 /**
@@ -21,13 +21,14 @@ import type { StoredPatch } from './serialize'
  * name it had, and the id survives a reader that knows nothing about either.
  */
 const PATCH_ENTRY = 'patch.json'
-const SAMPLE_DIR = 'samples'
 
 export interface Bundle {
   stored: unknown
   samples: StoredSample[]
   /** The zip was a saved project, which has no patch.json of its own. */
   project?: true
+  /** Anything repaired while unpacking, for the load's own list of warnings. */
+  warnings: string[]
 }
 
 /** Zip archives begin with this, which is how an import tells the two apart. */
@@ -38,60 +39,22 @@ export function isZip(bytes: ArrayBuffer): boolean {
 }
 
 export function makeBundle(stored: StoredPatch, samples: readonly StoredSample[]): Uint8Array {
-  const encoder = new TextEncoder()
-  const entries = [
-    { name: PATCH_ENTRY, data: encoder.encode(JSON.stringify(stored, null, 2)) },
-    ...samples.map((s) => ({
-      name: `${SAMPLE_DIR}/${s.id}/${safeName(s.name)}`,
-      data: new Uint8Array(s.bytes),
-    })),
-  ]
-  return makeZip(entries as { name: string; data: Uint8Array<ArrayBuffer> }[])
+  return makeArchive(PATCH_ENTRY, stored, samples)
 }
 
+/**
+ * Unpack a patch bundle. `warnings` says what had to be repaired on the way
+ * -- a sample filed under an id its bytes do not hash to -- and belongs with
+ * the warnings the patch reader gives for the document itself.
+ */
 export async function readBundle(bytes: ArrayBuffer): Promise<Bundle> {
-  const entries = await readZip(new Uint8Array(bytes))
-  const patch = entries.find((e) => e.name === PATCH_ENTRY)
-  if (!patch) {
-    if (entries.some((e) => e.name === 'project.json')) {
-      return { stored: null, samples: [], project: true }
+  const archive = await readArchive(bytes)
+  if (!archive.entries.some((e) => e.name === PATCH_ENTRY)) {
+    if (archive.entries.some((e) => e.name === 'project.json')) {
+      return { stored: null, samples: [], project: true, warnings: [] }
     }
     throw new Error('that zip has no patch in it')
   }
-
-  const samples: StoredSample[] = []
-  for (const entry of entries) {
-    const parts = entry.name.split('/')
-    if (parts.length !== 3 || parts[0] !== SAMPLE_DIR || !parts[1]) continue
-    samples.push({
-      id: parts[1],
-      name: parts[2],
-      // Guessed from the name rather than carried: the type is only ever used
-      // to write the file back out, and the browser decodes by content.
-      type: typeFor(parts[2]),
-      bytes: toBuffer(entry.data),
-    })
-  }
-
-  return { stored: JSON.parse(new TextDecoder().decode(patch.data)), samples }
-}
-
-/** A copy that owns its memory, since a zip entry is a view into the archive. */
-function toBuffer(data: Uint8Array): ArrayBuffer {
-  return data.slice().buffer as ArrayBuffer
-}
-
-/** No separators and nothing exotic: this becomes a path inside the archive. */
-function safeName(name: string): string {
-  const cleaned = name.replace(/[\\/:*?"<>|]+/g, '_').trim()
-  return cleaned || 'audio'
-}
-
-function typeFor(name: string): string {
-  const ext = name.slice(name.lastIndexOf('.') + 1).toLowerCase()
-  if (ext === 'mp3') return 'audio/mpeg'
-  if (ext === 'ogg' || ext === 'oga') return 'audio/ogg'
-  if (ext === 'flac') return 'audio/flac'
-  if (ext === 'm4a' || ext === 'aac') return 'audio/mp4'
-  return 'audio/wav'
+  const stored = repointSamples(archiveDoc(archive, PATCH_ENTRY), archive.renamed)
+  return { stored, samples: archive.samples, warnings: archive.warnings }
 }

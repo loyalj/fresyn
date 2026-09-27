@@ -166,6 +166,8 @@ export function TrackList({
               <button
                 className={`track-flag${track.mute ? ' on' : ''}`}
                 onClick={() => onChange(track.id, { mute: track.mute ? undefined : true })}
+                aria-pressed={!!track.mute}
+                aria-label={`Mute ${track.name || 'track'}`}
                 title="Mute"
                 type="button"
               >
@@ -174,6 +176,8 @@ export function TrackList({
               <button
                 className={`track-flag${track.solo ? ' on' : ''}`}
                 onClick={() => onSolo(track.id)}
+                aria-pressed={!!track.solo}
+                aria-label={`Solo ${track.name || 'track'}`}
                 title="Solo"
                 type="button"
               >
@@ -185,6 +189,7 @@ export function TrackList({
                 // The last track is the rack on the bench; there has to be one.
                 disabled={tracks.length <= 1}
                 title="Remove this track"
+                aria-label={`Remove ${track.name || 'track'}`}
                 type="button"
               >
                 ×

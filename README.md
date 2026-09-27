@@ -161,7 +161,7 @@ holds one full-width panel or two half-width ones: the seven that need the
 room -- oscillator, keyboard, sample and hold, sequencer, mixer, scope and
 recorder -- take a whole row, and the other seventeen take half of one and
 pair up with whatever half panel is next to them. The stock rack is a voice, a filter and an LFO abreast,
-and a console. Tab flips the
+and a console. F flips the
 rack to drag cables on the back panel, and every edit recompiles and rewires
 the running graph in place, so it keeps playing while you work. Twenty-four module
 types, including a 25-key keyboard, an 8:2 stereo mixer and a scope.
@@ -202,7 +202,7 @@ which leaves the page scrolling everywhere that is not a knob -- and reset by
 double-clicking. Shift makes either gesture five times finer.
 
 Space holds the gate for the whole rack; a trigger button on a panel fires
-just that module. Tab flips the rack, and Ctrl+Z / Ctrl+Shift+Z step through
+just that module. F flips the rack, and Ctrl+Z / Ctrl+Shift+Z step through
 history. On the back panel, drag between
 jacks to patch; drag out of a jack, click a cable, or right-click a jack, to
 unplug. A unit is dragged up and down the rack by the strip down its left edge, from

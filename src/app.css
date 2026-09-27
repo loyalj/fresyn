@@ -397,7 +397,6 @@ body {
 .knob-readout:focus-visible {
   color: var(--ink);
   background: var(--control-hover);
-  outline: none;
 }
 
 /* Open for typing. Centred and the width of the caption, so the row of knobs
@@ -550,7 +549,6 @@ body {
 .strip-switch:focus-visible {
   color: var(--ink);
   border-color: var(--rule);
-  outline: none;
 }
 
 /* Lit, not merely marked. A channel that is off has to be findable at a
@@ -728,7 +726,6 @@ body {
 .sheet-close:focus-visible {
   color: var(--ink);
   border-color: var(--rule);
-  outline: none;
 }
 
 .sheet-foot {
@@ -818,7 +815,6 @@ body {
   background: var(--accent);
   box-shadow: 0 0 6px rgb(var(--accent-rgb) / 0.7);
 }
-.unit-bypass:focus-visible { outline: 1px solid var(--accent-line); outline-offset: 2px; }
 
 /* The presets button on the ear, under the lamp. */
 .unit-presets {
@@ -1175,6 +1171,9 @@ body {
 .library-star:hover,
 .library-delete:hover { color: var(--ink); border-color: var(--rule); }
 .library-star.on { color: var(--accent-line); }
+/* A button asking for its second press (see ConfirmButton): the question in
+   the accent, so the pause it is asking for is seen as well as read. */
+.confirm,
 .library-delete.confirm {
   font-size: 10px;
   letter-spacing: 0.06em;
@@ -1350,7 +1349,6 @@ body {
 .trigger-cap:focus-visible {
   color: var(--ink);
   border-color: var(--rule);
-  outline: none;
 }
 
 /* Never set, so it asks rather than reports. */
@@ -1470,10 +1468,9 @@ body {
 
 .unit-face-back { transform: rotateY(180deg); }
 
-/* Belt and braces alongside backface-visibility: the hidden face must not
-   answer elementFromPoint during a cable drag. */
-.unit-flip:not(.flipped) .unit-face-back { pointer-events: none; }
-.unit-flip.flipped .unit-face-front { pointer-events: none; }
+/* The face turned away carries `inert`, which is what keeps it out of
+   elementFromPoint during a cable drag -- and out of the tab order, which
+   pointer-events never could. */
 
 .flip-button {
   display: flex;
@@ -1687,6 +1684,9 @@ body {
 
 .notice-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 
+/* The one that is not going away on its own: work is not being kept. */
+.notice-warn { box-shadow: inset 3px 0 0 var(--danger), 0 10px 28px var(--unit-shadow); }
+
 .notice-close {
   flex: none;
   width: 20px;
@@ -1707,7 +1707,24 @@ body {
 .notice-close:focus-visible {
   color: var(--ink);
   background: var(--control-hover);
-  outline: none;
+}
+
+/* The one thing a card can offer besides going away: Retry, Resume. */
+.notice-action {
+  flex: none;
+  margin: -3px 0;
+  padding: 2px 8px;
+  font: inherit;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--accent-line);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.notice-action:hover,
+.notice-action:focus-visible {
+  background: var(--control-hover);
 }
 
 @keyframes notice-in {
@@ -1837,6 +1854,9 @@ body {
 }
 
 .export-go:disabled { opacity: 0.55; cursor: default; }
+/* Asking before it throws the takes on the panel away: the danger colour, as
+   the other buttons that cannot be taken back use. */
+.export-go.confirm { font-size: 11px; color: var(--on-accent); background: var(--danger); border-color: var(--danger); }
 .export-actions .add-cancel { margin-top: 0; }
 .export-note { font-size: 10px; color: var(--ink-dim); }
 
@@ -3358,3 +3378,59 @@ button.playlist-bar:hover { border-color: var(--rule); color: var(--ink); }
 
 .mix-master { border-color: rgb(var(--accent-rgb) / 0.4); }
 .mix-limiter { align-self: center; padding: 4px 6px; }
+
+
+/* --- focus ------------------------------------------------------------ */
+
+/* One ring for everything the keyboard can reach, in the theme's accent, so
+   it is the same mark on every panel and in every theme. Only for focus that
+   came from the keyboard: a click on a knob focuses it too, and a ring on
+   every click would be noise. Controls whose focus is shown some other way
+   -- a menu row, a text field's border, the roll -- still say so above. */
+:focus-visible {
+  outline: 2px solid var(--accent-line);
+  outline-offset: 2px;
+}
+
+/* A knob is an SVG, whose outline follows its box; round it off to the dial. */
+.knob svg:focus-visible { border-radius: 50%; outline-offset: 0; }
+
+/* A unit is focused only by a jump to it, to put the next Tab inside it. */
+.unit-flip:focus-visible { outline-offset: -2px; }
+
+/* --- when something breaks -------------------------------------------- */
+
+/* A unit whose panel threw: a small card where it was, the rest of the rack
+   untouched around it. */
+.unit-error-card {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--unit-bottom);
+  border: 1px dashed var(--danger);
+  border-radius: 4px;
+}
+.unit-error-card > span { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+.unit-error-card .panel-cancel { margin-top: 0; }
+
+/* The whole app failed to draw. Plain on purpose: nothing here may depend on
+   the parts of the page that just failed. */
+.crash {
+  max-width: 560px;
+  margin: 12vh auto 0;
+  padding: 24px 16px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink);
+}
+.crash h1 { margin: 0 0 12px; font-size: 20px; }
+.crash code { overflow-wrap: anywhere; color: var(--ink-dim); }
+.crash-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.crash-actions .panel-cancel { margin-top: 0; }
+
+.preset-failed { padding: 0 8px 8px; font-size: 11px; color: var(--danger); }

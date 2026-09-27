@@ -1,3 +1,4 @@
+import { Smoothed } from '../Smoothed'
 import { DspModule, EdgeDetector } from './types'
 
 const P_START = 0
@@ -53,8 +54,18 @@ export class SamplerModule extends DspModule {
     Math.round(END_SECONDS * this.ctx.sampleRate),
   )
   private readonly invSampleRate = 1 / this.ctx.sampleRate
+  private level!: Smoothed
+
+  prepare() {
+    this.level = new Smoothed(this.params[P_LEVEL], this.ctx.sampleRate)
+  }
 
   process(slots: Float32Array) {
+    // Stepped on every sample, playing or not, so a level set between notes
+    // has arrived by the next one rather than gliding in over its attack.
+    this.level.set(this.params[P_LEVEL])
+    const level = this.level.next()
+
     const open = this.gateOpen || slots[this.ins[IN_GATE]] > 0.5
     // Read every sample, loaded or not: an edge detector that only ran while
     // audio was present would report the first press after a file lands as a
@@ -111,7 +122,7 @@ export class SamplerModule extends DspModule {
     // A fade measured in output time rather than in source frames, so it lasts
     // the same few milliseconds however fast the sample is being played.
     const fadeFrames = this.params[P_FADE] * this.ctx.sampleRate * Math.abs(inc)
-    let gain = this.params[P_LEVEL]
+    let gain = level
     if (fadeFrames > 0) {
       const inFrom = (this.pos - from) / fadeFrames
       const inTo = (to - this.pos) / fadeFrames

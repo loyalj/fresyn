@@ -1,4 +1,6 @@
+import type { BitDepth } from '../audio/wav'
 import { dbOf } from '../audio/waveform'
+import { ConfirmButton } from './ConfirmButton'
 
 export interface Take {
   index: number
@@ -10,6 +12,15 @@ export interface Take {
   right: Float32Array<ArrayBuffer>
   envelope: Float32Array
   keep: boolean
+  /**
+   * The name of the sound it was rendered from, as it was at the time --
+   * what its file is called. Kept on the take rather than read off the rack
+   * at download, because by then the track may have been renamed, or the
+   * rack may be showing another track altogether.
+   */
+  source: string
+  /** The bit depth the render was asked for, which the file is written at. */
+  bitDepth: BitDepth
 }
 
 interface Props {
@@ -47,10 +58,10 @@ export function TakeList({
         <span className="take-title">
           {takes.length} take{takes.length === 1 ? '' : 's'}
         </span>
-        <button className="take-link" onClick={() => onKeepAll(true)}>
+        <button className="take-link" onClick={() => onKeepAll(true)} type="button">
           keep all
         </button>
-        <button className="take-link" onClick={() => onKeepAll(false)}>
+        <button className="take-link" onClick={() => onKeepAll(false)} type="button">
           keep none
         </button>
       </div>
@@ -75,6 +86,7 @@ export function TakeList({
               className="take-wave"
               onClick={() => onPlay(take.index)}
               aria-label={`Play take ${take.index + 1}`}
+              type="button"
             >
               <Waveform envelope={take.envelope} />
             </button>
@@ -88,16 +100,18 @@ export function TakeList({
       </div>
 
       <div className="export-actions">
-        <button className="export-go" disabled={kept === 0} onClick={onExport}>
+        <button className="export-go" disabled={kept === 0} onClick={onExport} type="button">
           {kept === 0
             ? 'Nothing kept'
             : kept === 1
               ? 'Download 1 take'
               : `Download ${kept} takes`}
         </button>
-        <button className="panel-cancel" onClick={onDiscard}>
+        {/* Asks first: a batch of takes is minutes of rendering and none
+            of it is in undo. */}
+        <ConfirmButton className="panel-cancel" ask="Discard all?" onConfirm={onDiscard}>
           Discard
-        </button>
+        </ConfirmButton>
       </div>
     </div>
   )

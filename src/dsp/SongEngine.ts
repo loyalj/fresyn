@@ -61,6 +61,12 @@ export interface MixLevels {
   shortTerm: number
 }
 
+/**
+ * Past this a track's output is a fault, not a signal: ten thousand times
+ * full scale. Nothing working comes within miles of it.
+ */
+const BAD = 1e4
+
 export class SongEngine {
   private tracks: Track[] = []
   private byId = new Map<string, Track>()
@@ -95,6 +101,17 @@ export class SongEngine {
 
   get currentFrame() {
     return this.frame
+  }
+
+  /**
+   * How many samples behind the clock the output runs: the master limiter's
+   * lookahead, whatever the routing, so a stem lines up with the mix. The
+   * same for the speakers, a bounce and a game, since all three run this
+   * class -- but a caller that needs a note on exactly its frame in a file
+   * (a loop that has to tile) should drop this many samples off the front.
+   */
+  get latency() {
+    return this.desk.latency
   }
 
   get trackIds() {
@@ -281,25 +298,38 @@ export class SongEngine {
     for (const track of this.tracks) {
       track.engine.render(sl, sr)
       if (!track.audible) continue
-      // A stem with none of its channel: the rack, exactly as it left it.
+      // A stem with none of its channel: the rack, exactly as it left it --
+      // bar the same guard as below, since a stem is summed as well.
       if (!routing.strips) {
         for (let i = 0; i < n; i++) {
-          left[i] += sl[i]
-          right[i] += sr[i]
+          const l = sl[i]
+          const r = sr[i]
+          left[i] += l > -BAD && l < BAD ? l : 0
+          right[i] += r > -BAD && r < BAD ? r : 0
         }
         continue
       }
 
       const s = track.strip
-      const eqFlat = s.eqL.flat
+      const eqFlat = s.eq.flat
       const sending = routing.sends && (s.space.target > 0 || s.delay.target > 0 || !s.space.settled || !s.delay.settled)
       let peak = s.peak
       for (let i = 0; i < n; i++) {
         let l = sl[i]
         let r = sr[i]
+        // One broken track must not take the song with it. A NaN summed into
+        // the mix is NaN on the master, and sent to the Space or the Delay it
+        // is inside their feedback for good; a runaway feedback patch at a
+        // few thousand times full scale is, to the limiter, the same thing.
+        // So anything that is not a number or is wildly past anything a rack
+        // makes is dropped here, before it reaches the strip or a send. The
+        // negated comparisons are what catch NaN, which fails every one.
+        if (!(l > -BAD && l < BAD)) l = 0
+        if (!(r > -BAD && r < BAD)) r = 0
         if (!eqFlat) {
-          l = s.eqL.process(l)
-          r = s.eqR.process(r)
+          s.eq.process(l, r)
+          l = s.eq.l
+          r = s.eq.r
         }
         // A rack is stereo, so pan is a balance: turning right takes the left
         // side down and leaves the right where it is.
