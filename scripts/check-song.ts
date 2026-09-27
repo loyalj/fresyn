@@ -1030,6 +1030,50 @@ console.log('\nthe player a game would run')
   check('the silent buffer was left alone', other[0] === 0)
 }
 
+console.log('\na game turns a knob while it plays')
+{
+  // A Macro on a VCA: at nought the lead is shut, and turning the macro from
+  // the game is the only thing that can open it.
+  const macroRack = (): Patch => ({
+    modules: [
+      mod('key1', 'keys'),
+      mod('osc1', 'osc', { pitch: 110, fmAmount: 1, envAmount: 1, decay: 0.25 }),
+      mod('mac1', 'macro'),
+      mod('vca1', 'vca', { level: 0, cvAmount: 1 }),
+      mod('mix1', 'mixer'),
+    ],
+    cables: [
+      cable('key1', 'pitch', 'osc1', 'fm'),
+      cable('key1', 'gate', 'osc1', 'gate'),
+      cable('osc1', 'out', 'vca1', 'in'),
+      cable('mac1', 'out1', 'vca1', 'cv'),
+      cable('vca1', 'out', 'mix1', 'in1'),
+    ],
+  })
+  const racks = { lead: { patch: macroRack(), values: {} }, drum: band().drum }
+  const leadOnly = { sampleRate: SR, only: ['lead'] }
+  const l = new Float32Array(24000)
+  const r = new Float32Array(24000)
+
+  const shut = new SongPlayer(song(), racks, leadOnly)
+  shut.render(l, r)
+  check('with the macro at nought the lead is silent', rms(l) < 1e-4, `rms ${rms(l).toFixed(5)}`)
+
+  const open = new SongPlayer(song(), racks, leadOnly)
+  check('a knob is found by the track\'s name', open.setParam('Lead', 'mac1.amount', 1))
+  open.render(l, r)
+  check('and turning it opens the lead', rms(l) > 0.005, `rms ${rms(l).toFixed(4)}`)
+
+  check('by id as well', open.setParam('lead', 'mac1.amount', 0.5) && open.getParam('lead', 'mac1.amount') === 0.5)
+  open.setParam('lead', 'mac1.amount', 7)
+  check('a value past the end of the knob stops at it', open.getParam('lead', 'mac1.amount') === 1)
+  open.setParam('lead', 'osc1.wave', 1.4)
+  check('and a switch lands on a position', open.getParam('lead', 'osc1.wave') === 1)
+  check('a knob that is not there is refused', !open.setParam('lead', 'mac9.amount', 1) && !open.setParam('bass', 'mac1.amount', 1))
+  check('and a value that is not a number', !open.setParam('lead', 'mac1.amount', Number.NaN))
+  check('it lists what can be reached', open.paramsOf('Lead').includes('mac1.amount') && open.paramsOf('Lead').includes('vca1.level'))
+}
+
 console.log('\nit loops, and it ends')
 {
   const s = song()

@@ -42,8 +42,9 @@ interface Note {
   velocity?: number
 }
 
-function render(t: Template, notes: Note[], seconds: number, dry = false) {
-  const { patch, values } = t.build()
+function render(t: Template, notes: Note[], seconds: number, dry = false, over: Record<string, number> = {}) {
+  const { patch, values: built } = t.build()
+  const values = { ...built, ...over }
   const compiled = compile(patch)
   const params = compiled.params.slice()
   for (const [key, value] of Object.entries(values)) params[compiled.paramIndex[key]] = value
@@ -268,6 +269,144 @@ for (const cat of CATEGORIES.filter((c) => c.id !== 'tutorial')) {
       const d = render(t, demo.notes, demo.seconds)
       writeFileSync(join(WAVS, `${cat.id}-${t.id}.wav`), encodeWav([d.left, d.right], SR))
     }
+  }
+}
+
+// --- sound fx and ambience do what they say ----------------------------
+/**
+ * The shelf checks above hold every voice to being playable. A sound effect
+ * also makes a promise in its name -- a jump goes up, a power-down comes down,
+ * a loop keeps going -- and nothing above would notice one that stopped
+ * keeping it. These listen for the one thing each is for.
+ */
+console.log('\nsound fx and ambience do what they say')
+{
+  const byId = (id: string) => LIBRARY.find((t) => t.id === id)!
+  const at = (s: number) => Math.round(s * SR)
+  /** Zero crossings a second: rough, and plenty for "higher or lower". */
+  const crossings = (buf: Float32Array, from: number, to: number) => {
+    let n = 0
+    for (let i = from + 1; i < to; i++) if (buf[i - 1] <= 0 !== buf[i] <= 0) n++
+    return (n * SR) / (to - from)
+  }
+  /** The slope's level against the signal's: how much treble. */
+  const treble = (buf: Float32Array, from: number, to: number) => {
+    let d = 0
+    let x = 0
+    for (let i = from + 1; i < to; i++) {
+      d += (buf[i] - buf[i - 1]) ** 2
+      x += buf[i] ** 2
+    }
+    return Math.sqrt(d / Math.max(1e-12, x))
+  }
+  const level = (buf: Float32Array, from: number, to: number) => rms(buf.subarray(from, to))
+  const hit = (id: string, seconds = 1.5, over: Record<string, number> = {}) =>
+    render(byId(id), [{ at: 0, length: 0.05, pitch: 0, velocity: 1 }], seconds, false, over)
+  const held = (id: string, seconds: number, over: Record<string, number> = {}) =>
+    render(byId(id), [{ at: 0, length: seconds, pitch: 0, velocity: 1 }], seconds + 2, false, over)
+  const ratio = (a: number, b: number) => `${a.toFixed(0)} -> ${b.toFixed(0)}`
+
+  {
+    const o = hit('uiconfirm').left
+    const a = crossings(o, at(0.005), at(0.035))
+    const b = crossings(o, at(0.07), at(0.1))
+    check('UI confirm: the second blip is the higher', b > a * 1.3, ratio(a, b))
+  }
+  {
+    const o = hit('uierror').left
+    const a = crossings(o, at(0.01), at(0.07))
+    const b = crossings(o, at(0.12), at(0.2))
+    check('UI error: and the error falls', b < a * 0.85, ratio(a, b))
+  }
+  {
+    const o = hit('jump').left
+    const a = crossings(o, at(0.002), at(0.03))
+    const b = crossings(o, at(0.08), at(0.12))
+    check('Jump: it bends upwards', b > a * 1.3, ratio(a, b))
+  }
+  {
+    const o = hit('gameover', 4).left
+    const a = crossings(o, at(0.02), at(0.2))
+    const b = crossings(o, at(1), at(1.4))
+    check('Game over: it winds down', b < a * 0.6, ratio(a, b))
+  }
+  {
+    const o = hit('hurt').left
+    const a = crossings(o, at(0.005), at(0.03))
+    const b = crossings(o, at(0.1), at(0.2))
+    check('Hurt: its tone drops', b < a, ratio(a, b))
+  }
+  {
+    const o = hit('heal', 2)
+    const first = crossings(o.left, at(0.005), at(0.05))
+    const last = crossings(o.left, at(0.32), at(0.37))
+    check('Heal: the arpeggio climbs', last > first * 1.3, ratio(first, last))
+    check('Heal: and spreads across the speakers', o.left.some((v, i) => Math.abs(v - o.right[i]) > 1e-3))
+  }
+  {
+    const o = hit('swish').left
+    const middle = treble(o, at(0.04), at(0.08))
+    const start = treble(o, at(0.002), at(0.02))
+    check('Sword swish: the band sweeps up through the cut', middle > start * 1.3, `${start.toFixed(3)} -> ${middle.toFixed(3)}`)
+  }
+  {
+    const o = hit('glass').left
+    const c = crossings(o, at(0.01), at(0.2))
+    check('Glass break: it rings high', c > 4000, `${c.toFixed(0)} crossings a second`)
+  }
+  {
+    const o = held('klaxon', 2).left
+    const tones = [0.1, 0.4, 0.75, 1.05, 1.4].map((t) => crossings(o, at(t), at(t + 0.15)))
+    const high = Math.max(...tones)
+    const low = Math.min(...tones)
+    check('Alarm klaxon: it flips between two tones', high > low * 1.2, tones.map((t) => t.toFixed(0)).join(' '))
+  }
+  {
+    const o = held('creak', 2).left
+    check('Door creak: it creaks for as long as it is held', level(o, at(1.5), at(1.9)) > 0.01,
+      `rms ${level(o, at(1.5), at(1.9)).toFixed(3)}`)
+  }
+  for (const id of ['campfire', 'drips', 'surf', 'crickets', 'shiphum']) {
+    const o = held(id, 5)
+    const late = level(mono(o.left, o.right), at(3.5), at(5))
+    // A second and a half after letting go: a hum's release is a fade, not
+    // a cut, and that is the right way for a bed to leave a scene.
+    const gone = level(mono(o.left, o.right), at(6.5), at(6.6))
+    check(`${byId(id).name}: it goes on for as long as it is held`, late > 0.01, `rms ${late.toFixed(3)}`)
+    check(`${byId(id).name}: and goes quiet when let go`, gone < late / 4, `rms ${gone.toFixed(4)}`)
+  }
+  {
+    // The Macro patches: turning Amount has to be heard.
+    const calm = held('forcefield', 2, { 'mac1.amount': 0 }).left
+    const strained = held('forcefield', 2, { 'mac1.amount': 1 }).left
+    const a = treble(calm, at(1), at(1.8))
+    const b = treble(strained, at(1), at(1.8))
+    check('Force field: its Macro strains it', b > a * 1.5, `${a.toFixed(3)} -> ${b.toFixed(3)}`)
+  }
+  {
+    const count = (buf: Float32Array) => {
+      let n = 0
+      let quiet = true
+      const w = at(0.002)
+      const floor = Math.max(...Array.from(buf.subarray(at(0.5), at(3)), Math.abs)) * 0.3
+      for (let i = at(0.5); i + w < at(3); i += w) {
+        let p = 0
+        for (let j = i; j < i + w; j++) p = Math.max(p, Math.abs(buf[j]))
+        if (p > floor && quiet) n++
+        quiet = p <= floor
+      }
+      return n
+    }
+    const cool = count(held('radiation', 3, { 'mac1.amount': 0 }).left)
+    const hot = count(held('radiation', 3, { 'mac1.amount': 0.9 }).left)
+    check('Radiation zone: its Macro crowds the clicks in', hot > cool * 4, ratio(cool, hot))
+  }
+  {
+    const note = (amount: number) =>
+      render(byId('adaptivedrone'), [{ at: 0, length: 3, pitch: 12, velocity: 1 }], 3.5, true, { 'mac1.amount': amount }).left
+    const a = treble(note(0), at(2), at(2.8))
+    const b = treble(note(1), at(2), at(2.8))
+    check('Adaptive drone: its Macro darkens the mood into dread', b > a * 1.5, `${a.toFixed(3)} -> ${b.toFixed(3)}`)
   }
 }
 

@@ -133,6 +133,14 @@ export function ModuleSearch({ cable, onPick, onClose }: Props) {
  * which jack is the whole question: a filter's In and its CV are different
  * cables.
  */
+/**
+ * The names on a module's switches, so a search finds a module by what it can
+ * be switched to: "flanger" is the Chorus, "notch" the Multimode Filter.
+ */
+function modes(def: (typeof MODULE_DEFS)[string]) {
+  return def.params.flatMap((p) => p.steps ?? []).join(' ')
+}
+
 function buildEntries(cable?: 'input' | 'output'): Entry[] {
   const groupName = new Map(MODULE_GROUPS.map((g) => [g.id, g.name]))
   const out: Entry[] = []
@@ -146,7 +154,7 @@ function buildEntries(cable?: 'input' | 'output'): Entry[] {
           type: def.type,
           label: def.name,
           detail: group,
-          haystack: `${def.name} ${def.type} ${group}`.toLowerCase(),
+          haystack: `${def.name} ${def.type} ${group} ${modes(def)}`.toLowerCase(),
           order: order++,
         })
         continue
@@ -159,7 +167,7 @@ function buildEntries(cable?: 'input' | 'output'): Entry[] {
           port: p.id,
           label: `${def.name} › ${p.label}`,
           detail: group,
-          haystack: `${def.name} ${def.type} ${p.label} ${p.id} ${group}`.toLowerCase(),
+          haystack: `${def.name} ${def.type} ${p.label} ${p.id} ${group} ${modes(def)}`.toLowerCase(),
           order: order++,
         })
       }

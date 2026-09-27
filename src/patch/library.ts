@@ -17,7 +17,7 @@ import type { Patch, PatchModule } from './types'
  * manual's own check renders and listens to. So a template that stopped
  * making a sound, drifted out of range, started clipping or lost a cable
  * fails `npm run check:manual` before anyone opens the menu -- which is the
- * only way a shelf of seventeen racks stays trustworthy while the modules
+ * only way a shelf of twenty-odd racks stays trustworthy while the modules
  * underneath them keep changing.
  */
 export interface Template {
@@ -38,6 +38,8 @@ export interface Template {
   tutorial?: number
   /** For an instrument: one thing worth doing with it. */
   tip?: string
+  /** For an instrument: it sounds for as long as its note is held. */
+  held?: true
   /** The rack, with everything it does not use already taken out. */
   build(): Built
 }
@@ -47,7 +49,8 @@ export interface Template {
  *
  * The tutorials first, because they are where the rack is learned; then the
  * instruments, in roughly the order a piece is written -- the harmony, the
- * tunes, the bottom end, the beat.
+ * tunes, the bottom end, the beat -- and last what a game adds around the
+ * music: its sound effects and its places.
  */
 export type Category = 'tutorial' | InstrumentCategory
 
@@ -61,6 +64,8 @@ export const CATEGORIES: { id: Category; name: string }[] = [
   { id: 'bass', name: 'Bass' },
   { id: 'leads', name: 'Leads' },
   { id: 'drums', name: 'Drums' },
+  { id: 'sfx', name: 'Sound FX' },
+  { id: 'ambience', name: 'Ambience' },
 ]
 
 /** A shelf entry before pruning, which is the only way one is written. */
@@ -600,7 +605,7 @@ const SHELF: Entry[] = [
     name: 'Coin',
     description: 'Ding-DING: the two-note pickup every platform game has.',
     teaches: 'Whole-number FM ratios, and the envelope Delay that places the second note.',
-    tutorial: 16,
+    tutorial: 17,
     make: () => ({
       patch: wire(
         add(tutorialRack(), 'osc'),
@@ -879,6 +884,184 @@ const SHELF: Entry[] = [
         'spc1.mix': 0.4,
         'mix1.pan1': -1,
         'mix1.pan2': 1,
+      },
+    }),
+  },
+  {
+    id: 'rain',
+    name: 'Rain',
+    description: 'Rain on a window, for as long as the key is held: every drop its own little spit of hiss.',
+    teaches: 'Dust: sound made of separate impulses, and Density as the whole character.',
+    tutorial: 18,
+    make: () => ({
+      patch: wire(addAll(tutorialRack(), ['dust']), 'dust1.out -> lpf1.in'),
+      values: {
+        ...RACK_VALUES,
+        'dust1.density': 90,
+        'dust1.spread': 0.85,
+        'dust1.decay': 0.006,
+        'dust1.tone': 1,
+        // Open, and held still: the envelope is here to fade the rain in and
+        // out, not to sweep it.
+        'lpf1.cutoff': 3500,
+        'lpf1.resonance': 0.1,
+        'lpf1.cvAmount': 0,
+        // A slow gate follower: the shower builds over a moment, and eases
+        // off after the key is let go rather than stopping dead.
+        'env1.attack': 0.4,
+        'env1.decay': 0.05,
+        'env1.sustain': 1,
+        'env1.release': 0.4,
+        'vca1.cvAmount': 2,
+      },
+    }),
+  },
+  {
+    id: 'fly',
+    name: 'Fly',
+    description: 'A fly buzzing about, never quite in the same place: its pitch and brightness wander together.',
+    teaches: 'Drunk: a value that wanders, driving two things at once, and Pull keeping it near home.',
+    tutorial: 19,
+    make: () => ({
+      patch: wire(
+        addAll(tutorialRack(), ['drunk']),
+        'drk1.out -> osc1.fm',
+        // Replaces the envelope's cable into the filter: the walk moves the
+        // tone now, and the envelope only opens the VCA.
+        'drk1.uni -> lpf1.cv',
+      ),
+      values: {
+        ...RACK_VALUES,
+        'osc1.pitch': 190,
+        'osc1.wave': 1,
+        'osc1.width': 0.3,
+        'osc1.fmAmount': 0.6,
+        'drk1.rate': 7,
+        'drk1.step': 0.4,
+        'drk1.smooth': 1,
+        'drk1.pull': 0.15,
+        'lpf1.cutoff': 800,
+        'lpf1.resonance': 0.3,
+        'lpf1.cvAmount': 2.5,
+        'env1.attack': 0.05,
+        'env1.decay': 0.01,
+        'env1.sustain': 1,
+        'env1.release': 0.15,
+      },
+    }),
+  },
+  {
+    id: 'pipe',
+    name: 'Pipe',
+    description: 'A metal pipe struck once: a click of noise, and a comb filter ringing it at a pitch.',
+    teaches: 'The Multimode Filter\'s comb modes, where Cutoff is a pitch and Res is how long it rings.',
+    tutorial: 20,
+    make: () => ({
+      patch: wire(
+        addAll(tutorialRack(), ['svf']),
+        'noise1.out -> lpf1.in',
+        'vca1.out -> mmf1.in',
+        // Replaces the VCA's cable into the mixer.
+        'mmf1.out -> mix1.in1',
+      ),
+      values: {
+        ...RACK_VALUES,
+        // A strike: the shortest burst of noise the envelope can shape.
+        'env1.attack': 0.0005,
+        'env1.decay': 0.012,
+        'env1.sustain': 0,
+        'env1.release': 0.01,
+        'lpf1.cutoff': 6000,
+        'lpf1.resonance': 0,
+        'lpf1.cvAmount': 0,
+        'mmf1.mode': 5,
+        'mmf1.cutoff': 220,
+        'mmf1.resonance': 0.97,
+        // Twice as open as usual, because a comb passes only what lands on
+        // its teeth and a click is mostly energy that does not.
+        'vca1.cvAmount': 2,
+      },
+    }),
+  },
+  {
+    id: 'jet',
+    name: 'Jet flyby',
+    description: 'A jet passing overhead: roaring noise through a flanger whose sweep follows the pass.',
+    teaches: 'The Chorus as a flanger, swept by an envelope rather than its own wobble.',
+    tutorial: 21,
+    make: () => ({
+      patch: wire(
+        addAll(tutorialRack(), ['chorus']),
+        'noise1.out -> lpf1.in',
+        'vca1.out -> cho1.in',
+        // Replaces the VCA's cable into the mixer. Two sides, two channels.
+        'cho1.l -> mix1.in1',
+        'cho1.r -> mix1.in2',
+        'env1.out -> cho1.cv',
+      ),
+      values: {
+        ...RACK_VALUES,
+        'noise1.color': 1,
+        'lpf1.cutoff': 2500,
+        'lpf1.resonance': 0.2,
+        'lpf1.cvAmount': 1.5,
+        // The pass: a long rise and a long fall, one press.
+        'env1.attack': 1.2,
+        'env1.decay': 0.8,
+        'env1.sustain': 0,
+        'env1.release': 0.5,
+        'cho1.mode': 1,
+        'cho1.rate': 0.1,
+        'cho1.depth': 0.15,
+        'cho1.center': 0.1,
+        'cho1.feedback': 0.8,
+        'cho1.mix': 0.5,
+        'mix1.pan1': -0.7,
+        'mix1.pan2': 0.7,
+      },
+    }),
+  },
+  {
+    id: 'chargeup',
+    name: 'Charge-up',
+    description: 'A weapon charging: it brightens, its wobble speeds up, and grit arrives only near the top.',
+    teaches: 'The Macro: one gesture on three destinations, and a lane that waits for its window.',
+    tutorial: 22,
+    make: () => ({
+      patch: wire(
+        addAll(tutorialRack(), ['drive', 'macro']),
+        'lpf1.out -> drv1.in',
+        // Replaces the filter's cable into the VCA.
+        'drv1.out -> vca1.in',
+        'env1.out -> mac1.cv',
+        // Replaces the envelope's cable into the filter.
+        'mac1.out1 -> lpf1.cv',
+        'mac1.out2 -> lfo1.cv',
+        'lfo1.out -> osc1.fm',
+        'mac1.out3 -> drv1.cv',
+      ),
+      values: {
+        ...RACK_VALUES,
+        'osc1.pitch': 110,
+        'osc1.wave': 0,
+        'osc1.fmAmount': 0.08,
+        'lfo1.rate': 2,
+        'lfo1.cvAmount': 3,
+        'lpf1.cutoff': 250,
+        'lpf1.resonance': 0.4,
+        'lpf1.cvAmount': 5,
+        'drv1.drive': 1,
+        'drv1.cvAmount': 4,
+        'drv1.level': 0.6,
+        // Held: the charge builds for as long as the key is down.
+        'env1.attack': 1.5,
+        'env1.decay': 0.1,
+        'env1.sustain': 1,
+        'env1.release': 0.3,
+        // Lane 1 opens the filter, eased so the top of the turn does the most.
+        'mac1.curve1': 0.5,
+        // Lane 3 waits for the second half.
+        'mac1.start3': 0.5,
       },
     }),
   },

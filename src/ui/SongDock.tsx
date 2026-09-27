@@ -168,6 +168,11 @@ export function SongDock({
   const placedAt = firstPlacement(song, patternId)
   const inContext = view === 'roll' && rollPlays === 'song'
 
+  const show = (next: 'roll' | 'song' | 'mix') => {
+    onView(next)
+    if (!open) onOpenChange(true)
+  }
+
   // The notes in this pattern, split into the ones this track plays and the
   // ones it does not. A pattern spans tracks, so the rest are drawn behind as
   // a guide -- writing a bass line against a drum part you cannot see is
@@ -312,25 +317,28 @@ export function SongDock({
         </div>
 
         {/* Which view is showing decides what plays, so the switch sits with
-            the transport rather than over the thing it switches. */}
+            the transport rather than over the thing it switches. Pressed
+            while the dock is folded, a view button opens it as well: asking
+            for the roll is asking to see it. They never fold it -- that is
+            the fold button's job. */}
         <div className="dock-group dock-views" role="group" aria-label="View">
           <button
             className={`dock-toggle${view === 'roll' ? ' on' : ''}`}
-            onClick={() => onView('roll')}
+            onClick={() => show('roll')}
             type="button"
           >
             Roll
           </button>
           <button
             className={`dock-toggle${view === 'song' ? ' on' : ''}`}
-            onClick={() => onView('song')}
+            onClick={() => show('song')}
             type="button"
           >
             Song
           </button>
           <button
             className={`dock-toggle${view === 'mix' ? ' on' : ''}`}
-            onClick={() => onView('mix')}
+            onClick={() => show('mix')}
             title="The song's mixing desk: a channel per track, shared effects, and the master bus"
             type="button"
           >
@@ -417,20 +425,9 @@ export function SongDock({
         {/* Said plainly rather than left for the user to work out from
             silence: a rack with no way in is the ordinary state of one that
             is still being built, and the fix is one module. */}
-        {/* Said, and fixed in one click, rather than left to be worked out
-            from the song playing without it. */}
-        {inContext && placedAt === null && (
-          <span className="dock-hint">
-            Not in the song yet{' '}
-            <button
-              className="dock-toggle"
-              onClick={() => onSong(togglePlacement(song, patternId, 0))}
-              type="button"
-            >
-              Put it at bar 1
-            </button>
-          </span>
-        )}
+        {/* Said, rather than left to be worked out from the song playing
+            without it. Placing it is the playlist's job. */}
+        {inContext && placedAt === null && <span className="dock-hint">Not in the song yet</span>}
         {view === 'roll' && !target && (
           <span className="dock-hint">Add a Keyboard or a Trigger to play this rack</span>
         )}

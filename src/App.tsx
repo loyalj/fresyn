@@ -467,6 +467,28 @@ export default function App() {
   )
 
   /**
+   * Several knobs on one module in a single edit, for a control that moves
+   * more than one at once -- a Macro handle is a window edge and a value.
+   * Keyed by which knobs they are, so a drag folds into one step of undo the
+   * way a knob drag does, where setting them one at a time would alternate
+   * keys and leave a step for every pixel.
+   */
+  const setParams = useCallback(
+    (moduleId: string, changes: Record<string, number>) => {
+      const ids = Object.keys(changes).sort()
+      editRack(
+        (rack) => {
+          const values = { ...rack.values }
+          for (const id of ids) values[`${moduleId}.${id}`] = changes[id]
+          return { ...rack, values }
+        },
+        `params:${trackId}.${moduleId}.${ids.join(',')}`,
+      )
+    },
+    [editRack, trackId],
+  )
+
+  /**
    * An edit from the dock.
    *
    * Coalesced under one key, the way a knob drag is: dragging the tempo
@@ -709,6 +731,30 @@ export default function App() {
     const t = setTimeout(() => setNotice(null), 4000)
     return () => clearTimeout(t)
   }, [notice])
+
+  /**
+   * Keep the message card just above the dock, whatever height it is.
+   *
+   * `--dock-h` is the rack's allowance for the dock and is only near enough
+   * for padding: folded, the transport is taller than it says, and the card
+   * sat on top of the play button. So the card is lifted by the dock's real
+   * height, measured as it changes -- a fold, a drag of the roll's edge, the
+   * transport wrapping on a narrow window. Written to the style directly, as
+   * a drag of the dock's edge would otherwise re-render the app every frame.
+   */
+  const noticesRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const dockEl = document.querySelector<HTMLElement>('.dock')
+    const el = noticesRef.current
+    if (!dockEl || !el) return
+    const sync = () => {
+      el.style.bottom = `${Math.round(dockEl.getBoundingClientRect().height) + 12}px`
+    }
+    sync()
+    const watch = new ResizeObserver(sync)
+    watch.observe(dockEl)
+    return () => watch.disconnect()
+  }, [])
 
   // --- geometry ------------------------------------------------------
   const registerJack = useCallback((key: string, el: HTMLElement | null) => {
@@ -1678,25 +1724,6 @@ export default function App() {
       ],
     },
     {
-      // One sound: the rack on the selected track and any audio it plays.
-      // What you send somebody when you mean "here is a sound" rather than
-      // "here is the piece", and what carries a sound from one project into
-      // the next. No notes travel with it.
-      label: 'Patch',
-      items: [
-        { kind: 'action', label: 'Library...', onSelect: () => setLibraryOpen(true) },
-        { kind: 'separator' },
-        { kind: 'action', label: 'Open patch...', onSelect: () => fileRef.current?.click() },
-        {
-          kind: 'action',
-          label: 'Add patch as track...',
-          onSelect: () => trackFileRef.current?.click(),
-        },
-        { kind: 'action', label: 'Save patch...', onSelect: () => void onExportPatch() },
-        { kind: 'action', label: 'Save to library', onSelect: () => void onSaveToLibrary() },
-      ],
-    },
-    {
       label: 'Edit',
       items: [
         {
@@ -1716,6 +1743,25 @@ export default function App() {
           kind: 'action', label: 'Paste modules', shortcut: 'Ctrl+V',
           disabled: !hasClip, onSelect: pasteClip,
         },
+      ],
+    },
+    {
+      // One sound: the rack on the selected track and any audio it plays.
+      // What you send somebody when you mean "here is a sound" rather than
+      // "here is the piece", and what carries a sound from one project into
+      // the next. No notes travel with it.
+      label: 'Patch',
+      items: [
+        { kind: 'action', label: 'Library...', onSelect: () => setLibraryOpen(true) },
+        { kind: 'separator' },
+        { kind: 'action', label: 'Open patch...', onSelect: () => fileRef.current?.click() },
+        {
+          kind: 'action',
+          label: 'Add patch as track...',
+          onSelect: () => trackFileRef.current?.click(),
+        },
+        { kind: 'action', label: 'Save patch...', onSelect: () => void onExportPatch() },
+        { kind: 'action', label: 'Save to library', onSelect: () => void onSaveToLibrary() },
       ],
     },
     {
@@ -1865,10 +1911,6 @@ export default function App() {
             }}
           />
 
-          {/* Kept on the bar rather than left to the View menu alone: this is
-              the control the rack is actually worked with, and burying the
-              most-pressed button in the app would be a poor trade for the room
-              it frees. */}
           {/* Every unit in the rack by name, for getting to one without
               scrolling a long rack to look for it. Choosing one scrolls it into
               view and picks it, so it is lit when it arrives. */}
@@ -1893,10 +1935,6 @@ export default function App() {
               ] : []
             })}
           </select>
-
-          <button className="flip-button" onClick={flip} title="Turn the rack around (Tab)">
-            {flipped ? 'Front' : 'Back'}
-          </button>
         </div>
       </header>
 
@@ -1906,6 +1944,28 @@ export default function App() {
         className="app"
         style={{ '--dock-h': `${dock.open ? dock.height + 76 : 44}px` } as React.CSSProperties}
       >
+
+        {/* A card in the bottom corner, just above the dock, not a line in
+            the page: it used to sit above the rack and shove every unit down
+            by its own height each time it came and went. Lifted clear of the
+            dock by its measured height (see noticesRef). The region is always
+            there, so a screen reader hears each message arrive. */}
+        <div className="notices" ref={noticesRef} role="status" aria-live="polite">
+          {notice && (
+            <div className="notice">
+              <span className="notice-text">{notice}</span>
+              <button
+                className="notice-close"
+                onClick={() => setNotice(null)}
+                aria-label="Dismiss"
+                title="Dismiss"
+                type="button"
+              >
+                ×
+              </button>
+            </div>
+          )}
+        </div>
 
         {libraryOpen && (
           <LibraryDialog onPick={onPickTemplate} onClose={() => setLibraryOpen(false)} onSave={onSaveToLibrary} />
@@ -1919,8 +1979,6 @@ export default function App() {
           />
         )}
 
-        {notice && <div className="notice">{notice}</div>}
-
         <RackIndex
           tracks={song.tracks}
           trackId={trackId}
@@ -1931,6 +1989,8 @@ export default function App() {
           })}
           picked={picked}
           onJump={jumpTo}
+          flipped={flipped}
+          onFlip={flip}
         />
 
         {/* Panels that show live audio, such as the scope, take the engine from
@@ -2026,6 +2086,7 @@ export default function App() {
                   }
                   valueOf={(paramId) => values[`${m.id}.${paramId}`]}
                   onChange={(paramId, v) => setParam(m.id, paramId, v)}
+                  onChanges={(changes) => setParams(m.id, changes)}
                   sample={m.sample}
                   onSample={(file) => void onSample(m.id, file)}
                   isOccupied={isOccupied}

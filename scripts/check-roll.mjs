@@ -213,6 +213,23 @@ console.log('\nthe dock')
   check('the transport is there', (await page.$('.dock-play')) !== null)
   check('and so is the track list', (await page.$('.track')) !== null)
   check('with one track to start', (await page.$$('.track')).length === 1)
+
+  // A view button pressed while the dock is folded opens it on that view:
+  // asking for the mixer is asking to see it. It never folds it again.
+  const viewButton = (name) =>
+    page.evaluateHandle((n) => [...document.querySelectorAll('.dock-views .dock-toggle')].find((b) => b.textContent.trim() === n), name)
+  await page.click('.dock-fold')
+  await wait(250)
+  check('folded again', (await page.$('.roll-canvas')) === null)
+  await (await viewButton('Mix')).asElement().click()
+  await wait(250)
+  check('Mix on a folded dock opens it, on the mixer', (await page.$('.mix')) !== null)
+  await (await viewButton('Mix')).asElement().click()
+  await wait(250)
+  check('and pressing it again leaves it open', (await page.$('.mix')) !== null)
+  await (await viewButton('Roll')).asElement().click()
+  await wait(250)
+  check('Roll switches back, still open', (await page.$('.roll-canvas')) !== null)
 }
 
 /** Draw a note by dragging on the canvas, the way a hand would. */
@@ -664,8 +681,7 @@ console.log('\npatterns and the playlist')
   check('notes go into the new pattern', (await notesOf(1)).length === 1)
   check('and the first one is untouched', (await notesOf(0)).length === 2)
 
-  // In song: a pattern that is not in the song yet -- this new one -- says
-  // so, and one click puts it there.
+  // In song: a pattern that is not in the song yet -- this new one -- says so.
   const inSong = await page.evaluateHandle(() =>
     [...document.querySelectorAll('.dock-toggle')].find((b) => b.textContent.trim() === 'In song'),
   )
@@ -673,14 +689,6 @@ console.log('\npatterns and the playlist')
   await wait(200)
   const hint = await page.evaluate(() => document.querySelector('.dock-hint')?.textContent ?? '')
   check('In song says when the pattern is not in the song', hint.includes('Not in the song'), hint)
-  const put = await page.evaluateHandle(() =>
-    [...document.querySelectorAll('.dock-hint .dock-toggle')].find((b) => b.textContent.includes('bar 1')),
-  )
-  await put.asElement().click()
-  await wait(700)
-  check('and puts it at bar 1 when asked', JSON.stringify((await stored()).song.playlist) === '[{"pattern":"main","tick":0},{"pattern":"p1","tick":0}]')
-  await press('KeyZ', ['Control'])
-  check('which undoes like any other edit', (await stored()).song.playlist.length === 1)
   const pat = await page.evaluateHandle(() =>
     [...document.querySelectorAll('.dock-toggle')].find((b) => b.textContent.trim() === 'Pattern'),
   )

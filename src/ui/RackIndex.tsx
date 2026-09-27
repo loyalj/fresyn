@@ -15,6 +15,9 @@ interface Props {
   entries: readonly RackIndexEntry[]
   picked: ReadonlySet<string>
   onJump: (id: string) => void
+  /** Which side of the rack is showing, and turning it round. */
+  flipped: boolean
+  onFlip: () => void
 }
 
 /**
@@ -28,7 +31,7 @@ interface Props {
  * Only where the window leaves a margin wide enough to hold it; below that
  * the stylesheet hides it and the Jump menu comes back.
  */
-export function RackIndex({ tracks, trackId, onSelectTrack, entries, picked, onJump }: Props) {
+export function RackIndex({ tracks, trackId, onSelectTrack, entries, picked, onJump, flipped, onFlip }: Props) {
   const inView = useInView(entries.map((e) => e.id).join(' '))
 
   return (
@@ -53,6 +56,13 @@ export function RackIndex({ tracks, trackId, onSelectTrack, entries, picked, onJ
             </option>
           ))}
         </select>
+        {/* Turning the rack round belongs with the rack rather than with the
+            app's menus: it is the control the rack is worked with, and here
+            it sits beside the name of what it turns. Tab and View > Back
+            panel still do it where the card is not shown. */}
+        <button className="flip-button" onClick={onFlip} title="Turn the rack around (Tab)" type="button">
+          {flipped ? 'Front' : 'Back'}
+        </button>
       </div>
       <ul className="rack-index-list">
         {entries.map((e) => (

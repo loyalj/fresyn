@@ -56,6 +56,9 @@ const CEILING: Record<string, number> = {
   osc: 1.3,
   // Pink noise is normalised by ear rather than by peak, and runs hotter.
   noise: 2,
+  // An impulse is at most full scale, and a new one replaces the last rather
+  // than adding to it; Trig is a gate.
+  dust: 1,
   // The fuzz cannot drop a file on a panel, so what this bounds is the
   // module's arithmetic rather than anybody's audio: with nothing loaded it
   // is silent, and with a file it only ever attenuates -- Level and the fade
@@ -77,12 +80,17 @@ const CEILING: Record<string, number> = {
   adsr: 1,
   // The held value can only be as large as what it sampled.
   sh: 1.1,
+  // The walk reflects off plus and minus one, and a cosine glide between two
+  // points inside them never leaves them. Uni is half that plus a half.
+  drunk: 1,
   // Every output is a gate.
   clock: 1,
   // Gates and an End pulse, plus a ramp that stops at 1.
   burst: 1,
   // The CV steps stop at two octaves; everything else it puts out is 0..1.
   seq: 2.1,
+  // Every lane runs between its From and To, and both stop at one.
+  macro: 1,
   // It can only chase its input.
   slew: 1.1,
   // Gain 2 and offset 1 on a full-scale input is 3 a channel, so 6 summed.
@@ -92,6 +100,10 @@ const CEILING: Record<string, number> = {
   quant: 1.1,
   // Drive saturates before the ladder, and resonance compensation lifts it.
   ladder: 4,
+  // Clean, so nothing saturates it: at full Res the lowpass is ten times up
+  // at its corner, which a full-scale tone sitting there comes out at. The
+  // combs saturate in their loops and stay under two.
+  svf: 10.5,
   // Linear, and three bands of up to +12 dB each: with the low shelf and the
   // bell both boosting the same frequency, a full-scale tone there comes out
   // 24 dB up -- sixteen times -- which is what it was asked for.
@@ -121,6 +133,9 @@ const CEILING: Record<string, number> = {
   // mixed output is a blend of that and a dry signal from the oscillator,
   // which overshoots a little at the corners of its band limiting.
   delay: 1.4,
+  // Half dry and half wet at most of each, and the wet side is its input
+  // plus a feedback that saturates at 0.95 -- so a little over two.
+  chorus: 2.5,
   reverb: 1.4,
   // Wet only, and the loop saturates.
   res: 1.1,
@@ -195,7 +210,14 @@ type Driver = 'unpatched' | 'dc' | 'audio'
  * reset on every other sample never leaves step one, so all six of its later
  * step knobs read as dead and the check reports a drift that is not there.
  */
-const NEVER_DRIVEN = new Set(['seq.reset', 'clock.reset'])
+const NEVER_DRIVEN = new Set([
+  'seq.reset',
+  'clock.reset',
+  // The same shape of problem. A patched Clock replaces the Drunk's own Rate
+  // entirely -- that is what patching one means -- so driving it would call
+  // Rate and Rate Amt dead when they are only overruled.
+  'drunk.clock',
+])
 
 function rig(type: string, driver: Driver): Patch {
   const def = defOf(type)

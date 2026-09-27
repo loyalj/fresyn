@@ -2,6 +2,8 @@ import type { Routing } from '../dsp/Console'
 import type { SampleBank } from '../dsp/samples'
 import { SongEngine } from '../dsp/SongEngine'
 import { compile } from '../patch/compile'
+import { defOf } from '../patch/defs'
+import { clampValue, type ParamSpec } from '../patch/param'
 import { engineEventsByTrack, noteTarget, type NoteTarget } from './bind'
 import { consoleOf, trackMix } from './edit'
 import { fromStoredProject, type LoadedProject, type Rack } from './project'
@@ -46,9 +48,20 @@ export interface SongPlayerOptions {
 
 const DEFAULT_LOOKAHEAD_S = 0.25
 
+/** One knob a game can turn: where it lives in its track's engine, and its range. */
+interface Reachable {
+  index: number
+  spec: ParamSpec
+  value: number
+}
+
 export class SongPlayer {
   private engine: SongEngine
   private targets = new Map<string, NoteTarget>()
+  /** Every knob in every track, by track id and then by `module.param`. */
+  private knobs = new Map<string, Map<string, Reachable>>()
+  /** A track's name, for a game that would rather not know its id. */
+  private trackByName = new Map<string, string>()
   private cursor: Cursor = { tick: 0, frame: 0 }
   private lookaheadFrames: number
   private loop: Loop | null
@@ -73,6 +86,17 @@ export class SongPlayer {
         if (index !== undefined) params[index] = value
       }
       tracks.push({ id: track.id, patch: compiled, params })
+
+      const knobs = new Map<string, Reachable>()
+      for (const m of rack.patch.modules) {
+        for (const spec of defOf(m.type).params) {
+          const key = `${m.id}.${spec.id}`
+          const index = compiled.paramIndex[key]
+          if (index !== undefined) knobs.set(key, { index, spec, value: params[index] })
+        }
+      }
+      this.knobs.set(track.id, knobs)
+      if (!this.trackByName.has(track.name)) this.trackByName.set(track.name, track.id)
       const target = noteTarget(rack.patch)
       if (target) this.targets.set(track.id, target)
     }
@@ -95,6 +119,45 @@ export class SongPlayer {
   /** Which tracks have something a note can actually be played on. */
   get playable(): readonly string[] {
     return [...this.targets.keys()]
+  }
+
+  /**
+   * Turn a knob in one of the song's racks while it plays.
+   *
+   * This is how a game reaches into the music: a Macro's Amount for how
+   * tense the scene is, a filter opening as the player gets closer, a track's
+   * drive coming up with the speed. `track` is the track's id or its name;
+   * `knob` is the module's id, as its ear prints it, and the knob's --
+   * `mac1.amount`, `lpf1.cutoff`. `paramsOf` lists every one a track has.
+   *
+   * The value is in the knob's own units and clamped to its range, and a
+   * switch is rounded to a position, so nothing a game sends can put a module
+   * somewhere its panel could not. It takes effect from the next block
+   * rendered, and a module's own smoothing glides it there, so calling this
+   * once a frame is fine and does not click.
+   *
+   * Returns false, and changes nothing, for a track or knob that is not in
+   * the song -- a renamed module is a quiet failure otherwise.
+   */
+  setParam(track: string, knob: string, value: number): boolean {
+    const id = this.knobs.has(track) ? track : this.trackByName.get(track)
+    const reachable = id !== undefined ? this.knobs.get(id)?.get(knob) : undefined
+    if (id === undefined || !reachable || !Number.isFinite(value)) return false
+    reachable.value = clampValue(reachable.spec, value)
+    this.engine.setParam(id, reachable.index, reachable.value)
+    return true
+  }
+
+  /** Where a knob stands now, or undefined for one that is not in the song. */
+  getParam(track: string, knob: string): number | undefined {
+    const id = this.knobs.has(track) ? track : this.trackByName.get(track)
+    return id !== undefined ? this.knobs.get(id)?.get(knob)?.value : undefined
+  }
+
+  /** Every knob `setParam` can reach on a track, as `module.param`. */
+  paramsOf(track: string): string[] {
+    const id = this.knobs.has(track) ? track : this.trackByName.get(track)
+    return id !== undefined ? [...(this.knobs.get(id)?.keys() ?? [])] : []
   }
 
   /** Start again from a tick. Anything already queued is dropped. */

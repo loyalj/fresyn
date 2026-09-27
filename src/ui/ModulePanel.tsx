@@ -3,11 +3,13 @@ import { Control } from './Control'
 import { KeysFace } from './KeysFace'
 import { LadderFace } from './LadderFace'
 import { LfoFace } from './LfoFace'
+import { MacroFace } from './MacroFace'
 import { MixerFace } from './MixerFace'
 import { SamplerFace } from './SamplerFace'
 import { OscFace } from './OscFace'
 import { ScopeFace } from './ScopeFace'
 import { SeqFace } from './SeqFace'
+import { SvfFace } from './SvfFace'
 import { KnobHelpModule } from './KnobHelp'
 import { UnitSpine } from './UnitSpine'
 
@@ -29,6 +31,8 @@ interface Props {
   /** Undefined for a module whose knobs have not been seeded yet. */
   valueOf: (paramId: string) => number | undefined
   onChange: (paramId: string, value: number) => void
+  /** Several knobs at once, as one step of undo, for a face that sets pairs. */
+  onChanges?: (values: Record<string, number>) => void
 }
 
 /**
@@ -47,6 +51,7 @@ export function ModulePanel({
   onGate,
   valueOf,
   onChange,
+  onChanges,
   sample,
   onSample,
 }: Props) {
@@ -88,6 +93,22 @@ export function ModulePanel({
     if (def.type === 'ladder') {
       return (
         <LadderFace def={def} valueOf={valueOf} onChange={onChange} faceExtra={faceExtra} />
+      )
+    }
+    if (def.type === 'svf') {
+      return (
+        <SvfFace def={def} valueOf={valueOf} onChange={onChange} faceExtra={faceExtra} />
+      )
+    }
+    if (def.type === 'macro') {
+      return (
+        <MacroFace
+          def={def}
+          valueOf={valueOf}
+          onChange={onChange}
+          onChanges={onChanges}
+          faceExtra={faceExtra}
+        />
       )
     }
     if (def.type === 'sampler') {

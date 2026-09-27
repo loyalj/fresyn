@@ -244,6 +244,38 @@ function dutyRange(buf: Float32Array, from: number, window = 0.025) {
   return { low, high, spread: high - low }
 }
 
+/**
+ * How much of a window is high frequencies, as the level of its slope against
+ * the level of the signal. A saw at a steady pitch through an opening filter
+ * crosses zero the same number of times throughout -- the fundamental decides
+ * that -- so counting crossings cannot hear it brighten. The slope can: it is
+ * the treble end, weighted up.
+ */
+function treble(buf: Float32Array, from: number, to: number) {
+  let slope = 0
+  let level = 0
+  for (let i = from + 1; i < to && i < buf.length; i++) {
+    const d = buf[i] - buf[i - 1]
+    slope += d * d
+    level += buf[i] * buf[i]
+  }
+  return Math.sqrt(slope / Math.max(1e-12, level))
+}
+
+/** Rising edges of loudness in a window: separate drops, clicks, strikes. */
+function events(buf: Float32Array, from: number, to: number, window = 0.002, floor = 0.3) {
+  const w = at(window)
+  const level = stats(buf, from, to).peak * floor
+  let count = 0
+  let wasQuiet = true
+  for (let i = from; i + w < to && i + w < buf.length; i += w) {
+    const loud = stats(buf, i, i + w).peak > level
+    if (loud && wasQuiet) count++
+    wasQuiet = !loud
+  }
+  return count
+}
+
 // --- the smallest rack the manual promises ---------------------------
 /**
  * "The smallest rack that works is an Oscillator and a Mixer." A reader who
@@ -786,6 +818,148 @@ tutorial('17', 'coin')
     stats(tapped.left, at(0.12), at(0.3)).peak < stats(out.left, at(0.12), at(0.3)).peak * 0.25,
     `${tapped.seconds.toFixed(2)}s against ${out.seconds.toFixed(2)}s`,
   )
+}
+
+// --- 18. rain --------------------------------------------------------
+tutorial('18', 'rain')
+{
+  const { patch, values: preset } = fromLibrary('rain')
+  const values = knobs(patch, preset)
+
+  const out = render(patch, values, 2, 6)
+  const whole = stats(out.left)
+  check('rain: makes a sound', whole.peak > 0.05, `peak=${whole.peak.toFixed(3)}`)
+  check('rain: no NaN', whole.nan === 0)
+  check('rain: does not clip', whole.peak <= 1.0001, `peak=${whole.peak.toFixed(3)}`)
+  check('rain: it keeps falling while the key is held', stats(out.left, at(1), at(2)).rms > 0.02,
+    `rms=${stats(out.left, at(1), at(2)).rms.toFixed(3)}`)
+  check('rain: and eases off after', out.seconds < 5.95, `${out.seconds.toFixed(2)}s`)
+  check('rain: it builds rather than starting at full',
+    stats(out.left, 0, at(0.1)).rms < stats(out.left, at(0.5), at(0.6)).rms / 2)
+
+  // Separate drops, dozens of them: the manual's ninety a second, counted as
+  // onsets, which overlap and so undercount.
+  const drops = events(out.left, at(1), at(2))
+  check('rain: it is made of separate drops, dozens a second', drops > 30, `${drops} in a second`)
+
+  // The Try: Density down and Tone to click is a Geiger counter.
+  const geiger = render(patch, { ...values, 'dust1.density': 6, 'dust1.tone': 0 }, 2, 6)
+  const clicks = events(geiger.left, at(1), at(2))
+  check('rain: at 6 Hz it is a handful of clicks instead', clicks > 0 && clicks < drops / 5, `${clicks} against ${drops}`)
+}
+
+// --- 19. fly ---------------------------------------------------------
+tutorial('19', 'fly')
+{
+  const { patch, values: preset } = fromLibrary('fly')
+  const values = knobs(patch, preset)
+
+  const out = render(patch, values, 3, 4)
+  const whole = stats(out.left)
+  check('fly: makes a sound', whole.peak > 0.05, `peak=${whole.peak.toFixed(3)}`)
+  check('fly: no NaN', whole.nan === 0)
+  check('fly: does not clip', whole.peak <= 1.0001, `peak=${whole.peak.toFixed(3)}`)
+
+  // Tenth-of-a-second windows across the hold: a fly never sits on a note.
+  const spread = (buf: Float32Array) => {
+    let low = Infinity
+    let high = 0
+    for (let t = 0.2; t < 2.9; t += 0.25) {
+      const f = brightness(buf, at(t), at(t + 0.1))
+      low = Math.min(low, f)
+      high = Math.max(high, f)
+    }
+    return high / low
+  }
+  const wanders = spread(out.left)
+  check('fly: its pitch wanders', wanders > 1.2, `${wanders.toFixed(2)}x between highest and lowest`)
+  const landed = spread(render(patch, { ...values, 'drk1.step': 0.01 }, 3, 4).left)
+  check('fly: with Step at 0.01 it all but settles', landed < 1.1, `${landed.toFixed(2)}x`)
+}
+
+// --- 20. pipe --------------------------------------------------------
+tutorial('20', 'pipe')
+{
+  const { patch, values: preset } = fromLibrary('pipe')
+  const values = knobs(patch, preset)
+
+  const out = oneShot('pipe', patch, values, 0.05, 3)
+  // The strike is over in twelve milliseconds; what follows is the comb.
+  const pitch = ringPitch(out.left, at(0.05), at(0.3))
+  check('pipe: it rings at Cutoff', Math.abs(pitch - 220) < 5, `${pitch.toFixed(1)} Hz`)
+  check('pipe: for a good while after the strike', stats(out.left, at(0.2), at(0.3)).rms > 0.002,
+    `rms=${stats(out.left, at(0.2), at(0.3)).rms.toFixed(4)}`)
+
+  const higher = ringPitch(render(patch, { ...values, 'mmf1.cutoff': 440 }, 0.05, 3).left, at(0.05), at(0.3))
+  check('pipe: Cutoff is the note', Math.abs(higher - 440) < 8, `${higher.toFixed(1)} Hz`)
+
+  const hollow = render(patch, { ...values, 'mmf1.mode': 6 }, 0.05, 3)
+  const under = ringPitch(hollow.left, at(0.05), at(0.3))
+  check('pipe: comb− rings an octave lower', Math.abs(under - 110) < 3, `${under.toFixed(1)} Hz`)
+
+  const dry = render(patch, { ...values, 'mmf1.resonance': 0 }, 0.05, 3)
+  check('pipe: with no Res it is only the click', stats(dry.left, at(0.1), at(0.2)).rms < stats(out.left, at(0.1), at(0.2)).rms / 20,
+    `${stats(dry.left, at(0.1), at(0.2)).rms.toFixed(5)} against ${stats(out.left, at(0.1), at(0.2)).rms.toFixed(5)}`)
+}
+
+// --- 21. jet flyby ---------------------------------------------------
+tutorial('21', 'jet')
+{
+  const { patch, values: preset } = fromLibrary('jet')
+  const values = knobs(patch, preset)
+
+  const out = render(patch, values, 1.5, 8)
+  const whole = stats(out.left)
+  check('jet: makes a sound', whole.peak > 0.05, `peak=${whole.peak.toFixed(3)}`)
+  check('jet: no NaN', whole.nan === 0 && stats(out.right).nan === 0)
+  check('jet: does not clip', whole.peak <= 1.0001 && stats(out.right).peak <= 1.0001, `peak=${whole.peak.toFixed(3)}`)
+  check('jet: and passes', out.seconds < 7.95, `${out.seconds.toFixed(2)}s`)
+  check('jet: the two sides differ', !same(out.left, out.right))
+
+  // The comb's spacing is the flanger's delay. As the envelope lengthens it,
+  // the comb's pitch falls -- the approach.
+  const early = ringPitch(out.left, at(0.1), at(0.25))
+  const later = ringPitch(out.left, at(0.4), at(0.55))
+  check('jet: the sweep falls as the envelope rises', early > later * 2, `${early.toFixed(0)} -> ${later.toFixed(0)} Hz`)
+
+  // Unpatch the envelope from Center and nothing sweeps it: the comb stays
+  // up where the knob put it, a delay so short its teeth are above anything
+  // this can measure, instead of coming down.
+  const still = render(unwire(patch, 'cho1.cv'), values, 1.5, 8)
+  const unswept = ringPitch(still.left, at(0.4), at(0.55))
+  check('jet: and it is the Center cable that sweeps it', unswept > later * 2, `${unswept.toFixed(0)} Hz without it, ${later.toFixed(0)} with`)
+}
+
+// --- 22. charge-up ---------------------------------------------------
+tutorial('22', 'charge-up')
+{
+  const { patch, values: preset } = fromLibrary('chargeup')
+  const values = knobs(patch, preset)
+
+  const out = render(patch, values, 2, 5)
+  const whole = stats(out.left)
+  check('charge-up: makes a sound', whole.peak > 0.05, `peak=${whole.peak.toFixed(3)}`)
+  check('charge-up: no NaN', whole.nan === 0)
+  check('charge-up: does not clip', whole.peak <= 1.0001, `peak=${whole.peak.toFixed(3)}`)
+  check('charge-up: and stops when let go', out.seconds < 4.95, `${out.seconds.toFixed(2)}s`)
+
+  const start = treble(out.left, at(0.1), at(0.25))
+  const top = treble(out.left, at(1.7), at(1.85))
+  check('charge-up: it brightens as it charges', top > start * 2.5, `${start.toFixed(3)} -> ${top.toFixed(3)}`)
+
+  // Lane 3's window opens at 0.50. Until the envelope carries the macro that
+  // far the Drive's jack reads exactly nothing, so the rack is sample for
+  // sample the one with that cable pulled -- and after, it is not.
+  const unstaged = render(unwire(patch, 'drv1.cv'), values, 2, 5)
+  let first = -1
+  for (let i = 0; i < out.left.length; i++) {
+    if (out.left[i] !== unstaged.left[i]) {
+      first = i
+      break
+    }
+  }
+  check('charge-up: the drive lane waits for its half of the turn', first > at(0.6) && first < at(1.2),
+    first < 0 ? 'never differs' : `wakes at ${(first / SR).toFixed(2)}s`)
 }
 
 // --- the shelf is covered ----------------------------------------------

@@ -13,6 +13,8 @@ interface Props {
   faceExtra?: React.ReactNode
   valueOf: (paramId: string) => number | undefined
   onChange: (paramId: string, value: number) => void
+  /** Several of this module's knobs at once, as one step of undo. */
+  onChanges?: (values: Record<string, number>) => void
   /** What this module plays, for the one kind that plays a file. */
   sample?: { id: string; name: string }
   onSample?: (file: File | null) => void
@@ -87,6 +89,7 @@ export function RackUnit({
           onGate={onGate}
           valueOf={rest.valueOf}
           onChange={rest.onChange}
+          onChanges={rest.onChanges}
           sample={rest.sample}
           onSample={rest.onSample}
         />

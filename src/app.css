@@ -2,6 +2,14 @@
 
 * { box-sizing: border-box; }
 
+/* The page still scrolls -- wheel, keys, touch -- but shows no bar for it.
+   The rack is an instrument, not a document, and a grey system scrollbar
+   down its right edge is the one thing on screen no theme can reach. Only
+   the page's own: the library, the index card and the roll keep theirs,
+   because there the bar is how you see how much more list there is. */
+html { scrollbar-width: none; }
+html::-webkit-scrollbar { display: none; }
+
 body {
   margin: 0;
   background: var(--bg);
@@ -47,16 +55,15 @@ body {
   box-shadow: 0 2px 0 rgb(var(--accent-rgb) / 0.5) inset, 0 8px 22px var(--unit-shadow);
 }
 
-/* What is on the bar keeps to the rack's column, so the name and the flip
-   button still line up with the panels they sit over. */
+/* The bar's contents run the whole width of the window, the nameplate at
+   the left edge and the menus straight after it, the way an application's
+   menu bar reads -- rather than kept to the rack's column in the middle. */
 .masthead-inner {
-  max-width: 1040px;
-  margin: 0 auto;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
-  padding: 9px 28px;
+  padding: 9px 16px;
 }
 
 /* Screwed to the panel rather than printed on it. */
@@ -79,8 +86,6 @@ body {
   color: var(--accent-line);
 }
 
-/* Pushed to the far end, so the bar reads from the name to the rack. */
-.masthead .flip-button { margin-left: auto; }
 
 .tagline { color: var(--ink-dim); font-size: 11px; }
 
@@ -1005,6 +1010,17 @@ body {
 
 .rack-index-title option { background: var(--field); color: var(--ink); }
 
+/* The flip, sized to the card's title row, and the same width whichever
+   word it shows: "Front" is wider than "Back", and a button that grew when
+   the rack turned would squeeze the patch menu beside it every time. */
+.rack-index-head .flip-button {
+  flex: none;
+  width: 56px;
+  justify-content: center;
+  padding: 4px 0;
+  font-size: 9px;
+}
+
 .rack-index-list {
   flex: 1;
   margin: 0;
@@ -1632,20 +1648,75 @@ body {
   opacity: 0.95;
 }
 
-/* --- patch toolbar -------------------------------------------------- */
-
-/* Pushed away from the menus: the bar reads commands, then the face the rack
-   is showing. */
-.flip-button { margin-left: auto; }
+/* Messages: a card in the bottom right, just above the dock, over the rack
+   rather than in it -- so one arriving or leaving never moves a unit. Fixed,
+   so it stays in view however far the rack is scrolled. The app lifts it by
+   the dock's measured height, so it clears the transport folded or the roll
+   open; --dock-h is only the first guess, before that measurement lands.
+   Over the dock and the rack, under the menus, which open across anything. */
+.notices {
+  position: fixed;
+  right: 16px;
+  bottom: calc(var(--dock-h, 44px) + 12px);
+  z-index: 25;
+  width: min(340px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  /* The empty region must not catch clicks meant for the rack beneath. */
+  pointer-events: none;
+}
 
 .notice {
-  margin: -8px 0 14px;
-  padding: 7px 12px;
-  font-size: 11px;
-  color: var(--accent-line);
-  background: rgb(var(--accent-rgb) / 0.09);
-  border: 1px solid rgb(var(--accent-rgb) / 0.25);
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: 100%;
+  padding: 10px 10px 10px 14px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink);
+  background: linear-gradient(180deg, var(--unit-top), var(--unit-bottom));
+  border: 1px solid var(--panel-edge);
+  border-radius: 5px;
+  /* The accent as a lit edge, the way the bar above carries it. */
+  box-shadow: inset 3px 0 0 rgb(var(--accent-rgb) / 0.85), 0 10px 28px var(--unit-shadow);
+  animation: notice-in 180ms ease-out;
+}
+
+.notice-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+
+.notice-close {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: -2px -2px 0 0;
+  padding: 0;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--ink-dim);
+  background: transparent;
+  border: 0;
   border-radius: 3px;
+  cursor: pointer;
+}
+
+.notice-close:hover,
+.notice-close:focus-visible {
+  color: var(--ink);
+  background: var(--control-hover);
+  outline: none;
+}
+
+@keyframes notice-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notice { animation: none; }
 }
 
 /* --- unit controls -------------------------------------------------- */
@@ -1984,6 +2055,158 @@ body {
   stroke-width: 1;
   stroke-dasharray: 2 3;
   opacity: 0.55;
+}
+
+/* The Multimode Filter's seven modes are wider than the Ladder's four, so
+   the response goes under the buttons rather than beside them. */
+.svf-mode { flex-direction: column; align-items: stretch; gap: 8px; }
+.svf-mode .response-graph { flex: none; width: 100%; }
+
+/* --- macro ---------------------------------------------------------
+
+   One big knob, the lanes drawn against it, and a strip per lane beneath.
+   Each lane is coloured the way cables are -- a hue of its own, with the
+   theme's saturation and lightness -- so a lane matches every theme and the
+   four stay apart from one another in all of them.
+-------------------------------------------------------------------- */
+
+.macro-face {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.macro-top {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.macro-amount {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The knob you perform with, so it is the biggest thing on the panel. The
+   svg scales from its own viewBox; the drag reads the pointer, not the size. */
+.macro-amount .knob { width: 84px; }
+.macro-amount .knob svg { width: 76px; height: 76px; }
+
+/* The glass, with the plot inset by a handle's width all round. */
+.macro-glass {
+  --inset: 8px;
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 120px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, var(--screen-top), var(--screen-bottom));
+  box-shadow: 0 0 0 1px var(--screen-edge) inset;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.macro-graph {
+  position: absolute;
+  inset: var(--inset);
+  width: calc(100% - 2 * var(--inset));
+  height: calc(100% - 2 * var(--inset));
+  overflow: visible;
+}
+
+.macro-lane-line { --lane: hsl(var(--lane-hue) var(--cable-s) var(--cable-l)); }
+
+.macro-path {
+  fill: none;
+  stroke: var(--lane);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  opacity: 0.7;
+}
+
+.macro-lane-line.active .macro-path { stroke-width: 2.5; opacity: 1; }
+
+/* Only the lane being worked on shows its window; four overlapping bands
+   would tint the whole glass and say nothing. */
+.macro-window { fill: transparent; }
+.macro-lane-line.active .macro-window { fill: var(--lane); opacity: 0.1; }
+
+/* Where Amount is now. */
+.macro-marker { stroke: var(--accent-line); stroke-width: 1; stroke-dasharray: 3 3; }
+
+.macro-handles { position: absolute; inset: var(--inset); pointer-events: none; }
+
+.macro-handle {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  margin: -5px 0 0 -5px;
+  border-radius: 50%;
+  background: hsl(var(--lane-hue) var(--cable-s) var(--cable-l));
+  box-shadow: 0 0 0 1px var(--screen-edge);
+  opacity: 0.75;
+}
+
+.macro-handle.active {
+  width: 11px;
+  height: 11px;
+  margin: -6px 0 0 -6px;
+  opacity: 1;
+  box-shadow: 0 0 0 2px var(--screen-top), 0 0 0 3px hsl(var(--lane-hue) var(--cable-s) var(--cable-l));
+}
+
+/* Four across, as the four outputs are on the back; two by two when the
+   rack is too narrow for that. */
+.macro-lanes {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+@media (max-width: 1100px) {
+  .macro-lanes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.macro-lane {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 6px 4px 9px;
+  border-radius: 3px;
+  border: 1px solid var(--panel-edge);
+  box-shadow: inset 3px 0 0 hsl(var(--lane-hue) var(--cable-s) var(--cable-l));
+  min-width: 0;
+}
+
+.macro-lane.active { background: var(--control-hover); }
+
+.macro-lane-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.macro-lane-number {
+  font-size: 11px;
+  font-weight: 700;
+  color: hsl(var(--lane-hue) var(--cable-s) var(--cable-l));
+}
+
+.macro-lane-window {
+  font-size: 10px;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.macro-lane-knobs {
+  display: flex;
+  justify-content: space-around;
+  gap: 2px;
 }
 
 /* Beside the Level knob it belongs to, and as tall as a knob and its two

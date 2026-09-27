@@ -48,7 +48,7 @@ interface Item {
 
 /**
  * What the badge on a row says: which tutorial, or for an instrument how it
- * plays -- chords, one line at a time, or a single hit. Worked out once, from
+ * plays -- chords, one line at a time, a single hit, or a bed held down. Worked out once, from
  * the racks themselves, rather than written beside each one where it could
  * drift from what the rack does.
  */
@@ -58,6 +58,8 @@ function badgeOf(t: Template): string {
   if (known) return known
   let badge: string
   if (t.category === 'tutorial') badge = t.tutorial ? `Tutorial ${t.tutorial}` : 'Start here'
+  // A bed rather than a hit: it sounds for as long as its note is held.
+  else if (t.held) badge = 'Held'
   else {
     const { patch, values } = t.build()
     const keys = patch.modules.find((m) => m.type === 'keys')

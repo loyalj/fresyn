@@ -13,6 +13,7 @@ import { GraphEngine } from '../src/dsp/GraphEngine'
 import { LadderFilter, ladderResponse } from '../src/dsp/LadderFilter'
 import type { SampleBank } from '../src/dsp/samples'
 import { SCOPE_CAPTURE } from '../src/dsp/modules/Scope'
+import { svfResponse } from '../src/dsp/modules/Svf'
 import { compile } from '../src/patch/compile'
 import { fft } from '../src/ui/fft'
 import { defaultPatch, triggerPatch } from '../src/patch/defaultPatch'
@@ -3188,6 +3189,227 @@ console.log('\nquantizer')
   check('chromatic rounds to the nearest semitone', quantize({ root: 0, scale: 0 }, 6.4 / 12) === 6)
   check('the root moves the scale: E from D# in E minor', quantize({ root: 4, scale: 2 }, 3.2 / 12) === 4, String(quantize({ root: 4, scale: 2 }, 3.2 / 12)))
   check('and it works below the root too', quantize({ root: 0, scale: 1 }, -1.2 / 12) === -1, String(quantize({ root: 0, scale: 1 }, -1.2 / 12)))
+}
+
+// --- dust --------------------------------------------------------------
+console.log('\ndust')
+{
+  const dust = (params: Record<string, number>, port = 'out') =>
+    capture({
+      modules: [
+        { id: 'd1', type: 'dust', params },
+        { id: 'scope0', type: 'scope', params: {} },
+        { id: 'mix1', type: 'mixer', params: {} },
+      ],
+      cables: [cable('d1', port, 'scope0', 'in')],
+    }, { frames: SR }).scope0
+
+  // A scope frame is 4096 samples, 85 ms: at 2000 a second that is about 170
+  // impulses, which is enough for the average to mean something.
+  const expected = (2000 * SCOPE_CAPTURE) / SR
+  const hits = risingEdges(dust({ density: 2000, decay: 0.0002 }, 'trig')).length
+  check('Density is the average number of impulses a second', Math.abs(hits - expected) < expected * 0.3,
+    `${hits} in a frame, expected about ${expected.toFixed(0)}`)
+
+  const sparse = risingEdges(dust({ density: 50 }, 'trig')).length
+  check('and fewer at a lower density', sparse < hits / 10, `${sparse} against ${hits}`)
+
+  // Spread at zero: every impulse starts at full scale, one way or the other.
+  const even = dust({ density: 400, spread: 0, decay: 0.0002 })
+  const starts = even.filter((v, i) => i > 0 && Math.abs(v) > 0.99 && Math.abs(even[i - 1]) < 0.5).length
+  check('with Spread at zero every impulse is full scale', starts > 10, `${starts} full-scale onsets`)
+
+  const click = dust({ density: 400, tone: 0, decay: 0.02 })
+  const hiss = dust({ density: 400, tone: 1, decay: 0.02 })
+  check('Tone changes the sound', !same(click, hiss))
+  // Same seed, same draws: the impulses land in the same places either way.
+  check('and not where the impulses land',
+    same(dust({ density: 400, tone: 0 }, 'trig'), dust({ density: 400, tone: 1 }, 'trig')))
+
+  const short = stats(dust({ density: 200, decay: 0.0002 })).rms
+  const long = stats(dust({ density: 200, decay: 0.05 })).rms
+  check('a longer Decay is more sound per impulse', long > short * 3, `${short.toFixed(3)} -> ${long.toFixed(3)}`)
+}
+
+// --- drunk -------------------------------------------------------------
+console.log('\ndrunk')
+{
+  const walk = (params: Record<string, number>, port = 'out', frames = SR) =>
+    capture({
+      modules: [
+        { id: 'w1', type: 'drunk', params },
+        { id: 'scope0', type: 'scope', params: {} },
+        { id: 'mix1', type: 'mixer', params: {} },
+      ],
+      cables: [cable('w1', port, 'scope0', 'in')],
+    }, { frames }).scope0
+
+  const fast = walk({ rate: 50, step: 1, smooth: 0 })
+  const s = stats(fast)
+  check('it stays between the walls', s.peak <= 1 && s.nan === 0, `peak ${s.peak.toFixed(3)}`)
+
+  // Smooth at zero: a staircase, one value per step.
+  const stairs = held(fast).length
+  const steps = (50 * SCOPE_CAPTURE) / SR
+  check('Smooth at zero steps like a sample and hold', Math.abs(stairs - steps) <= 2, `${stairs} values, ${steps.toFixed(1)} steps`)
+  check('Smooth at one glides', distinctValues(walk({ rate: 50, step: 1, smooth: 1 })) > 1000)
+
+  // Small strides: no two neighbouring steps are further apart than Step.
+  const small = held(walk({ rate: 50, step: 0.05, smooth: 0 }))
+  let widest = 0
+  for (let i = 1; i < small.length; i++) widest = Math.max(widest, Math.abs(small[i] - small[i - 1]))
+  check('each stride is at most Step', widest <= 0.05 + 1e-6, `widest ${widest.toFixed(4)}`)
+
+  // Pull at one forgets where it was: every step lands within Step of zero.
+  const pulled = walk({ rate: 50, step: 0.2, smooth: 0, pull: 1 })
+  check('full Pull keeps it within a stride of the middle', stats(pulled).peak <= 0.2 + 1e-6, `peak ${stats(pulled).peak.toFixed(3)}`)
+
+  const uni = walk({ rate: 50, step: 1, smooth: 0 }, 'uni')
+  check('Uni is the same walk between zero and one', uni.every((v, i) => Math.abs(v - (0.5 + 0.5 * fast[i])) < 1e-6))
+
+  // A patched clock takes over: one step per tick, whatever Rate says.
+  const clocked = capture({
+    modules: [
+      { id: 'c1', type: 'clock', params: { rate: 40 } },
+      { id: 'w1', type: 'drunk', params: { rate: 0.05, step: 1, smooth: 0 } },
+      { id: 'scope0', type: 'scope', params: {} },
+      { id: 'scope1', type: 'scope', params: {} },
+      { id: 'mix1', type: 'mixer', params: {} },
+    ],
+    cables: [cable('c1', 'x1', 'w1', 'clock'), cable('w1', 'trig', 'scope0', 'in'), cable('c1', 'x1', 'scope1', 'in')],
+  }, { frames: SR })
+  const ticks = risingEdges(clocked.scope1).length
+  const walked = risingEdges(clocked.scope0).length
+  check('a patched Clock steps it on every tick', ticks > 0 && walked === ticks, `${walked} steps for ${ticks} ticks`)
+}
+
+// --- macro -------------------------------------------------------------
+console.log('\nmacro')
+{
+  const lane = (params: Record<string, number>, cv?: number) => {
+    const modules: PatchModule[] = [
+      { id: 'm1', type: 'macro', params },
+      { id: 'scope0', type: 'scope', params: {} },
+      { id: 'mix1', type: 'mixer', params: {} },
+    ]
+    const cables = [cable('m1', 'out1', 'scope0', 'in')]
+    if (cv !== undefined) {
+      modules.push({ id: 'cv1', type: 'cv', params: { offset1: cv } })
+      cables.push(cable('cv1', 'out1', 'm1', 'cv'))
+    }
+    const out = capture({ modules, cables }).scope0
+    return out[out.length - 1]
+  }
+  const near = (a: number, b: number) => Math.abs(a - b) < 1e-4
+
+  check('by default a lane is the knob', near(lane({ amount: 0.3 }), 0.3), String(lane({ amount: 0.3 })))
+  check('From and To are its ends', near(lane({ amount: 0.25, from1: 1, to1: -1 }), 0.5), String(lane({ amount: 0.25, from1: 1, to1: -1 })))
+  check('below Start it holds at From', near(lane({ amount: 0.4, start1: 0.5, from1: -0.5 }), -0.5))
+  check('past End it holds at To', near(lane({ amount: 0.8, end1: 0.5, to1: 0.7 }), 0.7))
+  check('inside the window it travels the whole way', near(lane({ amount: 0.75, start1: 0.5, end1: 1 }), 0.5))
+  check('a positive Curve is slow to leave From', near(lane({ amount: 0.5, curve1: 1 }), Math.pow(0.5, 5)), String(lane({ amount: 0.5, curve1: 1 })))
+  check('a negative Curve is quick to', near(lane({ amount: 0.5, curve1: -1 }), 1 - Math.pow(0.5, 5)))
+  check('the Amount jack adds to the knob', near(lane({ amount: 0.2 }, 0.3), 0.5), String(lane({ amount: 0.2 }, 0.3)))
+  check('and the sum stops at the top of the travel', near(lane({ amount: 0.8 }, 0.9), 1))
+}
+
+// --- multimode filter --------------------------------------------------
+console.log('\nmultimode filter')
+{
+  const through = (hz: number, params: Record<string, number>) => {
+    const out = capture({
+      modules: [
+        { id: 'osc1', type: 'osc', params: { pitch: hz, wave: 3, envAmount: 0 } },
+        { id: 'sut', type: 'svf', params },
+        { id: 'scope0', type: 'scope', params: {} },
+        { id: 'mix1', type: 'mixer', params: {} },
+      ],
+      cables: [cable('osc1', 'out', 'sut', 'in'), cable('sut', 'out', 'scope0', 'in')],
+    }, { frames: SR / 2 }).scope0
+    // A sine's RMS is its peak over root two; this is the gain.
+    return stats(out).rms * Math.SQRT2
+  }
+  const db = (g: number) => 20 * Math.log10(g)
+
+  const lp = { cutoff: 1000, resonance: 0, mode: 0 }
+  check('lowpass passes the lows', db(through(100, lp)) > -1, `${db(through(100, lp)).toFixed(1)} dB`)
+  check('and cuts the highs at twelve a octave', db(through(8000, lp)) < -30, `${db(through(8000, lp)).toFixed(1)} dB`)
+  const hp = { ...lp, mode: 2 }
+  check('highpass is the other way round', db(through(100, hp)) < -30 && db(through(8000, hp)) > -1)
+  const notch = { ...lp, mode: 3 }
+  check('the notch takes its frequency out', db(through(1000, notch)) < -30, `${db(through(1000, notch)).toFixed(1)} dB`)
+  check('and leaves the rest', db(through(100, notch)) > -1 && db(through(8000, notch)) > -1)
+  const bp = { cutoff: 1000, resonance: 1, mode: 1 }
+  check('the bandpass is unity at its centre, however narrow', Math.abs(db(through(1000, bp))) < 0.5, `${db(through(1000, bp)).toFixed(2)} dB`)
+  const peak0 = { cutoff: 1000, resonance: 0, mode: 4 }
+  const peak1 = { cutoff: 1000, resonance: 1, mode: 4 }
+  check('peak at no Res is the dry signal', Math.abs(db(through(1000, peak0))) < 0.2)
+  check('and at full Res lifts its band', db(through(1000, peak1)) > 12, `${db(through(1000, peak1)).toFixed(1)} dB`)
+
+  // The drawing is the filter: the same curve the panel shows is the gain
+  // measured through the module.
+  let worstDb = 0
+  for (const mode of [0, 1, 2, 3, 4]) {
+    for (const hz of [150, 700, 1000, 2500]) {
+      const params = { cutoff: 1000, resonance: 0.6, mode }
+      const drawn = db(svfResponse(hz, 1000, 0.6, mode, SR))
+      const heard = db(through(hz, params))
+      if (drawn > -40) worstDb = Math.max(worstDb, Math.abs(drawn - heard))
+    }
+  }
+  check('the drawn response is the measured one', worstDb < 0.5, `worst ${worstDb.toFixed(2)} dB apart`)
+
+  // A comb rings at its pitch: fed noise, the loudest harmonic is the tuning.
+  const comb = (mode: number) => capture({
+    modules: [
+      { id: 'n1', type: 'noise', params: {} },
+      { id: 'sut', type: 'svf', params: { cutoff: 300, resonance: 1, mode } },
+      { id: 'scope0', type: 'scope', params: {} },
+      { id: 'mix1', type: 'mixer', params: {} },
+    ],
+    cables: [cable('n1', 'out', 'sut', 'in'), cable('sut', 'out', 'scope0', 'in')],
+  }, { frames: SR / 2 }).scope0
+  const pos = comb(5)
+  check('comb+ rings at Cutoff', powerAt(pos, 300) > 3 * powerAt(pos, 450), `${powerAt(pos, 300).toFixed(4)} vs ${powerAt(pos, 450).toFixed(4)}`)
+  const neg = comb(6)
+  check('comb− rings an octave under it', powerAt(neg, 150) > 3 * powerAt(neg, 300), `${powerAt(neg, 150).toFixed(4)} vs ${powerAt(neg, 300).toFixed(4)}`)
+}
+
+// --- chorus ------------------------------------------------------------
+console.log('\nchorus')
+{
+  const dry = shaped('chorus', { mix: 0 }, 'l')
+  const osc = capture({
+    modules: [
+      { id: 'osc1', type: 'osc', params: { pitch: TONE, wave: 3, envAmount: 0 } },
+      { id: 'scope0', type: 'scope', params: {} },
+      { id: 'mix1', type: 'mixer', params: {} },
+    ],
+    cables: [cable('osc1', 'out', 'scope0', 'in')],
+  }).scope0
+  check('with Mix at zero it is the dry signal', same(dry, osc))
+
+  for (const [mode, name] of [[0, 'chorus'], [1, 'flanger'], [2, 'phaser']] as const) {
+    const l = shaped('chorus', { mode, rate: 2, depth: 1 }, 'l')
+    const r = shaped('chorus', { mode, rate: 2, depth: 1 }, 'r')
+    const s = stats(l)
+    check(`${name}: sound comes out, and the sides differ`, s.nan === 0 && s.peak > 0.1 && !same(l, r))
+  }
+
+  // The flanger's comb: with the delay still and a millisecond long, 500 Hz
+  // is half a cycle late and cancels, where 1 kHz arrives in step and adds.
+  const flanged = (hz: number) => stats(capture({
+    modules: [
+      { id: 'osc1', type: 'osc', params: { pitch: hz, wave: 3, envAmount: 0 } },
+      // log2(10) / 6.3 is the Center that puts the delay at one millisecond.
+      { id: 'sut', type: 'chorus', params: { mode: 1, depth: 0, center: Math.log2(10) / 6.3, mix: 0.5 } },
+      { id: 'scope0', type: 'scope', params: {} },
+      { id: 'mix1', type: 'mixer', params: {} },
+    ],
+    cables: [cable('osc1', 'out', 'sut', 'in'), cable('sut', 'l', 'scope0', 'in')],
+  }, { frames: SR / 4 }).scope0).rms
+  check('the flanger notches where the delay is half a cycle', flanged(500) < 0.05 && flanged(1000) > 0.6,
+    `${flanged(500).toFixed(3)} at 500 Hz, ${flanged(1000).toFixed(3)} at 1 kHz`)
 }
 
 // --- determinism -----------------------------------------------------

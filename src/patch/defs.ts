@@ -4,6 +4,7 @@ const WAVES = ['saw', 'pulse', 'tri', 'sine']
 const CHANNELS = [1, 2, 3, 4, 5, 6, 7, 8]
 const SH_CHANNELS = [1, 2, 3, 4]
 const SEQ_STEPS = [1, 2, 3, 4, 5, 6, 7, 8]
+const MACRO_LANES = [1, 2, 3, 4]
 /**
  * What a freshly added sequencer plays: a minor seventh arpeggio up and back
  * down, in octaves. A row of zeroes would be a sequencer that does nothing
@@ -245,6 +246,33 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     ],
   },
 
+  dust: {
+    type: 'dust',
+    name: 'Dust',
+    group: 'voice',
+    slug: 'dust',
+    width: 'half',
+    inputs: [{ id: 'density', label: 'Density' }],
+    outputs: [
+      { id: 'out', label: 'Out' },
+      // A short gate on every impulse, so the same random timing can strike
+      // an envelope, a resonator or a sampler: a Geiger counter's clicks, or
+      // raindrops that each ring.
+      { id: 'trig', label: 'Trig' },
+    ],
+    params: [
+      // An average: the gaps are random, so twenty a second never sounds
+      // like a clock. Exponential, because the ear hears density in ratios.
+      { id: 'density', label: 'Density', min: 0.5, max: 5000, default: 20, unit: 'Hz', curve: 'exp' },
+      // How much each impulse's height varies. At zero they are all full
+      // scale, which is a machine; real crackle is mostly small ones.
+      { id: 'spread', label: 'Spread', min: 0, max: 1, default: 0.6, unit: '', curve: 'lin' },
+      { id: 'decay', label: 'Decay', min: 0.0002, max: 0.2, default: 0.003, unit: 's', curve: 'exp' },
+      { id: 'tone', label: 'Tone', min: 0, max: 1, default: 0, unit: '', curve: 'lin', steps: ['click', 'noise'] },
+      { id: 'cvAmount', label: 'Density Amt', min: -5, max: 5, default: 0, unit: 'oct', curve: 'lin' },
+    ],
+  },
+
   lfo: {
     type: 'lfo',
     name: 'LFO',
@@ -338,6 +366,35 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     })),
   },
 
+  drunk: {
+    type: 'drunk',
+    name: 'Drunk',
+    group: 'modulation',
+    slug: 'drk',
+    width: 'half',
+    inputs: [
+      // Steps on each rising edge instead of at Rate, when anything is
+      // patched here -- a clock, a sequencer's gate, a Dust's triggers.
+      { id: 'clock', label: 'Clock' },
+      { id: 'rate', label: 'Rate' },
+    ],
+    outputs: [
+      { id: 'out', label: 'Out' },
+      { id: 'uni', label: 'Uni' },
+      // Fires on every step, whatever set it off.
+      { id: 'trig', label: 'Trig' },
+    ],
+    params: [
+      { id: 'rate', label: 'Rate', min: 0.05, max: 50, default: 2, unit: 'Hz', curve: 'exp' },
+      // A fraction of the whole range, which is two units wide: 1.00 can
+      // land anywhere, which is smooth random rather than a walk.
+      { id: 'step', label: 'Step', min: 0.01, max: 1, default: 0.25, unit: '', curve: 'exp' },
+      { id: 'smooth', label: 'Smooth', min: 0, max: 1, default: 1, unit: '', curve: 'lin' },
+      { id: 'pull', label: 'Pull', min: 0, max: 1, default: 0, unit: '', curve: 'lin' },
+      { id: 'rateAmount', label: 'Rate Amt', min: -5, max: 5, default: 0, unit: 'oct', curve: 'lin' },
+    ],
+  },
+
   clock: {
     type: 'clock',
     name: 'Clock',
@@ -429,6 +486,32 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     ],
   },
 
+  macro: {
+    type: 'macro',
+    name: 'Macro',
+    group: 'control',
+    slug: 'mac',
+    // A whole row: one big knob, the lanes drawn against it, and four sets of
+    // three knobs underneath. It is the panel you perform on, so it gets room.
+    inputs: [{ id: 'cv', label: 'Amount' }],
+    outputs: MACRO_LANES.map((n) => ({ id: `out${n}`, label: `${n}` })),
+    params: [
+      // Zero by default, so adding one to a patch changes nothing until it
+      // is turned -- every lane starts at its From.
+      { id: 'amount', label: 'Amount', min: 0, max: 1, default: 0, unit: '', curve: 'lin' },
+      // Five per lane, in the order the DSP reads them. Start and End are the
+      // lane's window and are set by dragging its handles on the graph,
+      // which is why the face draws no knob for them.
+      ...MACRO_LANES.flatMap((n) => [
+        { id: `from${n}`, label: `From ${n}`, min: -1, max: 1, default: 0, unit: '', curve: 'lin' as const },
+        { id: `to${n}`, label: `To ${n}`, min: -1, max: 1, default: 1, unit: '', curve: 'lin' as const },
+        { id: `curve${n}`, label: `Curve ${n}`, min: -1, max: 1, default: 0, unit: '', curve: 'lin' as const },
+        { id: `start${n}`, label: `Start ${n}`, min: 0, max: 1, default: 0, unit: '', curve: 'lin' as const },
+        { id: `end${n}`, label: `End ${n}`, min: 0, max: 1, default: 1, unit: '', curve: 'lin' as const },
+      ]),
+    ],
+  },
+
   slew: {
     type: 'slew',
     name: 'Slew',
@@ -517,6 +600,32 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
       // here first. Position 0 is the plain 24 dB lowpass, so a patch saved
       // before this knob existed opens sounding exactly as it did.
       { id: 'mode', label: 'Mode', min: 0, max: 3, default: 0, unit: '', curve: 'lin', steps: ['lp24', 'lp12', 'bp', 'hp'] },
+    ],
+  },
+
+  svf: {
+    type: 'svf',
+    name: 'Multimode Filter',
+    group: 'voice',
+    slug: 'mmf',
+    bypass: true,
+    width: 'half',
+    inputs: [
+      { id: 'in', label: 'In' },
+      { id: 'cv', label: 'CV' },
+    ],
+    outputs: [{ id: 'out', label: 'Out' }],
+    params: [
+      // In the comb modes this is the comb's pitch rather than a corner.
+      { id: 'cutoff', label: 'Cutoff', min: 20, max: 18000, default: 1000, unit: 'Hz', curve: 'exp' },
+      { id: 'resonance', label: 'Res', min: 0, max: 1, default: 0.3, unit: '', curve: 'lin' },
+      // One octave per unit by default, where the Ladder's is two and a half:
+      // a comb is a pitch, and 1.00 is what plays it in tune from a keyboard.
+      { id: 'cvAmount', label: 'CV Amt', min: -5, max: 5, default: 1, unit: 'oct', curve: 'lin' },
+      {
+        id: 'mode', label: 'Mode', min: 0, max: 6, default: 0, unit: '', curve: 'lin',
+        steps: ['lp', 'bp', 'hp', 'notch', 'peak', 'comb+', 'comb−'],
+      },
     ],
   },
 
@@ -763,6 +872,38 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
       { id: 'feedback', label: 'Fdbk', min: 0, max: 0.95, default: 0.35, unit: '', curve: 'lin' },
       { id: 'damping', label: 'Damp', min: 0, max: 1, default: 0.3, unit: '', curve: 'lin' },
       { id: 'mix', label: 'Mix', min: 0, max: 1, default: 0.35, unit: '', curve: 'lin' },
+    ],
+  },
+
+  chorus: {
+    type: 'chorus',
+    name: 'Chorus',
+    group: 'effects',
+    slug: 'cho',
+    bypass: true,
+    // One for the whole chord, as the echo and the room are: a chorus per
+    // voice would cost eight and sound like one.
+    shared: true,
+    inputs: [
+      { id: 'in', label: 'In' },
+      // Added straight to Center, so an envelope can sweep a flanger by hand.
+      { id: 'cv', label: 'Center' },
+    ],
+    // Stereo, the right side's sweep a quarter cycle behind the left's, so
+    // the movement crosses the field.
+    outputs: [
+      { id: 'l', label: 'L' },
+      { id: 'r', label: 'R' },
+    ],
+    params: [
+      { id: 'mode', label: 'Mode', min: 0, max: 2, default: 0, unit: '', curve: 'lin', steps: ['chorus', 'flanger', 'phaser'] },
+      { id: 'rate', label: 'Rate', min: 0.02, max: 10, default: 0.4, unit: 'Hz', curve: 'exp' },
+      { id: 'depth', label: 'Depth', min: 0, max: 1, default: 0.5, unit: '', curve: 'lin' },
+      { id: 'center', label: 'Center', min: 0, max: 1, default: 0.5, unit: '', curve: 'lin' },
+      // Bipolar, because a flanger fed back upside down is a different and
+      // hollower sound, not just a quieter one.
+      { id: 'feedback', label: 'Fdbk', min: -0.95, max: 0.95, default: 0, unit: '', curve: 'lin' },
+      { id: 'mix', label: 'Mix', min: 0, max: 1, default: 0.5, unit: '', curve: 'lin' },
     ],
   },
 

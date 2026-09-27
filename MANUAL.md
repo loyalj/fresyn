@@ -100,24 +100,44 @@ render controls.
 
 **Patch → Library...** opens a set of shelves of racks that already make a
 sound. **Tutorials** holds every rack the tutorials below build — a laser, a
-footstep, wind, an explosion, gunfire, a sci-fi door — plus the tutorial rack
-they start from. The other shelves are instruments to write music with:
+footstep, wind, an explosion, gunfire, a sci-fi door, rain, a jet flyby — plus
+the tutorial rack they start from. Most of the other shelves are instruments
+to write music with, and the last two are for everything around the music:
 
-- **Keys** — electric piano, organ, harpsichord, clavinet, music box, synth piano
-- **Plucked** — nylon guitar, harp, pizzicato strings, koto, kalimba
-- **Bells & mallets** — tubular bell, glockenspiel, marimba, vibraphone, steel drum
-- **Strings & pads** — string ensemble, warm pad, glass pad, slow-evolving pad
-- **Brass & winds** — brass section, trumpet, French horn, flute, clarinet, pan flute
-- **Bass** — synth, sub, acid, plucked, FM and Reese basses
-- **Leads** — square, glide, sync and chiptune leads
-- **Drums** — kick, snare, closed and open hats, clap, tom, woodblock, cowbell, shaker, crash
+- **Keys** — electric piano, organ, harpsichord, clavinet, music box, synth piano, phaser electric piano,
+  reed piano, accordion, toy piano
+- **Plucked** — nylon guitar, harp, pizzicato strings, koto, kalimba, tube pluck, steel-string guitar,
+  banjo, sitar, muted guitar
+- **Bells & mallets** — tubular bell, glockenspiel, marimba, vibraphone, steel drum, xylophone,
+  celesta, handbell, gamelan, singing bowl
+- **Strings & pads** — string ensemble, warm pad, glass pad, slow-evolving pad, string machine,
+  adaptive drone, solo cello, choir, sweep pad, shimmer pad
+- **Brass & winds** — brass section, trumpet, French horn, flute, clarinet, pan flute, tuba,
+  saxophone, oboe, harmonica
+- **Bass** — synth, sub, acid, plucked, FM, Reese, upright, wobble, chiptune and growl basses
+- **Leads** — square, glide, sync, chiptune, supersaw, PWM, screaming and vowel leads, theremin
+  and whistle
+- **Drums** — kick, snare, closed and open hats, clap, tom, woodblock, cowbell, shaker, crash,
+  808 kick, rimshot, ride, conga, bongo, tambourine, finger snap, claves, triangle, timpani
+- **Sound FX** — UI confirm, UI error, menu tick, game over, jump, hurt, heal,
+  teleport, sword swish, punch, glass break, door creak, spell cast, alarm
+  klaxon, force field
+- **Ambience** — campfire, cave drips, ocean surf, night crickets, spaceship
+  hum, radiation zone
 
 **↑ and ↓** move through a shelf and **← and →** move between shelves. The
 badge on each instrument says how it plays: **voices** means it plays chords,
 **Mono** means one note at a time — a bass or a lead, where each note takes
-over from the last — and **Hit** is a drum, one lane in the roll. Every
-pitched instrument has its bottom key on a C, and is played from Space as well
-as from the roll.
+over from the last — **Hit** is a drum or a sound effect, one lane in the
+roll, and **Held** plays for as long as its note does — the ambience, and a
+few sound effects like the alarm and the force field. Every pitched instrument has its bottom key on a C, and is played from
+Space as well as from the roll.
+
+**Hold the ambience** for the length of the scene: a whole-bar note in the
+roll, or Space held down. A few — the force field, the radiation zone and the
+adaptive drone — are built around a **Macro** whose Amount is the one thing a
+game would want to change: how strong the shield is, how hot the zone, how
+tense the scene. See *Playing a project in a game*.
 
 Choosing one puts it on the bench with every cable patched and every knob set,
 which is the fastest way to see what this rack can do before you have learned
@@ -599,6 +619,42 @@ pink than to white, and white through a filter never quite gets there.
 
 ---
 
+### Dust
+
+Clicks at random moments, rather than hiss at every moment. Rain, fire, a
+Geiger counter, sparks, the crackle on an old record: all of them are
+separate little events, and what they sound like is mostly how many arrive
+and how far apart.
+
+- **Inputs:** Density (CV)
+- **Outputs:** Out, Trig (a short gate on every impulse)
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Density | 0.50 Hz – 5.00 kHz | 20 Hz | How many impulses a second, on average. The gaps are random, so it never sounds like a clock |
+| Spread | 0.00 – 1.00 | 0.60 | How much the impulses vary in size. At 0.00 every one is full scale |
+| Decay | 0.2 ms – 200 ms | 3 ms | How long each impulse rings. Short is a tick, longer is a pop or a patter |
+| Tone | click / noise | click | What rings: the impulse itself, or a little burst of hiss |
+| Density Amt | −5.00 – +5.00 | +0.00 | How far the Density input moves the density, in octaves |
+
+**Density is the whole character.** A few a second is a Geiger counter or a
+dripping tap; forty is rain on a window; several hundred is frying, and at
+the top it thickens into something very close to noise.
+
+**click or noise?** **click** is a clean tick whose colour is its Decay — a
+dry crackle when short, a soft thump when long. **noise** is a spit of hiss
+each time, which is fire and sizzle.
+
+**Trig makes the same random timing strike something else.** Patch it into a
+Resonator for water drops that each ring at a pitch, into an Envelope for
+random blips, or into a Drunk's Clock so a value lurches on every crackle.
+
+**For a fire**, layer two: pink Noise through a lowpass for the roar, and Dust
+on **noise** at about 15 a second for the crackle. Put a slow Drunk into
+Density Amt and the fire flares and settles.
+
+---
+
 ### LFO
 
 An oscillator too slow to hear, used as CV to make something wobble.
@@ -718,6 +774,42 @@ what the others are doing.
 
 ---
 
+### Drunk
+
+A value that wanders. Each step starts from where the last one ended, so it
+drifts about with a memory of where it has been instead of jumping anywhere —
+which is the difference between something alive and something random.
+
+- **Inputs:** Clock (steps on each rising edge when patched), Rate (CV)
+- **Outputs:** Out (−1 to +1), Uni (0 to 1), Trig (a short gate on every step)
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Rate | 0.05 Hz – 50 Hz | 2.00 Hz | How often it takes a step, when nothing is patched to Clock |
+| Step | 0.01 – 1.00 | 0.25 | How far one step can go. Small is a slow drift; 1.00 can land anywhere |
+| Smooth | 0.00 – 1.00 | 1.00 | How much of each step is a glide. 0.00 jumps, 1.00 glides the whole way |
+| Pull | 0.00 – 1.00 | 0.00 | How strongly it is drawn back to the middle |
+| Rate Amt | −5.00 – +5.00 | +0.00 | How far the Rate input moves the rate, in octaves |
+
+**The Sample & Hold steps, the Slew glides, and this wanders.** Use it
+anywhere a steady value sounds fake: the pitch of an engine that never
+idles quite evenly, a creaking rope, a flickering light's hum, wind that
+gusts.
+
+**Pull is how far it is allowed to roam.** At zero it eventually visits the
+whole range. Turn it up and it hovers around the middle, only now and then
+straying out — which is what "not quite steady" usually means.
+
+**Smooth at zero is a staircase**, each step held until the next: a random
+melody through a Quantizer that moves by small intervals rather than leaping
+about.
+
+**Patch a Clock and the walk keeps time.** It steps on each tick instead of
+at Rate, and still glides between them, measuring the gap so the glide fits.
+A Dust's Trig into Clock gives a walk that lurches at random moments.
+
+---
+
 ### Clock
 
 A steady pulse, and the same pulse divided down beside it. This is what keeps
@@ -831,6 +923,54 @@ keep their values, so shortening a pattern and lengthening it again costs you
 nothing.
 
 **End** fires each time the pattern comes round, for chaining.
+
+---
+
+### Macro
+
+One big knob, four control voltages. Turning it moves all four lanes at once,
+each over its own range, along its own curve, across its own part of the
+turn — so one gesture can open a filter, add drive, speed up a wobble and
+bring in a second layer, in the proportions you set.
+
+- **Inputs:** Amount (CV, added to the knob)
+- **Outputs:** 1, 2, 3, 4 (one per lane)
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Amount | 0.00 – 1.00 | 0.00 | The macro. Every lane follows it |
+| From 1 – 4 | −1.00 – 1.00 | 0.00 | What the lane puts out with Amount at the start of its window |
+| To 1 – 4 | −1.00 – 1.00 | 1.00 | What the lane puts out at the end of its window |
+| Curve 1 – 4 | −1.00 – 1.00 | 0.00 | Bends the travel. Positive starts slow and finishes fast; negative the opposite |
+| Start 1 – 4 | 0.00 – 1.00 | 0.00 | Where in Amount's turn the lane starts to move. Drag the lane's left handle on the graph |
+| End 1 – 4 | 0.00 – 1.00 | 1.00 | Where it stops. Drag the lane's right handle |
+
+**The graph is the macro.** Each lane is drawn in its own colour as the line
+its output follows while Amount goes from 0 to 1, and the dashed line is
+where Amount is now. Press anywhere on the graph that is not a handle to set
+Amount there — you can play the macro from the picture.
+
+**Each lane has a handle at each end.** Dragging one sideways moves the edge
+of that lane's window; dragging it up or down changes its From or To. Both
+at once is the point: you place the end of a lane where you want it. The lane
+you touched last is drawn bold and is picked first where two handles
+overlap. Double-click a handle to open its window back out to that edge.
+
+**Windows are how lanes take turns.** Give lane 1 the whole turn and lane 2
+only the top half, and the first half of the knob opens a filter while the
+second half also brings in drive. Close a window to a sliver and the lane
+becomes a switch that flips at that point.
+
+**From above To turns a lane round.** A lane running 1.00 → 0.00 closes as
+the others open — a dry signal fading as the reverb comes up.
+
+**The outputs are ±1 at most.** That is enough for any jack with an Amt knob
+beside it, which scales it further; for the Oscillator's Pitch input, which
+has none, 1.00 is an octave.
+
+**Something else can turn it.** Patch an Envelope, an LFO or a Drunk into
+the Amount jack and all four lanes move together. And a game playing the
+project can set Amount directly — see *Playing a project in a game*.
 
 ---
 
@@ -961,6 +1101,53 @@ ear reads as a real object being struck, scraped or fired.
 
 Turn **Res** up near 1.00 and the filter begins to sing at its own cutoff
 frequency even with nothing going in.
+
+---
+
+### Multimode Filter
+
+The second filter, with a different character from the Ladder: perfectly
+clean, with two responses the Ladder cannot make, and a comb behind the same
+knobs.
+
+- **Inputs:** In, CV
+- **Outputs:** Out
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Cutoff | 20 Hz – 18.00 kHz | 1.00 kHz | Where the filter works. In the comb modes, the pitch it rings at |
+| Res | 0.00 – 1.00 | 0.30 | How sharp the filter is at Cutoff. In the comb modes, how long it rings |
+| CV Amt | −5.00 – +5.00 | +1.00 | How far the CV input moves the cutoff, in octaves. At 1.00 it follows a keyboard in tune |
+| Mode | lp / bp / hp / notch / peak / comb+ / comb− | lp | What kind of filter it is |
+
+| Mode | What it does |
+| --- | --- |
+| **lp** | Keeps everything below Cutoff. Two poles, gentler than the Ladder's lp24, and it never distorts. |
+| **bp** | Keeps a band around Cutoff. Res narrows it without making it louder. |
+| **hp** | Keeps everything above Cutoff. |
+| **notch** | Takes a band out and leaves the rest. Swept, it is the hollow of a phaser. |
+| **peak** | Lifts a band and leaves the rest. Res makes the lift taller and narrower; at 0.00 it does nothing. |
+| **comb+** | Rings at Cutoff and every harmonic of it, like a struck tube. |
+| **comb−** | Rings on the odd harmonics only, an octave under Cutoff. Hollower, like a pipe or a clarinet. |
+
+**Ladder or this one?** The Ladder is warm and pushes back when driven; this
+one is exactly as clean as its maths, which suits a sound you want to shape
+without colouring. The **notch** and **peak** are its own: a notch swept by an
+LFO is a phaser on anything, and a narrow peak is a whistle or a resonant
+body.
+
+**The comb modes are a pitch, not a tone control.** Feed them noise, a Dust
+or a short click and they ring at Cutoff: a pipe, a spring, a metal tube, a
+robot voice. With CV Amt at 1.00 and a keyboard's pitch in CV, the comb plays
+in tune. Res is how long each strike rings; near the top it sings.
+
+**Res on lp and hp is not tamed.** A clean filter has nothing to hold it
+back, so the peak at the corner is the resonance — about ten times louder at
+full Res. That is the squelch, and it is also a reason to bring the level
+down after it.
+
+**The screen under Mode draws the filter's shape**, the same way the Ladder's
+does, and in the comb modes it draws the teeth.
 
 ---
 
@@ -1326,6 +1513,45 @@ cannot make it run away.
 **Wet** carries the repeats without the dry signal, for sending them somewhere
 the original does not go — into the Space module, say, so only the echoes are
 in the room.
+
+---
+
+### Chorus
+
+Chorus, flanger and phaser in one module. Each makes a copy of the sound,
+moves it slightly with a slow wobble, and mixes it back with the original, so
+some frequencies add and some cancel — and the ones that cancel sweep.
+
+- **Inputs:** In, Center (CV, added to the Center knob)
+- **Outputs:** L, R
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Mode | chorus / flanger / phaser | chorus | Which effect |
+| Rate | 0.02 Hz – 10 Hz | 0.40 Hz | How fast it sweeps |
+| Depth | 0.00 – 1.00 | 0.50 | How far it sweeps |
+| Center | 0.00 – 1.00 | 0.50 | Where the sweep sits. Longer delay in chorus and flanger, higher notches in phaser |
+| Fdbk | −0.95 – 0.95 | 0.00 | Feeds the effect back into itself. Sharper, more metallic. Negative is hollower |
+| Mix | 0.00 – 1.00 | 0.50 | How much of the effect. 0.50 is the deepest |
+
+| Mode | What it sounds like |
+| --- | --- |
+| **chorus** | A second player slightly out of time and tune. Thickens pads and makes a thin sound wide. |
+| **flanger** | The jet: a sweeping comb you hear as a pitch. Turn Fdbk up for a sharper, more metallic sweep. |
+| **phaser** | A watery swirl, gentler than the flanger. Its notches are spaced unevenly, which is why it sounds different. |
+
+**L and R sweep a quarter cycle apart**, so the movement crosses between the
+speakers. Patch both into two mixer channels panned apart.
+
+**Mix at 0.50 is not a half-strength effect.** It is where the copy and the
+original are equal, which is where they cancel most completely, so the
+notches are deepest. In **chorus** and **flanger**, Mix at 1.00 is the copy
+alone: vibrato rather than a sweep.
+
+**Depth at zero holds the effect still.** A flanger that is not moving is a
+fixed comb — a metallic resonance you set with Center. Patch an Envelope into
+Center and the sweep follows each note instead of an LFO: the whoosh of
+something passing, the swoosh of a teleport.
 
 ---
 
@@ -1761,6 +1987,27 @@ Generating it at runtime rather than streaming a WAV buys two things. The file
 is a few kilobytes rather than a few megabytes, and the piece is still
 *patches* — so a game can change the tempo, mute a track, or reach into a rack
 and open a filter as something in the world changes.
+
+**Turning a knob from the game** is `setParam`. Name the track (its id or its
+name) and the knob as the module's id — printed on its ear — and the knob's
+own name:
+
+```js
+player.setParam('Lead', 'mac1.amount', danger)   // 0..1, as tense as the scene
+player.setParam('Lead', 'lpf1.cutoff', 800)      // in the knob's own units
+```
+
+Values are clamped to the knob's range and a switch lands on a position, so a
+game cannot put a module anywhere its panel could not. The change is heard
+from the next block, and the module's own smoothing glides it there, so
+setting it every frame does not click. It returns `false` for a track or knob
+that is not there. `getParam` reads one back, and `paramsOf('Lead')` lists
+every knob a track has.
+
+**A Macro is the best thing to hand a game.** Build the patch so one Macro's
+Amount is "intensity" — the filter, the drive, the extra layer and the tempo
+of a wobble all on its lanes — and the game needs to know one name and one
+number, however the patch changes afterwards.
 
 ---
 
@@ -2928,6 +3175,293 @@ ratio was deliberately not a whole number at all.
 > the partials are spaced by the modulator — so the carriers keep their
 > pitches and the sound gets brighter, rather than transposing. Then give
 > `osc3` a Delay of 200 ms for a lazier, more fanfare-like pickup.
+
+---
+
+### Tutorial 18 — Rain
+
+**What you will learn:** the **Dust** module, which makes sound out of
+separate impulses rather than continuous noise — and that how many arrive is
+most of what a sound like this is.
+
+#### Patch
+
+1. Start from the [tutorial rack](#build-the-tutorial-rack).
+2. Add one module: **Dust**.
+3. On the back, patch one cable:
+
+- `dust1 · Out` → `lpf1 · In` — *replaces the oscillator's cable*
+
+#### Set
+
+| Module | Knob | Value |
+| --- | --- | --- |
+| dust1 | Density | 90 Hz |
+| dust1 | Spread | 0.85 |
+| dust1 | Decay | 6 ms |
+| dust1 | Tone | noise |
+| lpf1 | Cutoff | 3.50 kHz |
+| lpf1 | Res | 0.10 |
+| lpf1 | CV Amt | +0.00 |
+| env1 | Attack | 400 ms |
+| env1 | Decay | 50 ms |
+| env1 | Sustain | 1.00 |
+| env1 | Release | 400 ms |
+| vca1 | CV Amt | 2.00 |
+
+**Hold Space.** The shower builds over a moment, keeps falling for as long as
+the key is down, and eases off when you let go.
+
+**Every drop is its own event.** Ninety a second, on average, but never
+evenly: the gaps are random, which is why it sounds like weather and not like
+a machine. Each one is a 6 ms spit of hiss (**Tone** on **noise**), and
+**Spread** at 0.85 makes most of them small and a few of them loud, which is
+what real rain on a window does.
+
+**The filter's CV Amt is at zero on purpose.** `env1` still opens the VCA,
+fading the rain in and out, but a filter sweeping with it would make every
+shower sound like a gust.
+
+> **Try:** Density to 6 Hz and Tone to **click** — a Geiger counter. Then
+> patch `dust1 · Trig` into `osc2 · Gate`, give `osc2` a short envelope of its
+> own and send it to the mixer: now every click also fires a blip, on the
+> same random timing.
+
+---
+
+### Tutorial 19 — Fly
+
+**What you will learn:** the **Drunk** module — a value that wanders — and
+using one wandering value to move two things at once.
+
+#### Patch
+
+1. Start from the [tutorial rack](#build-the-tutorial-rack).
+2. Add one module: **Drunk**.
+3. On the back, patch two cables:
+
+- `drk1 · Out` → `osc1 · FM`
+- `drk1 · Uni` → `lpf1 · CV` — *replaces the envelope's cable*
+
+#### Set
+
+| Module | Knob | Value |
+| --- | --- | --- |
+| osc1 | Pitch | 190 Hz |
+| osc1 | Wave | pulse |
+| osc1 | Width | 0.30 |
+| osc1 | FM Amt | +0.60 |
+| drk1 | Rate | 7.00 Hz |
+| drk1 | Step | 0.40 |
+| drk1 | Smooth | 1.00 |
+| drk1 | Pull | 0.15 |
+| lpf1 | Cutoff | 800 Hz |
+| lpf1 | Res | 0.30 |
+| lpf1 | CV Amt | +2.50 |
+| env1 | Attack | 50 ms |
+| env1 | Decay | 10 ms |
+| env1 | Sustain | 1.00 |
+| env1 | Release | 150 ms |
+
+**Hold Space.** A fly, buzzing about the room — never quite at the same
+pitch, getting brighter and duller as it turns towards you and away.
+
+**Pitch and brightness move together because they are the same walk.**
+`drk1 · Out` bends the pitch and `drk1 · Uni` — the same value, lifted to run
+from 0 to 1 — opens the filter. One wandering value driving two destinations
+is what makes it sound like one object moving rather than two things
+wobbling.
+
+**A walk, not a random jump.** Each step starts from where the last one ended,
+seven times a second, and **Smooth** at 1.00 glides the whole way between
+them. **Pull** at 0.15 keeps drawing it back towards the middle, so the fly
+circles rather than drifting off for good.
+
+> **Try:** Step to 0.01 — the fly lands, and hovers almost on one note. Then
+> Step to 1.00 and Pull to 0.00: every step can land anywhere, and it stops
+> sounding like one insect and starts sounding like several.
+
+---
+
+### Tutorial 20 — Pipe
+
+**What you will learn:** the **Multimode Filter**'s comb modes, where Cutoff
+stops being a corner and becomes a pitch.
+
+#### Patch
+
+1. Start from the [tutorial rack](#build-the-tutorial-rack).
+2. Add one module: **Multimode Filter**.
+3. On the back, patch three cables:
+
+- `noise1 · Out` → `lpf1 · In` — *replaces the oscillator's cable*
+- `vca1 · Out` → `mmf1 · In`
+- `mmf1 · Out` → `mix1 · 1` — *replaces the VCA's cable*
+
+#### Set
+
+| Module | Knob | Value |
+| --- | --- | --- |
+| env1 | Attack | 1 ms |
+| env1 | Decay | 12 ms |
+| env1 | Sustain | 0.00 |
+| env1 | Release | 10 ms |
+| lpf1 | Cutoff | 6.00 kHz |
+| lpf1 | Res | 0.00 |
+| lpf1 | CV Amt | +0.00 |
+| mmf1 | Mode | comb+ |
+| mmf1 | Cutoff | 220 Hz |
+| mmf1 | Res | 0.97 |
+| vca1 | CV Amt | 2.00 |
+
+Tap **Space**.
+
+**Clang.** What goes into the filter is a click — twelve milliseconds of
+noise, with no pitch at all. What comes out rings at 220 Hz for half a second,
+like a length of metal pipe. The pitch is the comb's: in **comb+**, Cutoff is
+the note it rings at, and **Res** is how long it keeps ringing.
+
+**Res at 0.00 is no filter at all.** A comb with nothing fed back is the dry
+signal, so turn Res down and the pipe goes back to being a click. Every step
+up the knob is a longer ring.
+
+> **Try:** Mode to **comb−**. It rings an octave lower and hollower — the odd
+> harmonics only, like blowing across the pipe instead of hitting it. Then
+> patch a Keyboard's Pitch into `mmf1 · CV` with CV Amt at +1.00: the pipe
+> plays in tune.
+
+---
+
+### Tutorial 21 — Jet flyby
+
+**What you will learn:** the **Chorus** module as a flanger, and sweeping one
+with an envelope instead of its own slow wobble.
+
+#### Patch
+
+1. Start from the [tutorial rack](#build-the-tutorial-rack).
+2. Add one module: **Chorus**.
+3. On the back, patch five cables:
+
+- `noise1 · Out` → `lpf1 · In` — *replaces the oscillator's cable*
+- `vca1 · Out` → `cho1 · In`
+- `cho1 · L` → `mix1 · 1` — *replaces the VCA's cable*
+- `cho1 · R` → `mix1 · 2`
+- `env1 · Out` → `cho1 · Center`
+
+#### Set
+
+| Module | Knob | Value |
+| --- | --- | --- |
+| noise1 | Color | pink |
+| lpf1 | Cutoff | 2.50 kHz |
+| lpf1 | Res | 0.20 |
+| lpf1 | CV Amt | +1.50 |
+| env1 | Attack | 1.20 s |
+| env1 | Decay | 800 ms |
+| env1 | Sustain | 0.00 |
+| env1 | Release | 500 ms |
+| cho1 | Mode | flanger |
+| cho1 | Rate | 0.10 Hz |
+| cho1 | Depth | 0.15 |
+| cho1 | Center | 0.10 |
+| cho1 | Fdbk | 0.80 |
+| cho1 | Mix | 0.50 |
+| mix1 | Pan 1 | -0.70 |
+| mix1 | Pan 2 | 0.70 |
+
+Hold **Space** for a second and a half.
+
+**The roar is noise; the pass is the flanger.** The comb the flanger makes
+sweeps down as `env1` rises and back up as it falls, and that falling and
+rising tone is what the ear hears as something coming towards it and going
+away. **Fdbk** at 0.80 sharpens the comb's teeth until the sweep sounds
+almost pitched — the scream of the engine.
+
+**Depth is nearly zero because the envelope is doing the sweeping.** A
+flanger's own LFO would sweep forever at its own pace; patched into
+**Center**, the envelope sweeps it once, exactly as long as the pass. Depth
+at 0.15 is just enough to keep the two sides moving slightly differently.
+
+**L and R go to two channels panned apart**, so the flanging moves between
+the speakers too.
+
+> **Try:** pull the `env1 · Out` → `cho1 · Center` cable, set Depth to 1.00
+> and Rate to 0.25 Hz. Now it sweeps on its own — the classic flanger — and
+> never passes.
+
+---
+
+### Tutorial 22 — Charge-up
+
+**What you will learn:** the **Macro** — one gesture sent to three
+destinations at once — and a lane that waits for its part of the turn.
+
+#### Patch
+
+1. Start from the [tutorial rack](#build-the-tutorial-rack).
+2. Add two modules: **Drive**, then **Macro**.
+3. On the back, patch seven cables:
+
+- `lpf1 · Out` → `drv1 · In`
+- `drv1 · Out` → `vca1 · In` — *replaces the filter's cable*
+- `env1 · Out` → `mac1 · Amount`
+- `mac1 · 1` → `lpf1 · CV` — *replaces the envelope's cable*
+- `mac1 · 2` → `lfo1 · Rate`
+- `lfo1 · Out` → `osc1 · FM`
+- `mac1 · 3` → `drv1 · Drive`
+
+#### Set
+
+| Module | Knob | Value |
+| --- | --- | --- |
+| osc1 | Pitch | 110 Hz |
+| osc1 | Wave | saw |
+| osc1 | FM Amt | +0.08 |
+| lfo1 | Rate | 2.00 Hz |
+| lfo1 | Rate Amt | +3.00 |
+| lpf1 | Cutoff | 250 Hz |
+| lpf1 | Res | 0.40 |
+| lpf1 | CV Amt | +5.00 |
+| drv1 | Drive | 1.00x |
+| drv1 | Drive Amt | +4.00 |
+| drv1 | Level | 0.60 |
+| env1 | Attack | 1.50 s |
+| env1 | Decay | 100 ms |
+| env1 | Sustain | 1.00 |
+| env1 | Release | 300 ms |
+| mac1 | Curve 1 | 0.50 |
+| mac1 | Start 3 | 0.50 |
+
+**Start 3 has no knob.** Click lane 3's strip, then drag its left handle on
+the graph across to the middle — the strip's readout says **0.50–1.00** when
+it is there.
+
+Hold **Space** for two seconds.
+
+**Three things happen, from one cable.** `env1` rises slowly into the
+macro's Amount jack, and the macro hands that one rising value to three
+places: lane 1 opens the filter, lane 2 speeds up the LFO wobbling the pitch
+— two a second to sixteen — and lane 3 pushes the Drive.
+
+**Lane 3 waits.** Its window starts at 0.50, so for the first half of the
+charge it puts out exactly nothing and the Drive is untouched; the grit only
+arrives once the charge is past half way, and it arrives on top of a sound
+that is already bright and fast. That is staging: the lanes take turns
+instead of all moving at once, and it is what makes a build-up feel like it
+is building.
+
+**Curve 1 at 0.50** makes the filter slow to open and quick at the top, so
+the brightening keeps accelerating right up to the end.
+
+**Watch the graph while you hold Space.** It shows the knob, not the jack, so
+the marker stays put — but the three lines are the whole plan: where each
+lane starts, where it ends, and how it gets there.
+
+> **Try:** take the envelope out of the Amount jack and turn the **Amount**
+> knob by hand instead: now the charge sits wherever you leave it, which is
+> how you would play it from a game — see
+> [Playing a project in a game](#playing-a-project-in-a-game).
 
 ---
 

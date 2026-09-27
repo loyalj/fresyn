@@ -4,10 +4,10 @@ A browser-based modular synth lab for designing procedural game SFX, in the
 shape of a hardware rack.
 
 **New here? Read [MANUAL.md](MANUAL.md)** -- what every module does, and
-seventeen tutorials that build a laser, a footstep, computer chatter, wind, an
-explosion, a siren, a water drop, an engine, a power-up, a sync zap, a
+twenty-two tutorials that build a laser, a footstep, computer chatter, wind,
+an explosion, a siren, a water drop, an engine, a power-up, a sync zap, a
 ricochet, a machine gun, an alien transmission, an arpeggio, a sci-fi door, a
-bell and a coin.
+bell, a coin, rain, a fly, a struck pipe, a jet flyby and a charge-up.
 
 ## Status
 
@@ -209,7 +209,7 @@ unplug. A unit is dragged up and down the rack by the strip down its left edge, 
 either face; hovering one on the back reveals the buttons that move it a row
 or pull it out. The bar across the top is a panel of its
 own, bolted to the head of the rails: it stays put while the rack scrolls
-under it, and it carries the menus -- Patch, Edit, Modules and View. A module
+under it, and it carries the menus -- Project, Edit, Patch, Modules and View. A module
 chosen from the Modules menu arrives at the top of the rack, where the menu
 that added it is, rather than off the bottom of a rack that may be pages
 long.
@@ -637,7 +637,8 @@ src/
     transport.ts       # the lookahead cursor, and where the playhead is
     edit.ts            # add, remove, place; the invariants nothing else keeps
     bind.ts            # what in a rack a track's notes are played on
-    runtime.ts         # SongPlayer: a project, played with no browser at all
+    runtime.ts         # SongPlayer: a project, played with no browser at all,
+                       # and every knob in it a game can turn
     serialize.ts project.ts   # a defensive reader, and the project file
   dsp/                 # audio thread; no DOM, no allocation in process()
     worklet.ts         # AudioWorkletProcessor entry, registers 'fresyn-voice'
@@ -665,6 +666,8 @@ src/
     scopeDraw.ts fft.ts      # canvas drawing, and the transform behind it
     EngineContext.ts         # the engine, for panels that show live audio
     MixerFace.tsx            # channel strips, and the meter draw loop
+    MacroFace.tsx            # the macro's lanes, drawn and dragged
+    SvfFace.tsx              # the multimode filter and its response
     UnitSpine.tsx            # the rack ear, and the drag handle
     useRackDrag.ts           # reordering by dragging a unit
     Cables.tsx               # the cable layer, purely visual
@@ -676,8 +679,10 @@ scripts/               # verification harnesses
   check-theme.mjs      # palette token coverage and contrast
 MANUAL.md              # the user manual, and the patches check:manual renders
 
-Modules: gate, osc, noise, lfo, adsr, sh, slew, cv, ladder, vca,
-mixer (8:2), scope, out.
+Modules: gate, osc, sampler, voice, keys, noise, dust, lfo, adsr, sh, drunk,
+clock, burst, seq, macro, slew, quant, cv, ladder, svf, formant, eq, drive,
+fold, ring, crush, comp, gran, delay, chorus, reverb, res, vca, mixer (8:2),
+scope, rec.
 ```
 
 ## Roadmap
@@ -686,8 +691,8 @@ mixer (8:2), scope, out.
 2. ~~Patch graph: modules as data, topological sort, feedback cables.~~
 3. ~~Rack UI: Tab to flip to the back panel, drag cables.~~
 4. ~~Adding and removing modules; saving and loading patches.~~
-5. Module library: ~~S&H, slew, CV utilities, scope~~; multi-mode filter,
-   waveshaper, bitcrusher, delay, comb, resonator bank, reverb.
+5. Module library: ~~S&H, slew, CV utilities, scope~~; ~~multi-mode filter~~,
+   waveshaper, bitcrusher, delay, ~~comb~~, resonator bank, reverb.
 6. Game-audio workflow -- the reason this exists:
    - ~~seeded RNG, so renders are reproducible~~
    - ~~batch variation renders, WAV export, zip~~
