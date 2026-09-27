@@ -1,7 +1,8 @@
 import type { CSSProperties } from 'react'
 import { jackKey } from './Jack'
 import { cablePath, type JackGeometry, type Point } from './cableGeometry'
-import type { Patch } from '../patch/types'
+import { signalOf, type Signal } from '../patch/defs'
+import type { Cable, Patch } from '../patch/types'
 import type { PortRef } from '../patch/edit'
 
 export type { JackGeometry, Point }
@@ -10,6 +11,13 @@ export interface DragState {
   anchor: PortRef
   anchorKind: 'input' | 'output'
   cursor: Point
+  /**
+   * The cable was pulled out of a jack it was plugged into, rather than
+   * started from a free one. Let go of over nothing, such a cable is simply
+   * unplugged -- that is how a cable is taken out -- where a new one offers
+   * the modules it could go to.
+   */
+  pulled?: true
 }
 
 interface Props {
@@ -18,7 +26,18 @@ interface Props {
   drag: DragState | null
   /** The cable under the pointer, highlighted as grabbable. */
   hovered?: string
+  /**
+   * How cables are coloured when they have not been given a colour of their
+   * own: by what they carry, or by the module they leave.
+   */
+  colorBy: 'signal' | 'module'
 }
+
+/**
+ * Sound warm, control cool, gates green: three hues far enough apart to read
+ * at a glance on every theme, which sets how saturated and light they are.
+ */
+const SIGNAL_HUE: Record<Signal, number> = { audio: 30, cv: 205, gate: 130 }
 
 /**
  * The cable layer, drawn over the flipped rack. Cables hang rather than run
@@ -29,8 +48,15 @@ interface Props {
  * resolved against the curve in `nearestCable`, so a jack underneath a cable
  * stays usable.
  */
-export function Cables({ patch, geometry, drag, hovered }: Props) {
+export function Cables({ patch, geometry, drag, hovered, colorBy }: Props) {
   const anchorPoint = drag ? geometry[jackKey(drag.anchor)] : undefined
+  const typeOf = new Map(patch.modules.map((m) => [m.id, m.type]))
+  /** A cable's own colour, or the rack's for it. */
+  const hueFor = (from: PortRef, own?: number) => {
+    if (own !== undefined) return own
+    if (colorBy === 'module') return hueOf(from.module)
+    return SIGNAL_HUE[signalOf(typeOf.get(from.module) ?? '', from.port)]
+  }
 
   return (
     <svg className="cables" aria-hidden="true">
@@ -39,7 +65,7 @@ export function Cables({ patch, geometry, drag, hovered }: Props) {
         const b = geometry[jackKey(c.to)]
         if (!a || !b) return null
         const d = cablePath(a, b)
-        const hue = hueOf(c.from.module)
+        const hue = hueFor(c.from, (c as Cable).color)
 
         return (
           <g key={c.id} className={`cable${hovered === c.id ? ' hovered' : ''}`} style={hueVar(hue)}>
@@ -52,7 +78,7 @@ export function Cables({ patch, geometry, drag, hovered }: Props) {
       })}
 
       {drag && anchorPoint && (
-        <g className="cable cable-dragging" style={hueVar(hueOf(drag.anchor.module))}>
+        <g className="cable cable-dragging" style={hueVar(hueFor(drag.anchor))}>
           <path d={cablePath(anchorPoint, drag.cursor)} className="cable-shadow" />
           <path d={cablePath(anchorPoint, drag.cursor)} className="cable-line" />
           <circle cx={anchorPoint.x} cy={anchorPoint.y} r={4} className="cable-grip" />

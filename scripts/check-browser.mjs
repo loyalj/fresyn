@@ -45,6 +45,9 @@ const live = await page.evaluate(() => ({
   // plus the main bus.
   headerMeter: !!document.querySelector('.meter'),
   meters: document.querySelectorAll('.strip-meter').length,
+  // The oscillator has one of its own now, reading what it puts out after
+  // its envelope and its Level knob. The stock rack holds one oscillator.
+  oscMeters: document.querySelectorAll('.osc-meter').length,
 }))
 
 // Meters: the bars are driven straight from the audio thread rather than
@@ -53,41 +56,55 @@ const live = await page.evaluate(() => ({
 //
 // How full a bar is, as the draw loop leaves it. The fill is clipped from
 // the top, so no clip at all is silence.
-const barFill = () =>
-  page.evaluate(() =>
-    [...document.querySelectorAll('.strip-meter-fill')].map((e) => {
-      const m = /inset\(([\d.]+)%/.exec(e.style.clipPath || '')
-      return m ? 1 - Number(m[1]) / 100 : 0
-    }),
+const fillOf = (selector) =>
+  page.evaluate(
+    (sel) =>
+      [...document.querySelectorAll(sel)].map((e) => {
+        const m = /inset\(([\d.]+)%/.exec(e.style.clipPath || '')
+        return m ? 1 - Number(m[1]) / 100 : 0
+      }),
+    selector,
   )
+const barFill = () => fillOf('.strip-meter-fill')
+// Driven by a loop of its own, from a level the module reports for itself, so
+// a mixer meter moving says nothing about whether this one does.
+const oscFill = () => fillOf('.osc-meter-fill')
 
-await page.keyboard.down('Space')
+// A key on the Keyboard's panel, held with the mouse: the stock rack has no
+// Trigger, so its own keys are how it is played by hand.
+const key = await (await page.$('.keys-key')).boundingBox()
+await page.mouse.move(key.x + key.width / 2, key.y + key.height * 0.8)
+await page.mouse.down()
 await new Promise((r) => setTimeout(r, 600))
 const sounding = await barFill()
-await page.keyboard.up('Space')
+const oscSounding = await oscFill()
+await page.mouse.up()
 // Long enough for a full-scale bar to fall all the way to the floor.
 await new Promise((r) => setTimeout(r, 1500))
 const silent = await barFill()
+const oscSilent = await oscFill()
 
 const metersMoved = sounding.some((v) => v > 0.05)
 const metersFell = silent.every((v) => v < 0.02)
+const oscMoved = oscSounding.some((v) => v > 0.05)
+const oscFell = oscSilent.every((v) => v < 0.02)
 
 // Then render the same worklet offline and inspect the samples. This also
 // exercises the export path: compile a patch, hand it to the processor at
 // construction, render faster than realtime.
 const render = await page.evaluate(async () => {
-  const [{ compile }, { defaultPatch }, worklet] = await Promise.all([
+  const [{ compile }, { triggerPatch }, worklet] = await Promise.all([
     import('/src/patch/compile.ts'),
     import('/src/patch/defaultPatch.ts'),
     import('/src/dsp/worklet.ts?worker&url'),
   ])
-  const compiled = compile(defaultPatch())
+  const compiled = compile(triggerPatch())
 
   const ctx = new OfflineAudioContext({ numberOfChannels: 2, length: 24000, sampleRate: 48000 })
   await ctx.audioWorklet.addModule(worklet.default)
   const node = new AudioWorkletNode(ctx, 'fresyn-voice', {
     numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2],
-    processorOptions: { patch: compiled, params: compiled.params, autoGate: true },
+    processorOptions: { tracks: [{ id: 'bench', patch: compiled, params: compiled.params }], autoGate: true },
   })
   node.connect(ctx.destination)
 
@@ -134,7 +151,7 @@ const basic = await page.evaluate(async () => {
   await ctx.audioWorklet.addModule(worklet.default)
   const node = new AudioWorkletNode(ctx, 'fresyn-voice', {
     numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2],
-    processorOptions: { patch: compiled, params: compiled.params, autoGate: true },
+    processorOptions: { tracks: [{ id: 'bench', patch: compiled, params: compiled.params }], autoGate: true },
   })
   node.connect(ctx.destination)
 
@@ -153,6 +170,10 @@ if (live.headerMeter) problems.push('the header still has a level meter')
 if (live.meters !== 9) problems.push(`expected 9 mixer meters, found ${live.meters}`)
 if (!metersMoved) problems.push('no mixer meter moved while the rack was sounding')
 if (!metersFell) problems.push('a mixer meter did not fall back to silence')
+console.log('osc meter   :', `sounding [${oscSounding.map((v) => v.toFixed(2))}] -> silent [${oscSilent.map((v) => v.toFixed(2))}]`)
+if (live.oscMeters !== 1) problems.push(`expected 1 oscillator meter, found ${live.oscMeters}`)
+if (!oscMoved) problems.push('the oscillator meter did not move while it was sounding')
+if (!oscFell) problems.push('the oscillator meter did not fall back to silence')
 console.log('no recorder : an osc and a mixer reach the speakers, peak=%s',
   basic.peak.toFixed(4))
 console.log('compiled    : %d modules  %s', render.modules, render.order)

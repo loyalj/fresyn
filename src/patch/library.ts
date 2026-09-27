@@ -1,6 +1,7 @@
 import { defOf } from './defs'
-import { defaultPatch } from './defaultPatch'
+import { triggerPatch } from './defaultPatch'
 import { addModule, connect, nextModuleId } from './edit'
+import { INSTRUMENTS, type InstrumentCategory } from './instruments'
 import type { Patch, PatchModule } from './types'
 
 /**
@@ -16,26 +17,62 @@ import type { Patch, PatchModule } from './types'
  * manual's own check renders and listens to. So a template that stopped
  * making a sound, drifted out of range, started clipping or lost a cable
  * fails `npm run check:manual` before anyone opens the menu -- which is the
- * only way a shelf of fifteen racks stays trustworthy while the modules
+ * only way a shelf of seventeen racks stays trustworthy while the modules
  * underneath them keep changing.
  */
 export interface Template {
   /** Stable across renames: it is what a saved reference would name. */
   id: string
   name: string
+  /** Which shelf it sits on. */
+  category: Category
   /** What the sound is, in one line, for the list. */
   description: string
   /** What building it teaches, taken from the tutorial it comes from. */
-  teaches: string
-  /** Which tutorial in MANUAL.md, for the reader who wants the prose. */
-  tutorial: number
+  teaches?: string
+  /**
+   * Which tutorial in MANUAL.md, for the reader who wants the prose. Zero for
+   * the tutorial rack itself, which is where they all start rather than one
+   * of them. Absent on an instrument, which comes from no tutorial.
+   */
+  tutorial?: number
+  /** For an instrument: one thing worth doing with it. */
+  tip?: string
   /** The rack, with everything it does not use already taken out. */
   build(): Built
 }
 
+/**
+ * The shelves, in the order the library lists them.
+ *
+ * The tutorials first, because they are where the rack is learned; then the
+ * instruments, in roughly the order a piece is written -- the harmony, the
+ * tunes, the bottom end, the beat.
+ */
+export type Category = 'tutorial' | InstrumentCategory
+
+export const CATEGORIES: { id: Category; name: string }[] = [
+  { id: 'tutorial', name: 'Tutorials' },
+  { id: 'keys', name: 'Keys' },
+  { id: 'plucked', name: 'Plucked' },
+  { id: 'mallets', name: 'Bells & mallets' },
+  { id: 'strings', name: 'Strings & pads' },
+  { id: 'brass', name: 'Brass & winds' },
+  { id: 'bass', name: 'Bass' },
+  { id: 'leads', name: 'Leads' },
+  { id: 'drums', name: 'Drums' },
+]
+
 /** A shelf entry before pruning, which is the only way one is written. */
-interface Entry extends Omit<Template, 'build'> {
+interface Entry extends Omit<Template, 'build' | 'category' | 'teaches' | 'tutorial'> {
+  teaches: string
+  tutorial: number
   make(): Built
+  /**
+   * Keep every unit, patched or not. Only the tutorial rack wants this: its
+   * idle units are the point, since the tutorials are what patch them.
+   */
+  whole?: true
 }
 
 export interface Built {
@@ -85,17 +122,20 @@ function addAll(patch: Patch, types: string[]): Patch {
 }
 
 /**
- * The rack every tutorial starts from, as MANUAL's "Build the tutorial rack"
- * tells the reader to build it.
+ * The rack every tutorial starts from, as MANUAL's "Load the tutorial rack"
+ * describes it.
  *
  * The stock rack is a voice but not a workbench. Several of these run noise
  * through the filter, and noise has no envelope of its own, so they need a
  * separate envelope and a VCA for it to open. The Trigger they are all fired
  * from is already in the stock rack, on Space.
+ *
+ * Built on the Trigger voice rather than on whatever New project hands out,
+ * because the tutorials name its modules and cables one by one.
  */
 export function tutorialRack(): Patch {
   const patch = wire(
-    addAll(defaultPatch(), ['adsr', 'vca', 'noise', 'osc']),
+    addAll(triggerPatch(), ['adsr', 'vca', 'noise', 'osc']),
     'gate1.gate -> env1.gate',
     // Both of these land in occupied inputs and push out a stock cable: the
     // envelope takes the filter over, and the VCA takes over the mixer feed.
@@ -115,9 +155,9 @@ const RACK_VALUES = { 'osc1.envAmount': 0 }
 /**
  * Take out everything the rack cannot be heard through.
  *
- * The tutorial rack is shared by all fifteen of these, so it carries an
- * envelope, a VCA, a noise source and a second oscillator whether or not a
- * given patch wants them. That is right for a reader building the tutorials
+ * The tutorial rack is shared by all of these, so it carries an envelope, a
+ * VCA, a noise source and a second oscillator whether or not a given patch
+ * wants them. That is right for a reader building the tutorials
  * one after another -- they build it once and keep it -- and wrong for a
  * finished rack handed over on its own, where a unit patched to nothing is
  * just a thing to wonder about. The second oscillator was idle in thirteen of
@@ -173,6 +213,16 @@ function prune({ patch, values }: Built): Built {
 // --- the shelf ---------------------------------------------------------
 
 const SHELF: Entry[] = [
+  {
+    id: 'bench',
+    name: 'Tutorial rack',
+    description:
+      'The rack every tutorial starts from: a Trigger on Space, two oscillators, noise, an envelope, a VCA and a filter.',
+    teaches: 'Nothing on its own. Load it, then follow any tutorial in the manual.',
+    tutorial: 0,
+    whole: true,
+    make: () => ({ patch: tutorialRack(), values: { ...RACK_VALUES } }),
+  },
   {
     id: 'laser',
     name: 'Laser',
@@ -499,6 +549,117 @@ const SHELF: Entry[] = [
     }),
   },
   {
+    id: 'bell',
+    name: 'Bell',
+    description: 'A struck metal bell, ringing down over a couple of seconds.',
+    teaches: 'Linear FM: one oscillator modulating another at an untuned ratio.',
+    tutorial: 16,
+    make: () => ({
+      patch: wire(
+        tutorialRack(),
+        // osc2 is the modulator. It is never heard: the VCA scales it by the
+        // envelope, and what comes out goes into the carrier's FM jack rather
+        // than towards the speakers.
+        'osc2.out -> vca1.in',
+        'vca1.out -> osc1.fm',
+        'osc1.out -> mix1.in1',
+      ),
+      values: {
+        ...RACK_VALUES,
+        // 2.76 times the carrier, which is no musical interval at all. That
+        // is the point: a whole-number ratio gives a pitched, organ-like
+        // tone, and a ratio like this one gives the clangourous, slightly
+        // out-of-tune spread of partials that is heard as metal.
+        'osc2.pitch': 1214,
+        'osc2.wave': 3,
+        'osc1.pitch': 440,
+        'osc1.wave': 3,
+        'osc1.fmMode': 1,
+        'osc1.fmAmount': 1.4,
+        // The carrier does its own amplitude. Sustain at zero with a long
+        // Release is a struck sound: nothing holds it up, and letting go is
+        // what you hear.
+        'osc1.envAmount': 1,
+        'osc1.attack': 0.002,
+        'osc1.decay': 2.5,
+        'osc1.sustain': 0,
+        'osc1.release': 1,
+        // The index envelope, and the reason this sounds struck rather than
+        // buzzing. It is much shorter than the note: the bell is bright for
+        // an instant and then rings on with the partials gone, which is what
+        // metal does and what a static FM index never does.
+        'env1.attack': 0.001,
+        'env1.decay': 0.5,
+        'env1.sustain': 0,
+        'env1.release': 0.3,
+      },
+    }),
+  },
+  {
+    id: 'coin',
+    name: 'Coin',
+    description: 'Ding-DING: the two-note pickup every platform game has.',
+    teaches: 'Whole-number FM ratios, and the envelope Delay that places the second note.',
+    tutorial: 16,
+    make: () => ({
+      patch: wire(
+        add(tutorialRack(), 'osc'),
+        'osc2.out -> vca1.in',
+        // One modulator, both notes. An output feeds as many cables as you
+        // like, so the two carriers are modulated by the same oscillator and
+        // the same index envelope.
+        'vca1.out -> osc1.fm',
+        'vca1.out -> osc3.fm',
+        'gate1.gate -> osc3.gate',
+        'osc1.out -> mix1.in1',
+        'osc3.out -> mix1.in2',
+      ),
+      values: {
+        ...RACK_VALUES,
+        // Both notes are whole multiples of the modulator -- three times and
+        // four times -- so both are pitched rather than clangourous, and they
+        // land a fourth apart, which is the interval the sound is made of.
+        'osc2.pitch': 329.6,
+        'osc2.wave': 3,
+        'osc1.pitch': 988.8,
+        'osc1.wave': 3,
+        'osc1.fmMode': 1,
+        'osc1.fmAmount': 1.2,
+        'osc1.envAmount': 1,
+        'osc1.attack': 0.001,
+        'osc1.decay': 0.05,
+        'osc1.sustain': 0,
+        'osc1.release': 0.05,
+        'osc3.pitch': 1318.4,
+        'osc3.wave': 3,
+        'osc3.fmMode': 1,
+        'osc3.fmAmount': 1.2,
+        'osc3.envAmount': 1,
+        // The whole trick. Both oscillators are fired by the same gate; this
+        // one waits 90 ms before starting, which is what makes two notes out
+        // of one press.
+        'osc3.delay': 0.09,
+        'osc3.attack': 0.001,
+        'osc3.decay': 0.45,
+        'osc3.sustain': 0,
+        'osc3.release': 0.3,
+        // A fixed-length gate, because the second note cannot start until
+        // 90 ms in: held, a quick tap would release the delayed envelope
+        // before it ever opened and the coin would lose its second note.
+        'gate1.mode': 1,
+        'gate1.length': 0.12,
+        'env1.attack': 0.001,
+        'env1.decay': 0.15,
+        'env1.sustain': 0,
+        'env1.release': 0.05,
+        // Two notes into two channels, turned down enough that the moment
+        // they overlap does not clip.
+        'mix1.level1': 0.6,
+        'mix1.level2': 0.6,
+      },
+    }),
+  },
+  {
     id: 'ricochet',
     name: 'Ricochet',
     description: 'A bullet spanging away, each ping lower and closer than the last.',
@@ -767,10 +928,15 @@ function pack({ patch, values }: Built): Built {
  * that a template is written as the tutorial builds it rather than as a list
  * of what survives.
  */
-export const LIBRARY: Template[] = SHELF.map((entry) => ({
-  ...entry,
-  build: () => pack(prune(entry.make())),
-}))
+export const LIBRARY: Template[] = [
+  ...SHELF.map(({ make, whole, ...entry }) => ({
+    ...entry,
+    category: 'tutorial' as const,
+    build: () => pack(whole ? make() : prune(make())),
+  })),
+  // Built lean to begin with, so there is nothing to prune: only laid out.
+  ...INSTRUMENTS.map(({ make, ...instrument }) => ({ ...instrument, build: () => pack(make()) })),
+]
 
 /** One template by id, for anything that stores a reference to one. */
 export function templateById(id: string): Template | undefined {

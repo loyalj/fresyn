@@ -28,8 +28,18 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     // second key; anything else in the rack is fired by a cable from one.
     keyed: true,
     width: 'half',
-    inputs: [],
-    outputs: [{ id: 'gate', label: 'Gate' }],
+    // Fired by a cable as well as by the key, which is what turns this module
+    // into a gate shaper: a clock into Trig with Mode on `once` puts out a
+    // fixed length at the clock's rate, where the Clock's own Width gives a
+    // fraction of the period and changes with it.
+    inputs: [{ id: 'trig', label: 'Trig' }],
+    outputs: [
+      { id: 'gate', label: 'Gate' },
+      // How hard a note from the roll struck it, 0..1, as the Keyboard's Vel
+      // is: full for a key, a button or a cable. Appended, because the DSP
+      // reads its ports by position.
+      { id: 'vel', label: 'Vel' },
+    ],
     params: [
       // Held, a fixed length, or on until the next press. The DSP reads these
       // by index, so the order is load bearing.
@@ -53,13 +63,24 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
       { id: 'pwm', label: 'PWM', block: 'mod' },
       { id: 'sync', label: 'Sync', block: 'mod' },
       { id: 'gate', label: 'Gate', block: 'play' },
+      // What a keyboard plays it with: one octave per unit, always, and added
+      // to whatever FM is doing rather than sharing its jack. With the pitch
+      // on its own input the FM jack is free for another oscillator, so a
+      // voice can be played and frequency-modulated at once -- which is every
+      // electric piano, bell and FM bass there is.
+      { id: 'pitch', label: 'Pitch', block: 'play' },
     ],
     outputs: [
       { id: 'out', label: 'Out' },
       { id: 'env', label: 'Env' },
     ],
     params: [
-      { id: 'pitch', label: 'Pitch', min: 20, max: 4000, default: 110, unit: 'Hz', curve: 'exp' },
+      // Twelve and a half octaves, which is wider than a knob can be turned
+      // accurately -- Octave below is the coarse half of the pair, and shift
+      // makes any knob five times finer. The ends are what they are for: 2 Hz
+      // is a rumble you count rather than hear, and 12 kHz is the sparkle on
+      // top of a sound rather than the sound.
+      { id: 'pitch', label: 'Pitch', min: 2, max: 12000, default: 110, unit: 'Hz', curve: 'exp', tuned: true },
       { id: 'wave', label: 'Wave', min: 0, max: 3, default: 0, unit: '', curve: 'lin', steps: WAVES },
       { id: 'width', label: 'Width', min: 0.02, max: 0.98, default: 0.5, unit: '', curve: 'lin' },
       { id: 'fmAmount', label: 'FM Amt', min: -4, max: 4, default: 0, unit: 'oct', curve: 'lin' },
@@ -72,6 +93,98 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
       { id: 'decay', label: 'Decay', min: 0.002, max: 4, default: 0.35, unit: 's', curve: 'exp' },
       { id: 'sustain', label: 'Sustain', min: 0, max: 1, default: 0, unit: '', curve: 'lin' },
       { id: 'release', label: 'Release', min: 0.002, max: 4, default: 0.15, unit: 's', curve: 'exp' },
+      // Last, like Gate and Env, and for the same reason: the DSP reads its
+      // parameters by position. Exponential is the default because it is what
+      // every patch saved before this switch existed was using.
+      { id: 'fmMode', label: 'FM Mode', min: 0, max: 1, default: 0, unit: '', curve: 'lin', steps: ['exp', 'linear'] },
+      // Whole octaves, detented, and the coarse half of the tuning pair. A
+      // count rather than a measurement, so the readout says -1 and not
+      // -1.00.
+      { id: 'octave', label: 'Octave', min: -3, max: 3, default: 0, unit: '#', curve: 'lin' },
+      // Full by default: an oscillator that arrived quieter than it used to
+      // would change every patch ever saved.
+      { id: 'level', label: 'Level', min: 0, max: 1, default: 1, unit: '', curve: 'lin' },
+      // The envelope's other two destinations. Both default to zero, so the
+      // envelope still does nothing but amplitude unless it is asked to.
+      { id: 'envPitch', label: 'Env Pitch', min: -4, max: 4, default: 0, unit: 'oct', curve: 'lin' },
+      { id: 'envWidth', label: 'Env Width', min: -1, max: 1, default: 0, unit: '', curve: 'lin' },
+    ],
+  },
+
+  sampler: {
+    type: 'sampler',
+    name: 'Sampler',
+    group: 'voice',
+    slug: 'smp',
+    trigger: true,
+    inputs: [
+      { id: 'gate', label: 'Gate' },
+      { id: 'pitch', label: 'Pitch' },
+    ],
+    // Stereo out, like the Granular and the Space: a file has two sides and
+    // the rack is mono until the mixer, so both of them get a jack.
+    outputs: [
+      { id: 'l', label: 'L' },
+      { id: 'r', label: 'R' },
+      { id: 'end', label: 'End' },
+    ],
+    params: [
+      { id: 'start', label: 'Start', min: 0, max: 1, default: 0, unit: '', curve: 'lin' },
+      // A fraction of what is left after Start, so full always means "to the
+      // end" wherever Start has been put.
+      { id: 'length', label: 'Length', min: 0, max: 1, default: 1, unit: '', curve: 'lin' },
+      { id: 'speed', label: 'Speed', min: 0.25, max: 4, default: 1, unit: 'x', curve: 'exp' },
+      { id: 'cvAmount', label: 'Pitch Amt', min: -4, max: 4, default: 0, unit: 'oct', curve: 'lin' },
+      // Both ends of the region, and the reason a sampler does not click. Two
+      // milliseconds is inaudible as a fade and completely audible as a
+      // click, which is why it is the default rather than zero.
+      { id: 'fade', label: 'Fade', min: 0.0005, max: 0.5, default: 0.002, unit: 's', curve: 'exp' },
+      { id: 'level', label: 'Level', min: 0, max: 1, default: 1, unit: '', curve: 'lin' },
+      { id: 'loop', label: 'Loop', min: 0, max: 1, default: 0, unit: '', curve: 'lin', steps: ['one-shot', 'loop'] },
+      { id: 'direction', label: 'Direction', min: 0, max: 1, default: 0, unit: '', curve: 'lin', steps: ['forward', 'reverse'] },
+    ],
+  },
+
+  voice: {
+    type: 'voice',
+    name: 'Voice',
+    group: 'voice',
+    slug: 'vox',
+    // Its button opens the gate, as the oscillator's does. It only matters in
+    // gated mode; a drone sounds whether or not anything is holding it.
+    trigger: true,
+    inputs: [
+      { id: 'gate', label: 'Gate', block: 'play' },
+      // One octave per unit, as on the oscillator, so a Keyboard plays it.
+      { id: 'pitch', label: 'Pitch', block: 'play' },
+      // Added to the Breath knob. An envelope here is a breathy onset; a
+      // Sample & Hold is a voice that keeps catching.
+      { id: 'breath', label: 'Breath', block: 'mod' },
+    ],
+    outputs: [
+      { id: 'out', label: 'Out' },
+      // The note's envelope, whichever mode it is in: patched to a Formant's
+      // Vowel jack, every note says "wah".
+      { id: 'env', label: 'Env' },
+    ],
+    params: [
+      // A voice rather than an oscillator: low enough for a giant, high enough
+      // for a soprano's top and a cartoon mouse.
+      { id: 'pitch', label: 'Pitch', min: 30, max: 1200, default: 110, unit: 'Hz', curve: 'exp', tuned: true },
+      // Soft and breathy at 0, pressed and buzzy at 1.
+      { id: 'tone', label: 'Tone', min: 0, max: 1, default: 0.5, unit: '', curve: 'lin' },
+      // At 1 there is no buzz left at all: a whisper.
+      { id: 'breath', label: 'Breath', min: 0, max: 1, default: 0.1, unit: '', curve: 'lin' },
+      { id: 'jitter', label: 'Jitter', min: 0, max: 1, default: 0.2, unit: '', curve: 'lin' },
+      { id: 'growl', label: 'Growl', min: 0, max: 1, default: 0, unit: '', curve: 'lin' },
+      { id: 'vibRate', label: 'Vib Rate', min: 1, max: 12, default: 5.5, unit: 'Hz', curve: 'exp' },
+      // Up to a semitone either side. Zero by default, because a vibrato is a
+      // singer's and most of what this module will make is not singing.
+      { id: 'vibDepth', label: 'Vib Depth', min: 0, max: 1, default: 0, unit: '', curve: 'lin' },
+      { id: 'mode', label: 'Mode', min: 0, max: 1, default: 0, unit: '', curve: 'lin', steps: ['drone', 'gated'] },
+      { id: 'attack', label: 'Attack', min: 0.002, max: 2, default: 0.04, unit: 's', curve: 'exp' },
+      { id: 'release', label: 'Release', min: 0.005, max: 4, default: 0.2, unit: 's', curve: 'exp' },
+      { id: 'level', label: 'Level', min: 0, max: 1, default: 0.8, unit: '', curve: 'lin' },
     ],
   },
 
@@ -90,16 +203,31 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     // UI -- registration, geometry, occupancy, drag targeting -- with no side
     // in the key. Two jacks with one address is a bug, so the ids differ and
     // the label says what it actually does.
+    // What a piano roll, a MIDI keyboard or a game plays notes on. The rack
+    // has exactly one such module today, and a track in a song finds it by
+    // this flag rather than by name.
+    playable: true,
     inputs: [{ id: 'trig', label: 'Gate' }],
+    // Appended, never reordered: the DSP reads its ports by position.
     outputs: [
       { id: 'pitch', label: 'Pitch' },
       { id: 'gate', label: 'Gate' },
+      // How hard a sequenced note was struck, 0..1. Full scale for anything
+      // played by hand, so patching it into a VCA costs nothing until
+      // something with velocity is actually driving the module.
+      { id: 'vel', label: 'Vel' },
     ],
     // Played, not designed: both of these are set by the panel itself, and a
     // render batch must not wander off the note you chose.
     params: [
       { id: 'note', label: 'Note', min: 0, max: 24, default: 0, unit: '', curve: 'lin', played: true },
       { id: 'octave', label: 'Octave', min: -3, max: 3, default: 0, unit: '', curve: 'lin', played: true },
+      // How many notes sound at once. One is the rack as it always was: a
+      // single line, where each note takes over from the last. Above that,
+      // every note gets its own copy of the modules downstream of this one,
+      // up to the first shared module -- see `shared` in types.ts. Appended,
+      // because the DSP reads parameters by position.
+      { id: 'voices', label: 'Voices', min: 1, max: 8, default: 1, unit: '#', curve: 'lin' },
     ],
   },
 
@@ -130,6 +258,11 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     inputs: [
       { id: 'sync', label: 'Sync' },
       { id: 'pwm', label: 'PWM' },
+      // Appended, like every port added after the fact: the DSP reads them by
+      // position. Rate was the only control on this panel a cable could not
+      // reach, which left every accelerating wobble -- an engine revving, a
+      // siren winding up -- out of reach with it.
+      { id: 'cv', label: 'Rate' },
     ],
     outputs: [
       { id: 'out', label: 'Out' },
@@ -143,6 +276,7 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
       // outside the DSP, so putting it here costs saved patches nothing.
       { id: 'width', label: 'Width', min: 0.02, max: 0.98, default: 0.5, unit: '', curve: 'lin' },
       { id: 'depth', label: 'Depth', min: 0, max: 1, default: 1, unit: '', curve: 'lin' },
+      { id: 'cvAmount', label: 'Rate Amt', min: -5, max: 5, default: 0, unit: 'oct', curve: 'lin' },
     ],
   },
 
@@ -154,7 +288,15 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     // Four knobs and two jacks: half a row is all it has ever needed.
     width: 'half',
     inputs: [{ id: 'gate', label: 'Gate' }],
-    outputs: [{ id: 'out', label: 'Out' }],
+    // End and Inv are appended, as ports always are here. End fires when the
+    // shape finishes, the way the Burst and the Sequencer say they are done;
+    // Inv is the shape upside down, which is a whole CV Utility saved every
+    // time something has to duck rather than swell.
+    outputs: [
+      { id: 'out', label: 'Out' },
+      { id: 'end', label: 'End' },
+      { id: 'inv', label: 'Inv' },
+    ],
     params: [
       { id: 'attack', label: 'Attack', min: 0.0005, max: 2, default: 0.002, unit: 's', curve: 'exp' },
       { id: 'decay', label: 'Decay', min: 0.002, max: 4, default: 0.35, unit: 's', curve: 'exp' },
@@ -302,6 +444,31 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     ],
   },
 
+  quant: {
+    type: 'quant',
+    name: 'Quantizer',
+    group: 'modulation',
+    slug: 'qnt',
+    width: 'half',
+    inputs: [{ id: 'in', label: 'In' }],
+    outputs: [
+      { id: 'out', label: 'Out' },
+      // Fires on every new note, so something can be struck on each one.
+      { id: 'trig', label: 'Trig' },
+    ],
+    params: [
+      {
+        id: 'root', label: 'Root', min: 0, max: 11, default: 0, unit: '', curve: 'lin',
+        steps: ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'],
+      },
+      // In the order the DSP's list is in: chromatic, then the song's scales.
+      {
+        id: 'scale', label: 'Scale', min: 0, max: 8, default: 1, unit: '', curve: 'lin',
+        steps: ['chrom', 'major', 'minor', 'harm', 'dorian', 'mixo', 'pent', 'pent m', 'blues'],
+      },
+    ],
+  },
+
   cv: {
     type: 'cv',
     name: 'CV Utility',
@@ -334,6 +501,7 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     name: 'Ladder Filter',
     group: 'voice',
     slug: 'lpf',
+    bypass: true,
     width: 'half',
     inputs: [
       { id: 'in', label: 'In' },
@@ -352,13 +520,63 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     ],
   },
 
+  formant: {
+    type: 'formant',
+    name: 'Formant',
+    group: 'voice',
+    slug: 'fmt',
+    bypass: true,
+    width: 'half',
+    inputs: [
+      { id: 'in', label: 'In' },
+      { id: 'vowel', label: 'Vowel' },
+      { id: 'size', label: 'Size' },
+    ],
+    outputs: [{ id: 'out', label: 'Out' }],
+    params: [
+      // Continuous, not a switch: in between is where a mouth moving is heard.
+      { id: 'vowel', label: 'Vowel', min: 0, max: 4, default: 2, unit: 'vowel', curve: 'lin' },
+      // Bigger is lower formants, whatever pitch the source is at.
+      { id: 'size', label: 'Size', min: 0.4, max: 2.5, default: 1, unit: 'x', curve: 'exp' },
+      { id: 'res', label: 'Res', min: 0, max: 1, default: 0.5, unit: '', curve: 'lin' },
+      // Vowels per unit of CV, so a full-scale LFO at 2.00 sweeps oo to ee.
+      { id: 'vowelAmount', label: 'Vowel Amt', min: -4, max: 4, default: 2, unit: '', curve: 'lin' },
+      { id: 'sizeAmount', label: 'Size Amt', min: -2, max: 2, default: 0, unit: 'oct', curve: 'lin' },
+    ],
+  },
+
+  eq: {
+    type: 'eq',
+    name: 'EQ',
+    group: 'effects',
+    slug: 'eq',
+    bypass: true,
+    inputs: [{ id: 'in', label: 'In' }],
+    outputs: [{ id: 'out', label: 'Out' }],
+    params: [
+      // Cut goes further than boost, as on every console: taking a problem
+      // out is most of what an EQ is for, and a boost past twelve decibels is
+      // a different sound rather than a correction.
+      { id: 'lowGain', label: 'Low', min: -24, max: 12, default: 0, unit: 'dB', curve: 'lin' },
+      { id: 'lowFreq', label: 'Low Freq', min: 40, max: 800, default: 200, unit: 'Hz', curve: 'exp' },
+      { id: 'midGain', label: 'Mid', min: -24, max: 12, default: 0, unit: 'dB', curve: 'lin' },
+      { id: 'midFreq', label: 'Mid Freq', min: 200, max: 8000, default: 1000, unit: 'Hz', curve: 'exp' },
+      { id: 'highGain', label: 'High', min: -24, max: 12, default: 0, unit: 'dB', curve: 'lin' },
+      { id: 'highFreq', label: 'High Freq', min: 1500, max: 16000, default: 5000, unit: 'Hz', curve: 'exp' },
+    ],
+  },
+
   drive: {
     type: 'drive',
     name: 'Drive',
     group: 'effects',
     slug: 'drv',
+    bypass: true,
     width: 'half',
-    inputs: [{ id: 'in', label: 'In' }],
+    inputs: [
+      { id: 'in', label: 'In' },
+      { id: 'cv', label: 'Drive' },
+    ],
     outputs: [{ id: 'out', label: 'Out' }],
     params: [
       { id: 'drive', label: 'Drive', min: 1, max: 64, default: 2, unit: 'x', curve: 'exp' },
@@ -370,6 +588,10 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
       // clip harder than the other and puts even harmonics in the result.
       { id: 'bias', label: 'Bias', min: -1, max: 1, default: 0, unit: '', curve: 'lin' },
       { id: 'level', label: 'Level', min: 0, max: 1, default: 1, unit: '', curve: 'lin' },
+      // Exponential, like every other CV in the rack: a fixed amount moves
+      // it by the same number of doublings wherever the knob is set. Last in
+      // the list because the DSP reads parameters by position.
+      { id: 'cvAmount', label: 'Drive Amt', min: -4, max: 4, default: 0, unit: 'oct', curve: 'lin' },
     ],
   },
 
@@ -378,14 +600,22 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     name: 'Wavefolder',
     group: 'effects',
     slug: 'fold',
+    bypass: true,
     width: 'half',
-    inputs: [{ id: 'in', label: 'In' }],
+    inputs: [
+      { id: 'in', label: 'In' },
+      { id: 'cv', label: 'Fold' },
+    ],
     outputs: [{ id: 'out', label: 'Out' }],
     params: [
       // No CV jack: folding depends on how hard the wave is driven into the
       // rails, so a VCA in front of this module already is a Fold modulator.
       { id: 'fold', label: 'Fold', min: 1, max: 16, default: 2, unit: 'x', curve: 'exp' },
       { id: 'symmetry', label: 'Sym', min: -1, max: 1, default: 0, unit: '', curve: 'lin' },
+      // Exponential, like every other CV in the rack: a fixed amount moves
+      // it by the same number of doublings wherever the knob is set. Last in
+      // the list because the DSP reads parameters by position.
+      { id: 'cvAmount', label: 'Fold Amt', min: -4, max: 4, default: 0, unit: 'oct', curve: 'lin' },
     ],
   },
 
@@ -394,6 +624,7 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     name: 'Ring Mod',
     group: 'effects',
     slug: 'ring',
+    bypass: true,
     width: 'half',
     inputs: [
       { id: 'in', label: 'In' },
@@ -416,13 +647,21 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     name: 'Bitcrusher',
     group: 'effects',
     slug: 'bits',
+    bypass: true,
     width: 'half',
-    inputs: [{ id: 'in', label: 'In' }],
+    inputs: [
+      { id: 'in', label: 'In' },
+      { id: 'cv', label: 'Rate' },
+    ],
     outputs: [{ id: 'out', label: 'Out' }],
     params: [
       { id: 'bits', label: 'Bits', min: 1, max: 16, default: 8, unit: '#', curve: 'lin' },
       { id: 'rate', label: 'Rate', min: 100, max: 24000, default: 8000, unit: 'Hz', curve: 'exp' },
       { id: 'mix', label: 'Mix', min: 0, max: 1, default: 1, unit: '', curve: 'lin' },
+      // Exponential, like every other CV in the rack: a fixed amount moves
+      // it by the same number of doublings wherever the knob is set. Last in
+      // the list because the DSP reads parameters by position.
+      { id: 'cvAmount', label: 'Rate Amt', min: -5, max: 5, default: 0, unit: 'oct', curve: 'lin' },
     ],
   },
 
@@ -431,6 +670,8 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     name: 'Compressor',
     group: 'effects',
     slug: 'comp',
+    bypass: true,
+    shared: true,
     width: 'half',
     inputs: [
       { id: 'in', label: 'In' },
@@ -463,6 +704,8 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     name: 'Granular',
     group: 'effects',
     slug: 'gran',
+    bypass: true,
+    shared: true,
     // Seven knobs, so it takes a whole row. It is also the module you spend
     // the longest adjusting, and two rows of knobs in half a panel is a worse
     // place to do that than one row in a whole one.
@@ -499,6 +742,8 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     name: 'Delay',
     group: 'effects',
     slug: 'dly',
+    bypass: true,
+    shared: true,
     width: 'half',
     inputs: [
       { id: 'in', label: 'In' },
@@ -526,6 +771,8 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     name: 'Space',
     group: 'effects',
     slug: 'spc',
+    bypass: true,
+    shared: true,
     width: 'half',
     inputs: [{ id: 'in', label: 'In' }],
     // Stereo, because the tail is what gives a rack its width and the two
@@ -547,6 +794,7 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     name: 'Resonator',
     group: 'effects',
     slug: 'res',
+    bypass: true,
     width: 'half',
     inputs: [
       { id: 'in', label: 'In' },
@@ -586,6 +834,7 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     name: 'Mixer',
     group: 'output',
     slug: 'mix',
+    shared: true,
     // The console is the end of the chain: a mixer nobody has patched onward
     // goes straight to the speakers, which is what makes an oscillator and a
     // mixer a working rack.
@@ -632,9 +881,16 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     name: 'Scope',
     group: 'output',
     slug: 'scope',
+    shared: true,
     // No outputs: a scope taps a signal rather than sitting in the chain, so
     // patching one in cannot change what the rack sounds like.
-    inputs: [{ id: 'in', label: 'In' }],
+    // Two traces: comparing a carrier against its modulator, or a filter's
+    // input against its output, is most of what a scope is for. A is the one
+    // the spectrum reads, and the one that was here before.
+    inputs: [
+      { id: 'in', label: 'A' },
+      { id: 'in2', label: 'B' },
+    ],
     outputs: [],
     // Read by the display rather than by the DSP, but declared here like any
     // other parameter so the UI builds them the usual way and a saved patch
@@ -651,6 +907,7 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     name: 'Recorder',
     group: 'output',
     slug: 'rec',
+    shared: true,
     // A tape machine, not a fader: it takes the level it is given. The rack's
     // own volume lives on the mixer, where the signal is actually balanced.
     tap: ['l', 'r'],
@@ -689,4 +946,27 @@ export function defOf(type: string) {
   const def = MODULE_DEFS[type]
   if (!def) throw new Error(`unknown module type: ${type}`)
   return def
+}
+
+/** What travels down a cable from an output: sound, a control voltage, or on/off. */
+export type Signal = 'audio' | 'cv' | 'gate'
+
+/** Outputs that only ever carry on and off, whatever module they are on. */
+const GATE_OUTPUTS = new Set(['gate', 'trig', 'end', 'clk', 'x1', 'd2', 'd3', 'd4', 'd8'])
+/** Outputs of a sound-making module that carry control rather than sound. */
+const CONTROL_OUTPUTS = new Set(['env', 'pitch', 'vel', 'ramp', 'gr', 'cv'])
+
+/**
+ * Worked out from the catalogue rather than declared on every port: the
+ * gate-shaped names mean the same on every module that has them, and the
+ * rest is audio on a module that makes or treats sound and control on one
+ * that modulates. Used for colouring cables, where a guess that is right
+ * nine times in ten is a guide rather than a claim.
+ */
+export function signalOf(type: string, port: string): Signal {
+  const def = MODULE_DEFS[type]
+  if (!def) return 'cv'
+  if (GATE_OUTPUTS.has(port) || /^clk\d$/.test(port)) return 'gate'
+  if (CONTROL_OUTPUTS.has(port)) return 'cv'
+  return def.group === 'voice' || def.group === 'effects' || def.group === 'output' ? 'audio' : 'cv'
 }

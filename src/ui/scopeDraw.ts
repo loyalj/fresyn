@@ -7,6 +7,8 @@ export interface ScopeView {
   gain: number
   sampleRate: number
   accent: string
+  /** The second trace, which is deliberately not the accent colour. */
+  accentB: string
   grid: string
   dim: string
 }
@@ -23,6 +25,7 @@ let im = new Float32Array(0)
 export function drawScope(
   canvas: HTMLCanvasElement,
   data: Float32Array | null,
+  dataB: Float32Array | null,
   view: ScopeView,
 ) {
   const dpr = window.devicePixelRatio || 1
@@ -41,11 +44,23 @@ export function drawScope(
 
   if (view.mode === 'spectrum') {
     drawGrid(ctx, w, h, view, true)
+    // A alone. Two log spectra on one screen is a wall rather than a
+    // comparison, and the answer to "what is B made of" is to turn the knob.
     if (data) drawSpectrum(ctx, w, h, data, view)
   } else {
     drawGrid(ctx, w, h, view, false)
-    if (data) drawWave(ctx, w, h, data, view)
-    else flatLine(ctx, w, h, view)
+    // Both traces are drawn from A's trigger point, never from their own.
+    // Triggering each on itself would put them at unrelated phases, and two
+    // traces you cannot line up are worse than one -- the whole use of a
+    // second channel is reading one against the other.
+    const lead = data ?? dataB
+    if (!lead) {
+      flatLine(ctx, w, h, view)
+      return
+    }
+    const start = triggerAt(lead, Math.min(view.samples, lead.length))
+    if (dataB) drawWave(ctx, w, h, dataB, view, start, view.accentB)
+    if (data) drawWave(ctx, w, h, data, view, start, view.accent)
   }
 }
 
@@ -110,13 +125,14 @@ function drawWave(
   h: number,
   data: Float32Array,
   view: ScopeView,
+  start: number,
+  colour: string,
 ) {
   const samples = Math.min(view.samples, data.length)
-  const start = triggerAt(data, samples)
   const mid = h / 2
   const scale = (h / 2) * 0.92 * view.gain
 
-  ctx.strokeStyle = view.accent
+  ctx.strokeStyle = colour
   ctx.lineJoin = 'round'
   ctx.beginPath()
 

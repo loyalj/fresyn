@@ -70,12 +70,11 @@ console.log('\ntriggers live on the panels')
       .filter((u) => u.querySelector('.trigger'))
       .map((u) => u.querySelector('.unit-id')?.textContent),
   )
-  // Two in the stock rack: the Trigger, which is the one the keyboard plays,
-  // and the oscillator's own, which is what makes it a plucked note rather
-  // than a drone.
-  check('the Trigger has one', withTrigger.includes('gate1'), withTrigger.join(','))
+  // One in the stock rack: the oscillator's own, which is what makes it a
+  // plucked note rather than a drone. It has no Trigger module; its Keyboard
+  // is played by its own keys.
   check('the oscillator has one', withTrigger.includes('osc1'), withTrigger.join(','))
-  check('nothing else in the stock rack does', withTrigger.length === 2, withTrigger.join(','))
+  check('nothing else in the stock rack does', withTrigger.length === 1, withTrigger.join(','))
 }
 
 // --- the recorder is a rack module -------------------------------------
@@ -233,7 +232,12 @@ const menuModules = async () => {
 // --- render a batch ----------------------------------------------------
 console.log('\nrendering a batch')
 {
-  await page.click('.patch-name', { clickCount: 3 })
+  // The name lives on the selected track in the dock now.
+  if (!(await page.$('.track.on .track-name'))) {
+    await page.click('.dock-fold')
+    await settle(200)
+  }
+  await page.click('.track.on .track-name', { clickCount: 3 })
   await page.keyboard.type('Impact')
 
   // The settings are the panel now; there is nothing to open first.

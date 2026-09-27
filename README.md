@@ -4,12 +4,129 @@ A browser-based modular synth lab for designing procedural game SFX, in the
 shape of a hardware rack.
 
 **New here? Read [MANUAL.md](MANUAL.md)** -- what every module does, and
-fifteen tutorials that build a laser, a footstep, computer chatter, wind, an
+seventeen tutorials that build a laser, a footstep, computer chatter, wind, an
 explosion, a siren, a water drop, an engine, a power-up, a sync zap, a
-ricochet, a machine gun, an alien transmission, an arpeggio and a sci-fi
-door.
+ricochet, a machine gun, an alien transmission, an arpeggio, a sci-fi door, a
+bell and a coin.
 
 ## Status
+
+Milestone 15: it comes out as audio. **Bounce song** renders the arrangement
+to a 24-bit stereo WAV faster than realtime, and **Bounce stems** writes one
+file per track instead -- which add back up to the mix exactly, because mute
+and solo apply and a silenced track gets no file rather than a file of
+silence. The bounce runs the same scheduler the transport does, so a note is
+on the sample it was on while you were listening.
+
+The one rule worth knowing: **a bounce is never shorter than the arrangement.**
+A bar with notes only in its first half is still a bar, and a file trimmed
+back to its last audible sample would no longer tile -- which for a loop is
+the whole job. What is trimmed is whatever hangs past the end, faded so the
+cut cannot click; a file that ends exactly on the arrangement gets no fade,
+because that point is the seam.
+
+Underneath both is `SongPlayer`, which plays a project with no AudioContext,
+no worklet and no DOM anywhere -- the class a game would run, and the class
+the bounce runs. Any block size gives the same samples, so the music in a game
+is the music you wrote rather than a second implementation of it, and a
+project file is a few kilobytes where the WAV is a few megabytes. Freeze is
+not here: it was only ever a way round a CPU wall nobody has hit, and it needs
+a song-position clock in the engine that the looping transport makes more
+awkward than it looks.
+
+Milestone 14: tracks, patterns and a playlist. A project now holds as many
+racks as it needs, one per track, and the track you pick in the list is the
+rack on the bench -- so a piece is built by designing a sound, writing a part
+for it, and adding another track to do it again. Patterns hold the parts for
+every track at once and are placed on a playlist bar by bar; the roll plays
+the pattern you are writing and the playlist plays the arrangement, so there
+is no mode to remember. Mute and solo work as they do on a desk, and the other
+tracks' notes sit faintly behind yours in the roll so a bass line can be
+written against a drum part rather than from memory.
+
+Underneath, the audio thread runs one graph per track and sums them: racks
+stay completely independent, a muted one keeps its clock and its delay tails
+so unmuting is in phase, and only the rack on the bench spends anything on
+scopes and meters. Saving is a project now -- the arrangement, every rack and
+all of their audio in one file, which is also the file a game would load.
+A rack on its own is still a patch, still a small readable file, and still
+what you send somebody when you mean "here is a sound".
+
+Milestone 13: the roll. A piano roll docks under the rack and plays whatever
+is on the bench, so the panel you are editing stays in front of you while the
+loop runs -- reach for the cutoff and you hear it on the next note instead of
+after a trip through a second window. Draw notes with a drag, set how hard
+they hit in the velocity lane, and pick the tempo, the length and the snap
+from the bar along the bottom. A rack with a Keyboard in it plays pitches; a
+rack without one plays its Trigger, which is the right way to write a rhythm
+for a coin or a footstep. The Keyboard grew a **Vel** jack to carry the other
+half of that, and its Octave switch now transposes a written pattern as well
+as a played one.
+
+Underneath it, the rack learned to be played by something other than a pair
+of hands. Events are queued against exact samples rather than posted at the
+next block boundary, so a note lands where it was written whatever the
+browser is doing, and the offline renderer runs the same queue -- which is
+what will make a bounced song sound like the one you approved. The arrangement
+saves alongside the racks in a project file.
+
+Milestone 12: the jacks that were missing. The LFO's Rate can be patched, so
+a wobble can speed up or slow down -- an engine revving, a siren winding up --
+which is the thing its panel could not do. Drive, the Wavefolder and the
+Bitcrusher each take CV now: they were the only signal-path modules in the
+rack with nothing but an In, and the manual had been telling readers to put a
+VCA in front of the folder as a way around it. The Trigger takes a cable, so a
+clock through it in `once` mode is a fixed length at the clock's rate. The
+Envelope says when it has finished and offers its shape upside down, which is
+a whole CV Utility saved every time something has to duck rather than swell.
+And the Scope has a second input, drawn from the first one's trigger point so
+the two line up.
+
+Milestone 11: a pitch is a note. The oscillator says which note it is
+sounding under its waveform window -- Octave included, since that is the note
+you hear rather than the one the knob is set to -- and its Pitch knob snaps to
+whole notes while Alt is held, steps a semitone a notch on Alt and the wheel,
+and takes a note typed into its readout. Twelve
+octaves on one knob cannot be tuned by eye: a fifth is seven semitones, which
+is 55 Hz at the bottom of that knob and 3.6 kHz at the top.
+
+The LFO gets the oscillator's waveform window too, sitting on top of its Shape
+buttons and scaled by its Depth -- which matters more there than on a voice
+you can hear, since the picture is the only account an LFO gives of itself. It
+cost no room at all: a switch is shorter than a knob, so the space above one
+was already empty.
+
+Milestone 10: the oscillator stops needing help to do ordinary work. Its own
+envelope now has three destinations rather than one -- level, pitch and width
+-- so a laser is one module with nothing patched into it, and a PWM sweep
+needs no LFO. It has a Level knob and a meter of its own, so stacking two of
+them into a mixer is not a fight with the master fader. And its Pitch knob
+runs from 2 Hz to 12 kHz with an Octave switch beside it, which is a rumble at
+one end, a sparkle at the other, and a coarse-and-fine pair for tuning one
+oscillator against another.
+
+It also shows its work: beside the envelope graph there is now a window
+holding two cycles of the wave, drawn by running the oscillator itself, so
+Width is something you can see rather than a number to interpret. And it stops
+working when nothing can be heard -- at a gain of exactly zero, which is a
+one-shot voice between notes or a Level knob shut, it makes no samples at all.
+Eight idle voices cost 508 ms of work per ten seconds of audio before that and
+316 ms after.
+
+Milestone 9: the oscillator learns the other kind of FM. Its FM jack has a
+mode switch -- exponential, which moves the pitch in octaves and is what a
+keyboard or a falling envelope wants, and linear, which moves it in multiples
+of the Pitch knob and is what an audio-rate modulator wants. Linear FM leaves
+the average pitch exactly where it was tuned, so a second oscillator patched
+into it adds a fixed set of partials instead of a wobble: bells, chimes,
+clangs and the two-note coin every platform game has, neither of which this
+rack could make before. The frequency is free to pass through zero and run
+backwards, because stopping at zero folds the pitch back up again at exactly
+the index where the interesting part starts.
+
+Hard sync got the same attention underneath. The restart is now timed between
+samples and the step it leaves is corrected like any other discontinuity in
+the core, which is 13 dB less aliasing on every waveform and 30 dB on a sine.
 
 Milestone 8: utilities, and a way to see what you are doing. The CV utility
 gives the rack something it never had -- an attenuverter, so a modulation
@@ -315,8 +432,8 @@ recorder in it; add one when you want files.
 
 That cost the tutorials the rack they were written against, so the manual now
 opens its tutorial chapter by building one, and `check:manual` builds the same
-one the same way. Fifteen tutorials sharing one setup is cheaper than fifteen
-tutorials repeating it.
+one the same way. A shelf of tutorials sharing one setup is cheaper than
+each of them repeating it.
 
 **The keyboard's pitch is in octaves, not hertz.** Every CV destination in
 this rack is already scaled that way -- an oscillator's FM input and a
@@ -506,16 +623,27 @@ src/
     edit.ts            # add, remove, reorder, connect, disconnect
     serialize.ts       # the save format, and a defensive loader
     history.ts         # undo/redo, with coalescing
-    storage.ts         # autosave, and patch files
+    storage.ts         # autosave, and project and patch files
     defaultPatch.ts
+  song/                # the arrangement; as free of the browser as patch/
+    types.ts           # tracks, patterns, notes, placements; 960 ticks a beat
+    schedule.ts        # a window of the song, as ticks and then as samples
+    transport.ts       # the lookahead cursor, and where the playhead is
+    edit.ts            # add, remove, place; the invariants nothing else keeps
+    bind.ts            # what in a rack a track's notes are played on
+    runtime.ts         # SongPlayer: a project, played with no browser at all
+    serialize.ts project.ts   # a defensive reader, and the project file
   dsp/                 # audio thread; no DOM, no allocation in process()
     worklet.ts         # AudioWorkletProcessor entry, registers 'fresyn-voice'
+    SongEngine.ts      # one graph per track, summed; the worklet is its shell
     GraphEngine.ts     # steps the compiled graph one sample at a time
     modules/           # one file per module type, plus the type registry
     PolyBlepOsc.ts LadderFilter.ts Envelope.ts DcBlocker.ts Smoothed.ts Rng.ts
   audio/
     AudioEngine.ts     # main-thread handle; React never touches AudioContext
+    Transport.ts       # plays a song, off the audio thread's own clock
     render.ts          # offline render, and variation batches
+    renderSong.ts      # bounce the arrangement, and one file per track
     wav.ts zip.ts      # 16/24-bit PCM, and a store-only zip writer
     waveform.ts        # peak envelopes for drawing a take
   input/               # browser input capture and key bindings
@@ -535,6 +663,9 @@ src/
     useRackDrag.ts           # reordering by dragging a unit
     Cables.tsx               # the cable layer, purely visual
     cableGeometry.ts         # curve maths and pointer hit-testing
+    SongDock.tsx             # the music drawer: transport, tracks, two views
+    PianoRoll.tsx rollDraw.ts  # the roll, and its canvas drawing
+    Playlist.tsx TrackList.tsx # the arrangement grid, and the track strip
 scripts/               # verification harnesses
   check-theme.mjs      # palette token coverage and contrast
 MANUAL.md              # the user manual, and the patches check:manual renders
@@ -557,5 +688,18 @@ mixer (8:2), scope, out.
    - ~~audition a take before saving it~~
    - per-parameter jitter ranges, rather than one spread for the whole rack
    - "mutate" with per-knob locks
-7. Stretch: bake a patch into a small standalone synth to ship in a game and
-   generate sounds at runtime instead of streaming WAVs.
+7. Music:
+   - ~~a piano roll, and a transport that lands notes on exact samples~~
+   - ~~tracks, patterns and a playlist; one rack per track~~
+   - ~~bounce the song, and one file per track~~
+   - polyphony: a voice pool per track, then a shared master section so a
+     reverb is not duplicated per voice
+   - freeze a track to its stem, once there is a CPU wall worth measuring
+8. ~~Stretch: bake a patch into a small standalone synth to ship in a game and
+   generate sounds at runtime instead of streaming WAVs.~~ `SongPlayer` does
+   this for a whole piece; what is left is packaging it as its own module.
+9. Vocal synthesis, as separate modules the way a throat and mouth split it:
+   - ~~Voice: a glottal pulse source with breath, jitter, growl and vibrato~~
+   - ~~Formant: a five-band vowel filter with a continuous morph and a Size~~
+   - a vocoder, for robot voices from recorded speech
+   - a Talk module that speaks typed words, built on the two above

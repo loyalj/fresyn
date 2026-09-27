@@ -1,5 +1,5 @@
 import { defOf } from './defs'
-import type { Patch } from './types'
+import type { Cable, Patch } from './types'
 
 export interface CompiledModule {
   id: string
@@ -10,6 +10,14 @@ export interface CompiledModule {
   outs: number[]
   paramBase: number
   paramCount: number
+  /** Which sample this module asks the bank for, if any. */
+  sample?: string
+  /**
+   * Runs once per sounding note rather than once for the rack. True for the
+   * Keyboard a track plays and everything downstream of it, up to the first
+   * shared module; see `shared` in types.ts.
+   */
+  poly?: boolean
 }
 
 export interface CompiledPatch {
@@ -30,7 +38,66 @@ export interface CompiledPatch {
   /** Slots an offline render reads: the recorder's input, or the speakers. */
   renderSlotL: number
   renderSlotR: number
+  /**
+   * The Keyboard notes are played on, when the patch has one: the module the
+   * engine hands each note to, and whose Voices knob says how many can sound
+   * at once. The same module a track finds with `noteTarget`.
+   */
+  voices?: {
+    root: string
+    /**
+     * What reaches its Gate jack, as a slot, or 0. Once there is more than
+     * one voice the engine listens here itself and gives each press a voice
+     * of its own; see `voiced` on the Keyboard.
+     */
+    gateSlot: number
+    /** Flat indices of its Voices and Note knobs, or -1. */
+    voicesParam: number
+    noteParam: number
+  }
   warnings: string[]
+}
+
+/** The outputs a bypassed module's input goes straight on to. */
+const THROUGH = new Set(['out', 'l', 'r'])
+
+/**
+ * The patch with every bypassed module taken out of the signal path.
+ *
+ * Whatever fed a bypassed module's first input is patched on to everything
+ * its Out went to -- both sides, for a stereo pair -- and whatever its other
+ * outputs fed (a delay's Wet, a compressor's GR) is left unpatched, since a
+ * module that is not there is doing none of that. The module itself stays in
+ * the rack, still fed and still running, with nothing listening to it: its
+ * knobs, its meter and its state are all where they were when it comes back.
+ *
+ * A chain of them works in any order. A module whose input comes from
+ * another bypassed one is handed that one's Out, and the Out is replaced in
+ * turn when that one is dealt with.
+ */
+export function withBypass(patch: Patch): Patch {
+  const bypassed = patch.modules.filter((m) => m.bypass && defOf(m.type).bypass)
+  if (bypassed.length === 0) return patch
+
+  let cables = patch.cables
+  for (const m of bypassed) {
+    const def = defOf(m.type)
+    const inPort = def.inputs[0]?.id
+    const source = cables.find((c) => c.to.module === m.id && c.to.port === inPort)
+    // Fed by itself, a bypassed module has nothing to pass on.
+    const from = source && source.from.module !== m.id ? source.from : null
+    const next: Cable[] = []
+    for (const c of cables) {
+      if (c.from.module !== m.id) {
+        next.push(c)
+        continue
+      }
+      if (!from || !THROUGH.has(c.from.port)) continue
+      next.push({ ...c, id: `${c.id}~bypass`, from: { ...from } })
+    }
+    cables = next
+  }
+  return { ...patch, cables }
 }
 
 /**
@@ -43,7 +110,12 @@ export interface CompiledPatch {
  * instead would make every cycle cost a whole 128-sample block, which is the
  * limitation of native Web Audio nodes that this engine exists to avoid.
  */
-export function compile(patch: Patch): CompiledPatch {
+export function compile(input: Patch): CompiledPatch {
+  // Bypass is wiring, so it is settled before anything else is: by the time
+  // the slots are laid out, a bypassed module simply has nothing downstream
+  // of it, and what fed it feeds what it used to. Every path that compiles a
+  // patch -- the rack, a render, a bounce, a game -- hears the same thing.
+  const patch = withBypass(input)
   const warnings: string[] = []
   const byId = new Map(patch.modules.map((m) => [m.id, m]))
 
@@ -153,6 +225,28 @@ export function compile(patch: Patch): CompiledPatch {
     }
   }
 
+  // --- voices --------------------------------------------------------
+  // Everything a note passes through before it reaches something shared.
+  // Walked along the cables from the Keyboard, feedback included: a module
+  // fed by a voice is part of that voice, and a module fed only by the rest
+  // of the rack -- a free-running LFO, a noise source -- stays single and is
+  // heard by every voice alike.
+  const root = patch.modules.find((m) => defOf(m.type).playable)
+  const poly = new Set<string>()
+  if (root) {
+    poly.add(root.id)
+    const queue = [root.id]
+    while (queue.length) {
+      const id = queue.pop()!
+      for (const c of connected) {
+        if (c.from.module !== id || poly.has(c.to.module)) continue
+        if (defOf(byId.get(c.to.module)!.type).shared) continue
+        poly.add(c.to.module)
+        queue.push(c.to.module)
+      }
+    }
+  }
+
   // --- assemble ------------------------------------------------------
 
   const modules: CompiledModule[] = order.map((id) => {
@@ -168,6 +262,9 @@ export function compile(patch: Patch): CompiledPatch {
       outs: def.outputs.map((p) => outSlotOf.get(`${m.id}.${p.id}`)!),
       paramBase: paramBaseOf.get(m.id)!,
       paramCount: def.params.length,
+      // The id only; the audio travels beside the patch, never inside it.
+      sample: m.sample?.id,
+      ...(poly.has(m.id) ? { poly: true } : {}),
     }
   })
 
@@ -182,6 +279,17 @@ export function compile(patch: Patch): CompiledPatch {
     monitorSlotR,
     renderSlotL,
     renderSlotR,
+    ...(root
+      ? {
+          voices: {
+            root: root.id,
+            // The Keyboard's only input is its Gate jack.
+            gateSlot: modules.find((m) => m.id === root.id)!.ins[0] ?? 0,
+            voicesParam: paramIndex[`${root.id}.voices`] ?? -1,
+            noteParam: paramIndex[`${root.id}.note`] ?? -1,
+          },
+        }
+      : {}),
     warnings,
   }
 }

@@ -22,6 +22,83 @@ export interface ParamSpec {
    * be eight different notes rather than eight versions of one.
    */
   played?: true
+  /**
+   * A frequency that is heard as a note.
+   *
+   * The readout names it and says how far off it is, the knob can be snapped
+   * to semitones with Alt, and the value can be typed as a note. What earns
+   * that is being tuned against something else: two oscillators a fifth apart
+   * cannot be set by eye on a knob covering twelve octaves, and "220 Hz" does
+   * not tell you that it is an octave under the one next to it whereas "A3"
+   * under an "A4" does.
+   *
+   * Not every frequency is one. A filter cutoff, an LFO rate and a grain
+   * density are all measured in hertz and none of them is a note anybody
+   * tunes.
+   */
+  tuned?: true
+}
+
+/** Concert pitch, and the one number everything below is measured from. */
+const A4_HZ = 440
+/** MIDI 69 is A4, which is what makes the octave arithmetic whole numbers. */
+const A4_MIDI = 69
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+/**
+ * C0, 16.35 Hz. Below this a frequency is a rate rather than a note: the
+ * oscillator reaches 2 Hz, which is something to count, and naming it "C#-3"
+ * would be a readout pretending to be useful.
+ */
+const LOWEST_NOTE_HZ = 16.35
+
+/** Semitones from A4, fractional. */
+export function semitonesFrom440(hz: number): number {
+  return 12 * Math.log2(hz / A4_HZ)
+}
+
+/** And back: the frequency that many semitones from A4. */
+export function hzFromSemitones(semitones: number): number {
+  return A4_HZ * Math.pow(2, semitones / 12)
+}
+
+/** The nearest note and how far off it this is, or null below C0. */
+export function noteOf(hz: number): { name: string; cents: number } | null {
+  if (!(hz >= LOWEST_NOTE_HZ)) return null
+  const semitones = semitonesFrom440(hz)
+  const nearest = Math.round(semitones)
+  const midi = nearest + A4_MIDI
+  return {
+    name: `${NOTE_NAMES[((midi % 12) + 12) % 12]}${Math.floor(midi / 12) - 1}`,
+    cents: Math.round((semitones - nearest) * 100),
+  }
+}
+
+/**
+ * The note as it reads beside a knob: "A2" when it is one, "A2 +13¢" when it
+ * is on the way to the next. The cents are what make it a tuning aid rather
+ * than a label -- without them every value between two notes reads as the
+ * note it is nearest, and a knob two semitones wide looks perfectly in tune.
+ */
+export function formatNote(hz: number): string {
+  const note = noteOf(hz)
+  if (!note) return ''
+  if (note.cents === 0) return note.name
+  return `${note.name} ${note.cents > 0 ? '+' : '-'}${Math.abs(note.cents)}¢`
+}
+
+/** The nearest note, exactly, for a knob being snapped to one. */
+export function snapToNote(spec: ParamSpec, hz: number): number {
+  return clampValue(spec, hzFromSemitones(Math.round(semitonesFrom440(hz))))
+}
+
+/** A note as it may be typed: `A2`, `f#3`, `Bb1`. Null if that is not one. */
+function hzOfName(text: string): number | null {
+  const m = /^([a-g])([#b]?)(-?\d+)$/.exec(text)
+  if (!m) return null
+  const letter = NOTE_NAMES.indexOf(m[1].toUpperCase())
+  const accidental = m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0
+  const midi = (Number(m[3]) + 1) * 12 + letter + accidental
+  return hzFromSemitones(midi - A4_MIDI)
 }
 
 /** Knob position (0..1) to parameter value. */
@@ -66,6 +143,7 @@ export function formatValue(spec: ParamSpec, value: number): string {
   // "4.00 steps" reads as though there were something in between.
   if (spec.unit === '#') return `${Math.round(value)}`
   if (spec.unit === 'x') return `${value.toFixed(2)}x`
+  if (spec.unit === 'vowel') return formatVowel(value)
   // Signed, as octaves are: a threshold is below zero and a makeup gain is
   // above it, and the sign is the first thing you want to see on either.
   if (spec.unit === 'dB') return `${value >= 0 ? '+' : ''}${value.toFixed(1)} dB`
@@ -131,14 +209,36 @@ const SUFFIX: Record<string, { unit: string; scale: number }> = {
   '#': { unit: '#', scale: 1 },
 }
 
+/**
+ * The Formant's vowels, in the order its Vowel knob passes through them. The
+ * DSP keeps its own table in the same order; this is only their names.
+ */
+export const VOWEL_LETTERS = ['u', 'o', 'a', 'e', 'i']
+
+/**
+ * A vowel position as a reader thinks of it: "a" on one, "a→e 40%" on the way
+ * to the next. A number alone would say 2.40 and leave the reader counting
+ * along a list they cannot see.
+ */
+function formatVowel(value: number): string {
+  const last = VOWEL_LETTERS.length - 1
+  const v = value < 0 ? 0 : value > last ? last : value
+  const lo = Math.floor(v + 0.005)
+  const t = v - lo
+  if (t < 0.005 || lo >= last) return VOWEL_LETTERS[Math.min(lo, last)]
+  return `${VOWEL_LETTERS[lo]}→${VOWEL_LETTERS[lo + 1]} ${Math.round(t * 100)}%`
+}
+
 /** What a parameter's unit is called when a paste has to be turned down. */
 export function unitName(spec: ParamSpec): string {
+  if (spec.tuned) return 'a frequency or a note'
   if (spec.unit === 'Hz') return 'a frequency'
   if (spec.unit === 's') return 'a time'
   if (spec.unit === 'oct') return 'an amount in octaves'
   if (spec.unit === 'x') return 'a multiplier'
   if (spec.unit === 'dB') return 'a level in decibels'
   if (spec.unit === '#') return 'a whole number'
+  if (spec.unit === 'vowel') return 'a vowel or a number'
   return 'a plain number'
 }
 
@@ -161,6 +261,16 @@ export type ParseResult =
 export function parseValue(spec: ParamSpec, text: string): ParseResult {
   const t = text.trim().toLowerCase().replace(/,/g, '')
   if (!t) return { ok: false, reason: 'nothing to read' }
+  // A note, for a knob that reads in notes. Tried before the number, because
+  // `b` is both a note and nothing else a value could end with.
+  if (spec.tuned) {
+    const hz = hzOfName(t)
+    if (hz !== null) return { ok: true, value: clampValue(spec, hz) }
+  }
+  // A vowel by its letter, for the knob that reads in them.
+  if (spec.unit === 'vowel' && VOWEL_LETTERS.includes(t)) {
+    return { ok: true, value: VOWEL_LETTERS.indexOf(t) }
+  }
   const m = /^([+-]?(?:\d+\.?\d*|\.\d+))\s*([a-z#]*)$/.exec(t)
   if (!m) return { ok: false, reason: `not ${unitName(spec)}` }
   const n = Number(m[1])

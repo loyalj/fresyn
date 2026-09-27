@@ -17,10 +17,11 @@
  * Run with: npm run check:modules
  */
 import { GraphEngine } from '../src/dsp/GraphEngine'
+import type { SampleBank } from '../src/dsp/samples'
 import { SCOPE_CAPTURE } from '../src/dsp/modules/Scope'
 import { compile } from '../src/patch/compile'
 import { MODULE_DEFS, MODULE_GROUPS, MODULE_TYPES, defOf } from '../src/patch/defs'
-import type { ParamSpec } from '../src/patch/param'
+import { formatNote, snapToNote, type ParamSpec } from '../src/patch/param'
 import type { Cable, Patch, PatchModule } from '../src/patch/types'
 
 const SR = 48000
@@ -55,10 +56,24 @@ const CEILING: Record<string, number> = {
   osc: 1.3,
   // Pink noise is normalised by ear rather than by peak, and runs hotter.
   noise: 2,
+  // The fuzz cannot drop a file on a panel, so what this bounds is the
+  // module's arithmetic rather than anybody's audio: with nothing loaded it
+  // is silent, and with a file it only ever attenuates -- Level and the fade
+  // are both at most one, and a read between two frames cannot come out
+  // larger than the louder of them.
+  sampler: 1,
+  // The glottal pulse peaks at full scale, the breath noise is crossfaded
+  // against it rather than added, Level only attenuates, and Env is 0..1.
+  voice: 1.1,
   // Two octaves of keys on top of a three-octave switch, and a 0/1 gate.
   keys: 5.1,
-  // Depth stops at 1, and the unipolar tap is half that plus a half.
-  lfo: 1.1,
+  // Depth stops at 1, and the unipolar tap is half that plus a half -- with
+  // the same allowance the oscillator gets for what the band limiting
+  // overshoots at a corner. The LFO never needed it while its Rate was a knob
+  // that stopped at 200 Hz; the Rate jack can drive it five octaves past that,
+  // where a sample is a sixth of a cycle and the corners have room to ring.
+  lfo: 1.3,
+  // Zero to one, and Inv is one minus it.
   adsr: 1,
   // The held value can only be as large as what it sampled.
   sh: 1.1,
@@ -72,8 +87,19 @@ const CEILING: Record<string, number> = {
   slew: 1.1,
   // Gain 2 and offset 1 on a full-scale input is 3 a channel, so 6 summed.
   cv: 6.1,
+  // Only ever a note of the scale nearest what came in, which from a 1.0
+  // offset is at most a semitone past it; the trigger is 0/1.
+  quant: 1.1,
   // Drive saturates before the ladder, and resonance compensation lifts it.
   ladder: 4,
+  // Linear, and three bands of up to +12 dB each: with the low shelf and the
+  // bell both boosting the same frequency, a full-scale tone there comes out
+  // 24 dB up -- sixteen times -- which is what it was asked for.
+  eq: 17,
+  // Linear, and unity at each band's centre before the makeup gain: a sine
+  // sitting exactly on the first formant comes out 4.5 times as loud, and
+  // nothing a rack feeds it can land on two bands at full level at once.
+  formant: 5,
   // Makeup gain stops at 12 dB, and with nothing over the threshold there is
   // no reduction to offset it: four times whatever went in is the worst case.
   comp: 4.2,
@@ -122,6 +148,36 @@ function cable(from: string, to: string): Cable {
   return { id: `${from}->${to}`, from: { module: fromModule, port: fromPort }, to: { module: toModule, port: toPort } }
 }
 
+/**
+ * A sample for whatever is under test, the way `Driver` is a signal for it.
+ *
+ * A module that plays audio it was given cannot be fuzzed without giving it
+ * some: with nothing loaded the Sampler is correctly silent and correctly
+ * reports every one of its knobs as dead. So the rig hands the module under
+ * test a file, exactly as it patches something into every input, and the
+ * modules that have no use for one go on ignoring it.
+ *
+ * A sweep rather than a tone, at a rate that is not the rack's: Start, Length,
+ * Speed and Direction all have to change what comes out, and 44.1 kHz against
+ * 48 exercises the ratio that keeps a file at its own pitch.
+ */
+const SAMPLE_ID = 'fuzz'
+const SAMPLE_RATE = 44100
+
+function fuzzSample(): SampleBank {
+  const frames = 4410
+  const data = new Float32Array(frames)
+  for (let i = 0; i < frames; i++) {
+    const t = i / SAMPLE_RATE
+    data[i] = Math.sin(2 * Math.PI * t * (200 + i * 0.05)) * (1 - i / frames)
+  }
+  const bank: SampleBank = new Map()
+  bank.set(SAMPLE_ID, { channels: [data], rate: SAMPLE_RATE, frames })
+  return bank
+}
+
+const SAMPLES = fuzzSample()
+
 /** The signals a module's inputs are fed while it is under test. */
 type Driver = 'unpatched' | 'dc' | 'audio'
 
@@ -143,7 +199,9 @@ const NEVER_DRIVEN = new Set(['seq.reset', 'clock.reset'])
 
 function rig(type: string, driver: Driver): Patch {
   const def = defOf(type)
-  const modules: PatchModule[] = [{ id: 'sut', type, params: {} }]
+  const modules: PatchModule[] = [
+    { id: 'sut', type, params: {}, sample: { id: SAMPLE_ID, name: 'fuzz.wav' } },
+  ]
   const cables: Cable[] = []
   const driven = def.inputs.filter((p) => !NEVER_DRIVEN.has(`${type}.${p.id}`))
 
@@ -197,7 +255,7 @@ function run(
     params[index] = value
   }
 
-  const engine = new GraphEngine(compiled, SR, params)
+  const engine = new GraphEngine(compiled, SR, params, undefined, SAMPLES)
   engine.setGate(gate)
 
   const left = new Float32Array(frames)
@@ -388,30 +446,32 @@ console.log('\nevery parameter reaches the DSP')
         // of the other knobs are in play at all.
         for (const shape of switchSettings(def.params)) {
           if (moved) break
-          for (const gate of [true, false]) {
-            const base: Record<string, number> = { ...shape }
-            for (const other of def.params) {
-              if (base[`sut.${other.id}`] === undefined) base[`sut.${other.id}`] = other.default
-            }
-            // Every position of a switch, not just its ends. Two positions
-            // of one switch can legitimately sound the same while a third
-            // does not -- the Trigger's Mode is held, once and latch, and
-            // latch is the main thread's business, so down here it is held
-            // exactly. Comparing only min against max would call that knob
-            // dead and hide the drift this check exists to find.
-            const settings = spec.steps
-              ? Array.from({ length: spec.max - spec.min + 1 }, (_, i) => spec.min + i)
-              : [spec.min, spec.max]
-
-            const first = run(patch, { ...base, [`sut.${spec.id}`]: settings[0] }, gate, frames).taps
-            for (const value of settings.slice(1)) {
-              const other = run(patch, { ...base, [`sut.${spec.id}`]: value }, gate, frames).taps
-              if (first.some((buf, i) => !same(buf, other[i]))) {
-                moved = true
-                break
-              }
-            }
+          for (const rest of companions(def)) {
             if (moved) break
+            for (const gate of [true, false]) {
+              // The switch settings win: `rest` turns one knob at a time and
+              // has no business overruling which waveform is selected.
+              const base: Record<string, number> = { ...rest, ...shape }
+              // Every position of a switch, not just its ends. Two positions
+              // of one switch can legitimately sound the same while a third
+              // does not -- the Trigger's Mode is held, once and latch, and
+              // latch is the main thread's business, so down here it is held
+              // exactly. Comparing only min against max would call that knob
+              // dead and hide the drift this check exists to find.
+              const settings = spec.steps
+                ? Array.from({ length: spec.max - spec.min + 1 }, (_, i) => spec.min + i)
+                : [spec.min, spec.max]
+
+              const first = run(patch, { ...base, [`sut.${spec.id}`]: settings[0] }, gate, frames).taps
+              for (const value of settings.slice(1)) {
+                const other = run(patch, { ...base, [`sut.${spec.id}`]: value }, gate, frames).taps
+                if (first.some((buf, i) => !same(buf, other[i]))) {
+                  moved = true
+                  break
+                }
+              }
+              if (moved) break
+            }
           }
         }
       }
@@ -440,6 +500,33 @@ console.log('\nevery parameter reaches the DSP')
 const COMBO_LIMIT = 48
 
 /** Each combination of the module's switch positions, capped to stay quick. */
+/**
+ * What the rest of the panel is doing while one knob is being tried.
+ *
+ * Defaults first, since that is the rack a reader has in front of them. But a
+ * knob can be gated by another knob rather than by a switch -- FM Mode does
+ * nothing whatsoever while FM Amt sits at zero, which is where it starts --
+ * so the rest of the list turns one other knob to each of its ends and leaves
+ * everything else alone.
+ *
+ * One at a time, rather than the whole panel at once. All at once is its own
+ * trap, and this check walked straight into it: with every oscillator knob at
+ * maximum both FM modes ask for a frequency past Nyquist and get the same
+ * clamped one, and with every knob at minimum the Level knob is shut and the
+ * module is silent. Either way FM Mode reads as dead when it is not.
+ */
+function companions(def: { params: ParamSpec[] }): Record<string, number>[] {
+  const base: Record<string, number> = {}
+  for (const spec of def.params) base[`sut.${spec.id}`] = spec.default
+
+  const all = [base]
+  for (const spec of def.params) {
+    all.push({ ...base, [`sut.${spec.id}`]: spec.max })
+    all.push({ ...base, [`sut.${spec.id}`]: spec.min })
+  }
+  return all
+}
+
 function switchSettings(params: ParamSpec[]): Record<string, number>[] {
   const switches = params.filter((p) => p.steps)
   if (switches.length === 0) return [{}]
@@ -527,6 +614,8 @@ const GAIN_KNOBS: GainKnob[] = [
     loud: 0,
     silent: 1,
   },
+  // A drone, so the voice is sounding with nothing patched or held.
+  { type: 'voice', knob: 'level', driver: 'unpatched', gate: false, others: { mode: 0 }, loud: 1, silent: 0 },
 ]
 
 console.log('\nturning a gain knob glides instead of jumping')
@@ -657,6 +746,57 @@ console.log('\ncatalogue')
   }
 
   check('every definition is well formed', problems.length === 0, problems.join(' | '))
+
+  // A knob that names its note has to be a frequency, and an exponential one:
+  // the note readout reads hertz, and Alt-dragging onto a semitone is a knob
+  // whose travel is already in octaves. Marking a linear or a non-frequency
+  // parameter would be a readout quietly talking nonsense.
+  const mistuned = Object.entries(MODULE_DEFS).flatMap(([key, def]) =>
+    def.params
+      .filter((p) => p.tuned && (p.unit !== 'Hz' || p.curve !== 'exp' || p.steps))
+      .map((p) => `${key}.${p.id}`),
+  )
+  check('every tuned parameter is an exponential frequency', mistuned.length === 0, mistuned.join(', '))
+
+  // The note arithmetic itself, against numbers anyone can check: A4 is the
+  // tuning fork, A2 is the oscillator's own default, and C0 is where naming
+  // notes stops being useful and starts being "C#-3".
+  const named = (hz: number) => formatNote(hz)
+  const notes: [number, string][] = [
+    [440, 'A4'],
+    [110, 'A2'],
+    [220, 'A3'],
+    [261.6256, 'C4'],
+    [16.35, 'C0'],
+    [12000, 'F#9 +23¢'],
+    // Off a note, which is the case the cents exist for: near enough to read
+    // as an A and not one.
+    [440 * Math.pow(2, 0.4 / 12), 'A4 +40¢'],
+    [440 * Math.pow(2, -0.13 / 12), 'A4 -13¢'],
+    // Exactly half way is a coin toss, and it is called for the note above:
+    // worth pinning down so that it stays one answer rather than two.
+    [440 * Math.pow(2, 0.5 / 12), 'A#4 -50¢'],
+    // Below C0 there is no note to give, and a readout saying so is better
+    // than one inventing an octave nobody counts in.
+    [8, ''],
+    [2, ''],
+  ]
+  const wrong = notes.filter(([hz, want]) => named(hz) !== want).map(([hz, want]) => `${hz} read as "${named(hz)}", not "${want}"`)
+  check('a frequency names its note', wrong.length === 0, wrong.join('; '))
+
+  // And back again, so the knob can be snapped to one.
+  const osc = defOf('osc').params.find((p) => p.id === 'pitch')!
+  check(
+    'and snapping lands exactly on it',
+    snapToNote(osc, 452) === 440 && Math.abs(snapToNote(osc, 218) - 220) < 1e-9,
+    `452 -> ${snapToNote(osc, 452)}, 218 -> ${snapToNote(osc, 218)}`,
+  )
+  // The ends of the knob are not notes, and a snap may not leave the range.
+  check(
+    'without leaving the knob',
+    snapToNote(osc, osc.min) >= osc.min && snapToNote(osc, osc.max) <= osc.max,
+    `${snapToNote(osc, osc.min)} .. ${snapToNote(osc, osc.max)}`,
+  )
   check(
     'every module is in exactly one group',
     MODULE_GROUPS.reduce((n, g) => n + Object.values(MODULE_DEFS).filter((d) => d.group === g.id).length, 0) ===

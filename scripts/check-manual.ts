@@ -14,7 +14,8 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { renderPatch } from '../src/audio/render'
 import { disconnectAt } from '../src/patch/edit'
-import { defOf } from '../src/patch/defs'
+import { defOf, MODULE_DEFS } from '../src/patch/defs'
+import { helpFor, parseKnobHelp } from '../src/patch/knobHelp'
 import { add, LIBRARY, templateById, wire } from '../src/patch/library'
 import { formatValue } from '../src/patch/param'
 import type { Patch } from '../src/patch/types'
@@ -189,6 +190,19 @@ function blips(buf: Float32Array, seconds: number, window = 0.01, floor = 0.3) {
 }
 
 
+/** How much of one exact frequency is present, for spotting an FM partial. */
+function toneAt(buf: Float32Array, hz: number, from: number, to: number) {
+  let re = 0
+  let im = 0
+  const end = Math.min(to, buf.length)
+  for (let i = from; i < end; i++) {
+    const t = (2 * Math.PI * hz * i) / SR
+    re += buf[i] * Math.cos(t)
+    im += buf[i] * Math.sin(t)
+  }
+  return Math.sqrt(re * re + im * im) / Math.max(1, end - from)
+}
+
 /**
  * The strongest repeating period in a window, as a frequency.
  *
@@ -257,6 +271,22 @@ console.log('\n0. an oscillator and a mixer')
   check('two modules and a cable make a sound', whole.peak > 0.05, `peak=${whole.peak.toFixed(3)}`)
   check('it is clean', whole.nan === 0 && whole.peak <= 1.0001, `peak=${whole.peak.toFixed(3)}`)
   check('and it renders without a recorder', out.seconds > 0, `${out.seconds.toFixed(2)}s`)
+}
+
+// --- the tutorial rack ------------------------------------------------
+console.log('\nthe tutorial rack')
+{
+  // On the shelf so a reader can start the tutorials without building the
+  // bench by hand, and kept whole: its idle units are what they patch.
+  const { patch, values: preset } = fromLibrary('bench')
+  const ids = patch.modules.map((m) => m.id).sort().join(',')
+  const expected = ['env1', 'gate1', 'lfo1', 'lpf1', 'mix1', 'noise1', 'osc1', 'osc2', 'vca1'].join(',')
+  check('it holds every unit the tutorials name', ids === expected, ids)
+
+  const out = render(patch, knobs(patch, preset), 0.05, 1)
+  const whole = stats(out.left)
+  check('and it sounds when Space is pressed', whole.peak > 0.05, `peak=${whole.peak.toFixed(3)}`)
+  check('cleanly', whole.nan === 0 && whole.peak <= 1.0001, `peak=${whole.peak.toFixed(3)}`)
 }
 
 // --- 1. laser --------------------------------------------------------
@@ -677,29 +707,113 @@ tutorial('15', 'sci-fi door')
   )
 }
 
+// --- 16. bell ----------------------------------------------------------
+tutorial('16', 'bell')
+{
+  const { patch, values: preset } = fromLibrary('bell')
+  const values = knobs(patch, preset)
+
+  const out = oneShot('bell', patch, values, 0.05, 12)
+
+  // Struck, then ringing. The index envelope is far shorter than the note, so
+  // the partials belong to the strike and the ring is left with the note on
+  // its own -- which is what a bell does and what a fixed FM index cannot.
+  const partials = (from: number, to: number) =>
+    (toneAt(out.left, 440 + 1214, from, to) + toneAt(out.left, 1214 - 440, from, to)) /
+    Math.max(1e-9, toneAt(out.left, 440, from, to))
+  const struck = partials(0, at(0.15))
+  const ringing = partials(at(1.5), at(2))
+  check(
+    'bell: the strike is bright and the ring is not',
+    struck > ringing * 20,
+    `${struck.toFixed(3)} -> ${ringing.toFixed(3)}`,
+  )
+
+  // Metal rather than organ. 2.76 is no musical interval, so what the
+  // modulator adds lands nowhere near a harmonic of the note.
+  const sideband = toneAt(out.left, 440 + 1214, 0, at(0.15))
+  const harmonic = toneAt(out.left, 880, 0, at(0.15))
+  check(
+    'bell: its partials are not harmonics of the note',
+    sideband > harmonic * 10,
+    `${sideband.toFixed(4)} at 1654 Hz vs ${harmonic.toFixed(4)} at 880`,
+  )
+
+  // The mode switch is the whole tutorial. Exponential FM this deep at audio
+  // rate does not leave a note behind at all -- the pitch it averages out to
+  // is nowhere near the Pitch knob, and there is nothing left to ring.
+  const wobble = render(patch, { ...values, 'osc1.fmMode': 0 }, 0.05, 12)
+  check(
+    'bell: linear FM is what keeps the note where it was tuned',
+    toneAt(out.left, 440, 0, at(0.15)) > toneAt(wobble.left, 440, 0, at(0.15)) * 10,
+    `${toneAt(out.left, 440, 0, at(0.15)).toFixed(4)} vs ${toneAt(wobble.left, 440, 0, at(0.15)).toFixed(4)}`,
+  )
+}
+
+// --- 17. coin ----------------------------------------------------------
+tutorial('17', 'coin')
+{
+  const { patch, values: preset } = fromLibrary('coin')
+  const values = knobs(patch, preset)
+
+  const out = oneShot('coin', patch, values, 0.05, 4)
+
+  const first = brightness(out.left, at(0.01), at(0.06))
+  const second = brightness(out.left, at(0.12), at(0.3))
+  check('coin: the second note is the higher one', second > first * 1.2, `${first.toFixed(0)} -> ${second.toFixed(0)} Hz`)
+
+  // Two notes rather than one that changes pitch: the level has to come back
+  // up after the first has faded.
+  const faded = stats(out.left, at(0.06), at(0.08)).peak
+  const arrives = stats(out.left, at(0.09), at(0.12)).peak
+  check('coin: the second note arrives after the first has gone', arrives > faded * 2, `${faded.toFixed(2)} -> ${arrives.toFixed(2)}`)
+
+  // Take the Delay away and the two land together, which is one chord rather
+  // than two notes.
+  const together = render(patch, { ...values, 'osc3.delay': 0.0002 }, 0.05, 4)
+  check(
+    'coin: the envelope Delay is what splits them',
+    stats(together.left, at(0.09), at(0.12)).peak <= stats(together.left, at(0.06), at(0.08)).peak,
+    `${stats(together.left, at(0.06), at(0.08)).peak.toFixed(2)} -> ${stats(together.left, at(0.09), at(0.12)).peak.toFixed(2)}`,
+  )
+
+  // And the fixed-length gate is what guarantees the delayed note gets to
+  // start at all. Held instead, a 50 ms tap releases it before it opens and
+  // the coin is a single blip.
+  const tapped = render(patch, { ...values, 'gate1.mode': 0 }, 0.05, 4)
+  check(
+    'coin: the Trigger holds the gate open long enough to reach it',
+    stats(tapped.left, at(0.12), at(0.3)).peak < stats(out.left, at(0.12), at(0.3)).peak * 0.25,
+    `${tapped.seconds.toFixed(2)}s against ${out.seconds.toFixed(2)}s`,
+  )
+}
+
 // --- the shelf is covered ----------------------------------------------
 /**
  * Nothing may sit in the library that this file has not built, rendered and
  * listened to.
  *
- * The library is offered to the user as fifteen racks that work. A template
+ * The library is offered to the user as a shelf of racks that work. A template
  * added to it without a tutorial here would ship on nobody's word at all,
  * which is the single thing moving these patches into the app could have
  * cost us.
  */
 console.log('\nthe library')
 {
-  const untested = LIBRARY.filter((t) => !built.has(t.id)).map((t) => t.id)
+  // The tutorials are this file's to render; the instruments on the other
+  // shelves are check:instruments'.
+  const tutorials = LIBRARY.filter((t) => t.category === 'tutorial')
+  const untested = tutorials.filter((t) => !built.has(t.id)).map((t) => t.id)
   check(
-    'every template on the shelf was built and rendered',
+    'every tutorial on the shelf was built and rendered',
     untested.length === 0,
-    untested.length ? untested.join(', ') : `${built.size} of ${LIBRARY.length}`,
+    untested.length ? untested.join(', ') : `${built.size} of ${tutorials.length}`,
   )
 
   const ids = new Set(LIBRARY.map((t) => t.id))
   check('and no two share an id', ids.size === LIBRARY.length)
 
-  const missing = LIBRARY.filter((t) => !t.name || !t.description || !t.teaches)
+  const missing = tutorials.filter((t) => !t.name || !t.description || !t.teaches)
   check('every template says what it is', missing.length === 0, missing.map((t) => t.id).join(', '))
 
   // A template is pruned down to what it can be heard through, and the
@@ -713,7 +827,7 @@ console.log('\nthe library')
   check(
     'every template can be played from the keyboard',
     unplayable.length === 0,
-    unplayable.length ? unplayable.join(', ') : 'all 15 keep a Trigger',
+    unplayable.length ? unplayable.join(', ') : `all ${LIBRARY.length} keep a Trigger`,
   )
 
   const mute = LIBRARY.filter((t) => !t.build().patch.modules.some((m) => defOf(m.type).bus)).map((t) => t.id)
@@ -789,6 +903,31 @@ console.log('\nthe manual matches what was rendered')
 
   check('every tutorial table row was rendered', wrong.length === 0, wrong.join('; '))
   check('and there were rows to check', checked > 60, `${checked} rows`)
+}
+
+// --- knob help ---------------------------------------------------------
+/**
+ * The help a resting pointer shows is the manual's own knob tables, read at
+ * load. So every knob a panel draws has to have a row in its module's table,
+ * under the label the panel prints -- a knob added without one would simply
+ * have no help, and nobody would notice it missing.
+ */
+console.log('\nevery knob has help')
+{
+  const manual = readFileSync(join(process.cwd(), 'MANUAL.md'), 'utf8').split('\r').join('')
+  const help = parseKnobHelp(manual)
+  // The mixer's mute and solo are its own buttons, with their own titles,
+  // not knobs; everything a knob or a switch draws is here.
+  const missing = Object.values(MODULE_DEFS).flatMap((def) =>
+    def.params
+      .filter((p) => !p.played && !(def.type === 'mixer' && /^(Mute|Solo) \d$/.test(p.label)))
+      .filter((p) => !helpFor(help, def.name, p.label))
+      .map((p) => `${def.name} › ${p.label}`),
+  )
+  check('every knob and switch is described in the manual', missing.length === 0, missing.join(', '))
+  check('and the help is the sentence the table gives', helpFor(help, 'Ladder Filter', 'Cutoff') === 'Where the filter turns over',
+    String(helpFor(help, 'Ladder Filter', 'Cutoff')))
+  check('a numbered knob finds the row for all of them', helpFor(help, 'Mixer', 'Lvl 5') === 'Volume of that channel')
 }
 
 console.log(failures === 0 ? '\nall clear' : `\n${failures} check(s) failed`)

@@ -69,13 +69,13 @@ check('rack is flipped', await page.evaluate(() => !!document.querySelector('.ra
 check('jacks are on screen', (await page.evaluate(() => document.querySelectorAll('.jack').length)) > 0)
 
 const initial = await cableCount()
-check('the default patch is drawn as cables', initial === 4, `${initial} cables`)
+check('the default patch is drawn as cables', initial === 6, `${initial} cables`)
 
 // --- patch a cable ---------------------------------------------------
 console.log('\npatching')
-// The LFO is the stock rack's unpatched module, so the source starts empty
-// and 'the source output reads as occupied' is a real check.
-const from = await centreOf('lfo1', 'out')
+// The oscillator's Env output is the stock rack's one unpatched output, so the
+// source starts empty and 'the source output reads as occupied' is a real check.
+const from = await centreOf('osc1', 'env')
 const to = await centreOf('mix1', 'in2')
 check('both jacks were found', !!from && !!to)
 
@@ -97,7 +97,7 @@ if (from && to) {
   const after = await cableCount()
   check('the cable is patched', after === initial + 1, `${initial} -> ${after}`)
   check('the input reads as occupied', await isOccupied('mix1', 'in2'))
-  check('the source output reads as occupied', await isOccupied('lfo1', 'out'))
+  check('the source output reads as occupied', await isOccupied('osc1', 'env'))
 }
 
 // A cable's invisible hit area used to lie across nearby jacks, so any jack a

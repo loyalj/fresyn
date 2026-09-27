@@ -8,9 +8,14 @@ interface Props {
   def: ModuleDef
   moduleId: string
   flipped: boolean
+  /** The part of a row a half-width unit takes; see `rackShares`. */
+  share?: number
   faceExtra?: React.ReactNode
   valueOf: (paramId: string) => number | undefined
   onChange: (paramId: string, value: number) => void
+  /** What this module plays, for the one kind that plays a file. */
+  sample?: { id: string; name: string }
+  onSample?: (file: File | null) => void
   isOccupied: (ref: PortRef, kind: JackKind) => boolean
   isCandidate: (ref: PortRef, kind: JackKind) => boolean
   register: (key: string, el: HTMLElement | null) => void
@@ -24,6 +29,14 @@ interface Props {
   onGate: (open: boolean) => void
   /** True while this is the unit being dragged up and down the rack. */
   dragging?: boolean
+  /** Picked for copying, by a click on its ear. */
+  selected?: boolean
+  /** Switched out of the signal path. */
+  bypassed?: boolean
+  /** Switch it in or out; omitted on a module that cannot be bypassed. */
+  onBypass?: () => void
+  /** Saving and loading this module's knobs as a preset. */
+  presets?: { current: () => Record<string, number>; onApply: (params: Record<string, number>) => void }
 }
 
 /**
@@ -35,6 +48,7 @@ export function RackUnit({
   def,
   moduleId,
   flipped,
+  share,
   faceExtra,
   onMove,
   onDuplicate,
@@ -42,6 +56,10 @@ export function RackUnit({
   onGrab,
   onGate,
   dragging,
+  selected,
+  bypassed,
+  onBypass,
+  presets,
   ...rest
 }: Props) {
 
@@ -51,8 +69,9 @@ export function RackUnit({
     <div
       className={`unit-flip${def.width === 'half' ? ' half' : ''}${
         flipped ? ' flipped' : ''
-      }${dragging ? ' dragging' : ''}`}
+      }${dragging ? ' dragging' : ''}${selected ? ' selected' : ''}${bypassed ? ' bypassed' : ''}`}
       data-module={moduleId}
+      style={share === undefined ? undefined : ({ '--share': share } as React.CSSProperties)}
     >
       {/* The face turned away is hidden from assistive technology as well as
           from the pointer. */}
@@ -62,9 +81,14 @@ export function RackUnit({
           moduleId={moduleId}
           faceExtra={faceExtra}
           onGrab={onGrab}
+          bypassed={bypassed}
+          onBypass={onBypass}
+          presets={presets}
           onGate={onGate}
           valueOf={rest.valueOf}
           onChange={rest.onChange}
+          sample={rest.sample}
+          onSample={rest.onSample}
         />
       </div>
 
@@ -77,6 +101,8 @@ export function RackUnit({
           register={rest.register}
           onJackDown={rest.onJackDown}
           onGrab={onGrab}
+          bypassed={bypassed}
+          onBypass={onBypass}
         />
         <UnitControls
           moduleId={moduleId}

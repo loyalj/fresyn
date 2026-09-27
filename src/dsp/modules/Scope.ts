@@ -7,6 +7,11 @@ import { DspModule, type Capturing } from './types'
 export const SCOPE_CAPTURE = 4096
 const MASK = SCOPE_CAPTURE - 1
 
+const IN_A = 0
+const IN_B = 1
+/** Slot zero is the rack's ground, which is what an unpatched input reads. */
+const GROUND = 0
+
 /**
  * An oscilloscope tap. It writes every sample that reaches it into a ring
  * buffer and produces no output of its own, so patching one in never changes
@@ -23,10 +28,13 @@ export class ScopeModule extends DspModule implements Capturing {
 
   private ring = new Float32Array(SCOPE_CAPTURE)
   private frame = new Float32Array(SCOPE_CAPTURE)
+  private ringB = new Float32Array(SCOPE_CAPTURE)
+  private frameB = new Float32Array(SCOPE_CAPTURE)
   private write = 0
 
   process(slots: Float32Array) {
-    this.ring[this.write] = slots[this.ins[0]]
+    this.ring[this.write] = slots[this.ins[IN_A]]
+    this.ringB[this.write] = slots[this.ins[IN_B]]
     this.write = (this.write + 1) & MASK
   }
 
@@ -37,9 +45,24 @@ export class ScopeModule extends DspModule implements Capturing {
    * by posting it, so reusing one buffer is safe.
    */
   snapshot(): Float32Array {
-    const { ring, frame, write } = this
-    frame.set(ring.subarray(write), 0)
-    frame.set(ring.subarray(0, write), SCOPE_CAPTURE - write)
-    return frame
+    return unroll(this.ring, this.frame, this.write)
   }
+
+  /**
+   * The same for B, or null when nothing is patched to it -- which is what
+   * keeps an unused channel from being drawn as a flat line and from being
+   * posted to the main thread sixteen kilobytes at a time, thirty times a
+   * second, for a jack nobody plugged into.
+   */
+  snapshotB(): Float32Array | null {
+    if (this.ins[IN_B] === GROUND) return null
+    return unroll(this.ringB, this.frameB, this.write)
+  }
+}
+
+/** A ring into a frame, oldest first. */
+function unroll(ring: Float32Array, frame: Float32Array, write: number) {
+  frame.set(ring.subarray(write), 0)
+  frame.set(ring.subarray(0, write), SCOPE_CAPTURE - write)
+  return frame
 }

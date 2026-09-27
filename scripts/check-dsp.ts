@@ -7,10 +7,16 @@
  *
  * Run with: npm run check:dsp
  */
+import { integratedLoudness } from '../src/dsp/Loudness'
+import { normalize } from '../src/audio/normalize'
 import { GraphEngine } from '../src/dsp/GraphEngine'
+import { LadderFilter, ladderResponse } from '../src/dsp/LadderFilter'
+import type { SampleBank } from '../src/dsp/samples'
 import { SCOPE_CAPTURE } from '../src/dsp/modules/Scope'
 import { compile } from '../src/patch/compile'
-import { defaultPatch } from '../src/patch/defaultPatch'
+import { fft } from '../src/ui/fft'
+import { defaultPatch, triggerPatch } from '../src/patch/defaultPatch'
+import { noteTarget } from '../src/song/bind'
 import type { Cable, Patch, PatchModule } from '../src/patch/types'
 
 const SR = 48000
@@ -48,6 +54,8 @@ interface RenderOpts {
    * with a trigger of its own can be fired either way.
    */
   gates?: Record<string, boolean>
+  /** Audio for any Sampler in the patch, keyed the way the patch asks for it. */
+  samples?: SampleBank
 }
 
 function render(patch: Patch, opts: RenderOpts = {}) {
@@ -63,7 +71,7 @@ function render(patch: Patch, opts: RenderOpts = {}) {
     initial[index] = value
   }
 
-  const engine = new GraphEngine(compiled, SR, initial)
+  const engine = new GraphEngine(compiled, SR, initial, undefined, opts.samples)
   engine.setTap(opts.tap ?? 'recorder')
   engine.setGate(opts.gate ?? true)
   for (const [id, open] of Object.entries(opts.gates ?? {})) engine.setModuleGate(id, open)
@@ -120,7 +128,7 @@ function capture(patch: Patch, opts: RenderOpts = {}): Record<string, Float32Arr
     initial[index] = value
   }
 
-  const engine = new GraphEngine(compiled, SR, initial)
+  const engine = new GraphEngine(compiled, SR, initial, undefined, opts.samples)
   engine.setGate(opts.gate ?? true)
   for (const [id, open] of Object.entries(opts.gates ?? {})) engine.setModuleGate(id, open)
 
@@ -133,7 +141,11 @@ function capture(patch: Patch, opts: RenderOpts = {}): Record<string, Float32Arr
 
   const out: Record<string, Float32Array> = {}
   // Copied, because a module hands back the one buffer it reuses every frame.
-  for (const c of engine.captures) out[c.id] = c.mod.snapshot().slice()
+  for (const c of engine.captures) {
+    out[c.id] = c.mod.snapshot().slice()
+    const b = c.mod.snapshotB?.()
+    if (b) out[`${c.id}.b`] = b.slice()
+  }
   return out
 }
 
@@ -166,13 +178,13 @@ const VOICE_CASES: [string, Record<string, number>][] = [
 ]
 
 for (const [name, params] of VOICE_CASES) {
-  sane(name, render(defaultPatch(), { params }).left)
+  sane(name, render(triggerPatch(), { params }).left)
 }
 
 // --- compiler --------------------------------------------------------
 console.log('\ncompiler')
 {
-  const c = compile(defaultPatch())
+  const c = compile(triggerPatch())
   const order = c.modules.map((m) => m.id)
   const before = (a: string, b: string) => order.indexOf(a) < order.indexOf(b)
 
@@ -180,17 +192,36 @@ console.log('\ncompiler')
   check('producers run before consumers', before('osc1', 'lpf1') && before('lpf1', 'mix1'))
   check('the console runs last', order[order.length - 1] === 'mix1', order.join(' -> '))
   check('no feedback cables in an acyclic patch', c.feedbackCables.length === 0)
-  check('every module is scheduled', order.length === defaultPatch().modules.length)
+  check('every module is scheduled', order.length === triggerPatch().modules.length)
   // Five modules, and the rack makes a sound you can play: that is the claim
   // the starting rack is making, so it is worth stating as a check. The fifth
   // is the Trigger, which is what the keyboard reaches.
-  check('the stock rack is five modules', defaultPatch().modules.length === 5)
+  check('the stock rack is five modules', triggerPatch().modules.length === 5)
   check('one of them is a main mix', c.monitors.length === 1)
 }
 
 {
-  // An input with two cables keeps the last, as a hardware jack would.
+  // The rack New project hands out is the one a piano roll plays in tune:
+  // notes land on the Keyboard, and its Pitch drives the oscillator an octave
+  // per octave. No Trigger: the keys and the roll are how it is played.
   const p = defaultPatch()
+  const c = compile(p)
+  const wired = (from: string, to: string) =>
+    p.cables.some((k) => `${k.from.module}.${k.from.port}` === from && `${k.to.module}.${k.to.port}` === to)
+  check('no warnings on the starting rack', c.warnings.length === 0, c.warnings.join('; '))
+  check('the roll plays it as notes', noteTarget(p)?.kind === 'note', JSON.stringify(noteTarget(p)))
+  check(
+    'in tune: pitch into FM at +1.00',
+    wired('key1.pitch', 'osc1.fm') && p.modules.find((m) => m.id === 'osc1')?.params.fmAmount === 1,
+  )
+  check('velocity sets the level', wired('key1.vel', 'vca1.cv'))
+  check('it carries no Trigger', !p.modules.some((m) => m.type === 'gate'))
+  check('one main mix', c.monitors.length === 1)
+}
+
+{
+  // An input with two cables keeps the last, as a hardware jack would.
+  const p = triggerPatch()
   p.cables.push(cable('lfo1', 'out', 'lpf1', 'in'))
   const c = compile(p)
   check(
@@ -200,7 +231,7 @@ console.log('\ncompiler')
 }
 
 {
-  const p = defaultPatch()
+  const p = triggerPatch()
   p.cables.push(cable('osc1', 'out', 'lpf1', 'nosuchport'))
   const c = compile(p)
   check(
@@ -213,7 +244,7 @@ console.log('\ncompiler')
 console.log('\nfeedback')
 {
   // Patch the filter back into the oscillator's FM input: a genuine cycle.
-  const p = defaultPatch()
+  const p = triggerPatch()
   p.cables.push(cable('lpf1', 'out', 'osc1', 'fm'))
   const c = compile(p)
 
@@ -475,15 +506,391 @@ console.log('\noscillator width')
       { frames: 8192, params: { 'osc1.width': width } },
     ).left
 
-  // Width reaches the triangle as well as the pulse: the core makes its
-  // triangle by integrating the pulse, so the two share the control. The
-  // manual claimed this was pulse-only, which was wrong.
+  // Width reaches the triangle as well as the pulse: the core puts the
+  // triangle's peak at the width, so the two share the control. The manual
+  // claimed this was pulse-only, which was wrong.
   check('width changes a pulse', !same(solo(1, 0.5), solo(1, 0.2)))
   check('width changes a triangle too', !same(solo(2, 0.5), solo(2, 0.2)))
   // The two shapes that have no width to speak of must ignore it entirely,
   // or turning the knob on a saw patch would be an audible surprise.
   check('but not a saw', same(solo(0, 0.5), solo(0, 0.2)))
   check('and not a sine', same(solo(3, 0.5), solo(3, 0.2)))
+}
+
+/**
+ * The share of a signal's energy that does not sit on a multiple of `bin`.
+ *
+ * A window holding a whole number of cycles of something periodic puts all of
+ * its energy on multiples of that something's bin, so this reads zero. It is
+ * the measure for anything of the form "this is still locked to that": what
+ * lands between the multiples arrived from somewhere else, whether that is
+ * aliasing folded down from above Nyquist or a spectrum that was never
+ * periodic to begin with.
+ */
+function offGrid(buf: Float32Array, bin: number, window: number, from: number) {
+  const re = new Float32Array(window)
+  const im = new Float32Array(window)
+  re.set(buf.subarray(from, from + window))
+  fft(re, im)
+  let total = 0
+  let onGrid = 0
+  for (let k = 1; k < window / 2; k++) {
+    const p = re[k] * re[k] + im[k] * im[k]
+    total += p
+    if (k % bin === 0) onGrid += p
+  }
+  return (total - onGrid) / Math.max(1e-30, total)
+}
+
+// --- oscillator hard sync ---------------------------------------------
+/**
+ * Sync is the one thing in the rack that cannot be had any other way, and it
+ * is also the easiest place in it to make aliasing: the slave's wave is cut
+ * off wherever it happens to have got to, and that step is full scale, sharp,
+ * and repeating at a rate that belongs to neither oscillator.
+ *
+ * Measured as the share of the energy that is not on a harmonic of the
+ * master. Hard sync is strictly periodic at the master's rate, so in a window
+ * holding a whole number of master cycles everything that belongs there lands
+ * on a multiple of it, and whatever sits between the harmonics has been
+ * folded down from above Nyquist.
+ *
+ * The master's period is deliberately not a whole number of samples. On one
+ * that is -- 187.5 Hz is exactly 256 samples at this rate -- a sync rounded
+ * to the sample grid is still exact on every single cycle, the aliasing folds
+ * back onto the same harmonics it came from, and this measure reads zero for
+ * any implementation whatsoever.
+ */
+console.log('\noscillator hard sync')
+{
+  const WINDOW = 16384
+  // Long enough for the pitch smoothing to have arrived before the window
+  // opens; a glide of 20 ms is a frequency that is not yet what it will be.
+  const SETTLE = 4096
+  // 56 whole cycles inside the window, and 292.57 samples in each of them.
+  const MASTER_BIN = 56
+  const MASTER = (SR * MASTER_BIN) / WINDOW
+
+  const slaved = (wave: number, slave: number, linked = true) => {
+    const cables = [cable('osc2', 'out', 'rec1', 'l')]
+    if (linked) cables.unshift(cable('osc1', 'out', 'osc2', 'sync'))
+    return render(
+      {
+        modules: [
+          { id: 'osc1', type: 'osc', params: {} },
+          { id: 'osc2', type: 'osc', params: {} },
+          { id: 'rec1', type: 'rec', params: {} },
+          { id: 'mix1', type: 'mixer', params: {} },
+        ],
+        cables,
+      },
+      {
+        frames: SETTLE + WINDOW,
+        params: {
+          'osc1.pitch': MASTER,
+          'osc1.wave': 0,
+          'osc2.pitch': slave,
+          'osc2.wave': wave,
+        },
+      },
+    ).left
+  }
+
+  /** The share of the energy sitting between the master's harmonics. */
+  const offHarmonic = (buf: Float32Array) => offGrid(buf, MASTER_BIN, WINDOW, SETTLE)
+
+  // Timing the restart between samples and correcting the step it makes
+  // measured -33.3, -30.7, -34.9, -40.4 and -61.4 dB on the five cases below.
+  // Restarting on the sample the crossing was noticed, with the step left
+  // uncorrected, measured -20.3, -16.8, -21.9, -23.6 and -31.1: thirteen dB
+  // worse on every wave, and thirty on a sine. The bar sits between the two.
+  const LIMIT = 0.002
+  const shown = (share: number) => `${(10 * Math.log10(share)).toFixed(1)} dB off-harmonic`
+
+  for (const [label, wave, slave] of [
+    ['saw', 0, 733],
+    ['saw an octave up', 0, 1490],
+    ['pulse', 1, 733],
+    ['triangle', 2, 733],
+    ['sine', 3, 733],
+  ] as [string, number, number][]) {
+    const share = offHarmonic(slaved(wave, slave))
+    check(`a synced ${label} keeps to the master's harmonics`, share < LIMIT, shown(share))
+  }
+
+  // The control. Nothing makes a free oscillator land on another one's
+  // harmonics, so this is what the measure reads when the sync is not
+  // working at all -- without it, a check that happened to measure silence
+  // or DC would pass everything above.
+  const free = offHarmonic(slaved(0, 733, false))
+  check('and an unsynced one has no reason to', free > 0.5, shown(free))
+}
+
+// --- oscillator FM ----------------------------------------------------
+/**
+ * The FM jack in both of its modes.
+ *
+ * Exponential moves the pitch in octaves, which is what a keyboard, a
+ * sequencer or a falling envelope wants: the same signal is the same interval
+ * wherever the oscillator is tuned. Linear moves it in Hz, by multiples of
+ * the Pitch knob, which is what an audio-rate modulator wants: the partials
+ * it makes land on a grid of the modulator's own rate, and a grid like that
+ * is heard as a timbre rather than as a wobble.
+ */
+console.log('\noscillator FM')
+{
+  const tuned = (mode: number) =>
+    render(
+      {
+        modules: [
+          { id: 'cv1', type: 'cv', params: {} },
+          { id: 'osc1', type: 'osc', params: {} },
+          { id: 'rec1', type: 'rec', params: {} },
+          { id: 'mix1', type: 'mixer', params: {} },
+        ],
+        cables: [cable('cv1', 'out1', 'osc1', 'fm'), cable('osc1', 'out', 'rec1', 'l')],
+      },
+      {
+        frames: 24000,
+        params: {
+          'cv1.offset1': 1,
+          'osc1.pitch': 400,
+          'osc1.wave': 3,
+          'osc1.fmAmount': 0.5,
+          'osc1.fmMode': mode,
+        },
+      },
+    ).left.subarray(4800)
+
+  // A steady 1.0 into the FM jack is nothing but a tuning change, so where
+  // the tone ends up is the arithmetic each mode does, in the open: half an
+  // octave above 400 is 566 Hz, and half of 400 on top of it is 600.
+  const exp = tuned(0)
+  const linear = tuned(1)
+  const HALF_OCTAVE = 400 * Math.SQRT2
+  check(
+    'exponential FM reads the amount in octaves',
+    powerAt(exp, HALF_OCTAVE) > 10 * powerAt(exp, 600),
+    `${powerAt(exp, HALF_OCTAVE).toFixed(3)} at 566 Hz vs ${powerAt(exp, 600).toFixed(3)} at 600`,
+  )
+  check(
+    'and linear FM reads it in multiples of the pitch',
+    powerAt(linear, 600) > 10 * powerAt(linear, HALF_OCTAVE),
+    `${powerAt(linear, 600).toFixed(3)} at 600 Hz vs ${powerAt(linear, HALF_OCTAVE).toFixed(3)} at 566`,
+  )
+
+  const WINDOW = 16384
+  const SETTLE = 4096
+  const MOD_BIN = 64
+  // 187.5 Hz, which is exactly 64 bins of the window, with the carrier four
+  // times that. Anything periodic at the modulator's rate lands on multiples
+  // of 64 and nothing else.
+  const MOD = (SR * MOD_BIN) / WINDOW
+
+  const modulated = (mode: number, amount: number) =>
+    offGrid(
+      render(
+        {
+          modules: [
+            { id: 'osc1', type: 'osc', params: {} },
+            { id: 'osc2', type: 'osc', params: {} },
+            { id: 'rec1', type: 'rec', params: {} },
+            { id: 'mix1', type: 'mixer', params: {} },
+          ],
+          cables: [cable('osc1', 'out', 'osc2', 'fm'), cable('osc2', 'out', 'rec1', 'l')],
+        },
+        {
+          frames: SETTLE + WINDOW,
+          params: {
+            'osc1.pitch': MOD,
+            'osc1.wave': 3,
+            'osc2.pitch': MOD * 4,
+            'osc2.wave': 3,
+            'osc2.fmAmount': amount,
+            'osc2.fmMode': mode,
+          },
+        },
+      ).left,
+      MOD_BIN,
+      WINDOW,
+      SETTLE,
+    )
+
+  // This is the whole of why the switch exists. Linear FM leaves the average
+  // frequency exactly where the Pitch knob put it, so the wave still repeats
+  // at the modulator's rate and every partial it grows lands on that grid.
+  // Exponential cannot: the average of 2^x is not 2 to the average x, so the
+  // carrier drifts upward with the index and the result is not periodic at
+  // the modulator's rate at all. Both measure the extremes here -- nothing
+  // measurable off the grid against nothing measurable on it.
+  check('linear FM keeps its partials on the modulator', modulated(1, 0.5) < 0.001)
+  check('and exponential FM does not', modulated(0, 0.5) > 0.5)
+
+  // Through zero, which is what the negative half of the core's rate clamp
+  // is for. Past an amount of 1 the frequency spends part of each cycle below
+  // zero; running the wave backwards through it keeps the average where it
+  // was and the grid with it. Stopping at zero instead holds the grid up to
+  // an amount of 1 and loses it completely above -- measured off-grid at
+  // -Infinity dB here and 0 dB at both of the amounts below, which is the
+  // difference between a bell and a growl.
+  check('and holds it through zero', modulated(1, 1.5) < 0.001)
+  check('however far through', modulated(1, 3) < 0.001)
+}
+
+// --- oscillator level, octave and the envelope's other destinations ----
+/**
+ * The three things an oscillator gained when it stopped needing a VCA, a
+ * second oscillator and a cable to do ordinary work.
+ *
+ * Level is what it says. Octave is the coarse half of the tuning pair. Env
+ * Pitch and Env Width point the module's own envelope at something other than
+ * its amplitude, which is what makes a laser or a PWM sweep a one-module
+ * patch rather than a three-module one.
+ */
+console.log('\noscillator level, octave and envelope routing')
+{
+  const solo = (params: Record<string, number>, frames = 8192) =>
+    render(
+      {
+        modules: [
+          { id: 'osc1', type: 'osc', params: {} },
+          { id: 'rec1', type: 'rec', params: {} },
+          { id: 'mix1', type: 'mixer', params: {} },
+        ],
+        cables: [cable('osc1', 'out', 'rec1', 'l')],
+      },
+      { frames, params: { 'osc1.pitch': 220, 'osc1.wave': 3, ...params } },
+    ).left
+
+  // Level is a plain multiply, so half the knob is half the peak. Measured
+  // after the smoother has arrived, which is what the offset is for.
+  const full = stats(solo({}).subarray(2048))
+  const half = stats(solo({ 'osc1.level': 0.5 }).subarray(2048))
+  const shut = stats(solo({ 'osc1.level': 0 }).subarray(2048))
+  check('Level scales the output', Math.abs(half.peak / full.peak - 0.5) < 0.01, `${full.peak.toFixed(3)} -> ${half.peak.toFixed(3)}`)
+  check('and closes it completely', shut.peak < 1e-6, shut.peak.toExponential(1))
+
+  // Octave is whole octaves on top of the Pitch knob, and it detents, so
+  // anything between two positions rounds to one of them.
+  const up = powerAt(solo({ 'osc1.octave': 1 }).subarray(2048), 440)
+  const down = powerAt(solo({ 'osc1.octave': -1 }).subarray(2048), 110)
+  const base = powerAt(solo({}).subarray(2048), 220)
+  check('Octave +1 doubles the pitch', up > base * 0.8, `${up.toFixed(3)} at 440 Hz`)
+  check('and Octave -1 halves it', down > base * 0.8, `${down.toFixed(3)} at 110 Hz`)
+
+  // The one-module laser: the envelope is the sweep, with nothing patched.
+  // Exponential whatever the FM jack is set to, so the fall is an interval
+  // rather than a slide in hertz. Measured as a rate rather than a bin,
+  // because a pitch that is falling is not sitting on any one of them.
+  const heard = (buf: Float32Array, from: number, to: number) => {
+    let crossings = 0
+    for (let i = from + 1; i < to; i++) if (buf[i - 1] <= 0 !== buf[i] <= 0) crossings++
+    return (crossings * SR) / (2 * (to - from))
+  }
+  const sweeping = { 'osc1.envAmount': 0, 'osc1.decay': 0.08, 'osc1.sustain': 0 }
+  const swept = solo({ ...sweeping, 'osc1.envPitch': 2 }, SR / 2)
+  const flat = solo(sweeping, SR / 2)
+  const from = heard(swept, 0, 720)
+  const to = heard(swept, SR / 2 - 4800, SR / 2)
+  check('Env Pitch sweeps the pitch on its own', from > to * 2.5, `${from.toFixed(0)} -> ${to.toFixed(0)} Hz`)
+  check(
+    'and settles back on the Pitch knob',
+    Math.abs(to - 220) < 5 && Math.abs(heard(flat, 0, 720) - 220) < 20,
+    `${to.toFixed(0)} Hz against a flat ${heard(flat, 0, 720).toFixed(0)}`,
+  )
+
+  // And the same envelope on the width, which is a PWM sweep without the LFO,
+  // the cable or the second module. Only the two waves that have a width to
+  // move can show it.
+  //
+  // 187.5 Hz is 256 samples a cycle, so a 2048-sample window holds exactly
+  // eight of them. Duty measured across a fraction of a cycle reads the
+  // fraction rather than the width, and the two windows below would disagree
+  // by more than the thing being measured.
+  const pulse = {
+    'osc1.pitch': 187.5,
+    'osc1.wave': 1,
+    'osc1.envAmount': 0,
+    'osc1.decay': 0.1,
+    'osc1.sustain': 0,
+  }
+  const duty = (buf: Float32Array, from: number, to: number) => {
+    let high = 0
+    for (let i = from; i < to; i++) if (buf[i] > 0) high++
+    return high / (to - from)
+  }
+  const moved = solo({ ...pulse, 'osc1.envWidth': 0.8 }, SR / 4)
+  const still = solo(pulse, SR / 4)
+  check(
+    'Env Width sweeps the pulse width on its own',
+    Math.abs(duty(moved, 0, 2048) - duty(moved, SR / 8, SR / 8 + 2048)) > 0.2,
+    `${duty(moved, 0, 2048).toFixed(2)} -> ${duty(moved, SR / 8, SR / 8 + 2048).toFixed(2)}`,
+  )
+  check(
+    'and leaves the width alone at zero',
+    Math.abs(duty(still, 0, 2048) - duty(still, SR / 8, SR / 8 + 2048)) < 0.02,
+  )
+  // An oscillator that cannot be heard does not synthesise anything, which
+  // is worth a great deal in a rack of voices that are mostly waiting -- and
+  // is only allowed because it changes nothing. These two are what "nothing"
+  // means: it has to come back, and the Env jack has to go on working while
+  // the audio is not being made.
+  const retriggered = render(
+    {
+      modules: [
+        { id: 'clk1', type: 'clock', params: {} },
+        { id: 'osc1', type: 'osc', params: { envAmount: 1 } },
+        { id: 'rec1', type: 'rec', params: {} },
+        { id: 'mix1', type: 'mixer', params: {} },
+      ],
+      cables: [cable('clk1', 'x1', 'osc1', 'gate'), cable('osc1', 'out', 'rec1', 'l')],
+    },
+    {
+      frames: SR,
+      gate: false,
+      params: { 'clk1.rate': 8, 'osc1.pitch': 440, 'osc1.wave': 3, 'osc1.decay': 0.02, 'osc1.sustain': 0 },
+    },
+  ).left
+
+  // Blips, counted the way an ear would: a burst is a run of samples above a
+  // fraction of the loudest one, with the quiet between them to separate it.
+  let bursts = 0
+  let quiet = true
+  const window = 256
+  const floor = stats(retriggered).peak * 0.2
+  for (let i = 0; i + window < retriggered.length; i += window) {
+    const loud = stats(retriggered.subarray(i, i + window)).peak > floor
+    if (loud && quiet) bursts++
+    quiet = !loud
+  }
+  check('a skipped oscillator comes back when it is retriggered', bursts === 8, `${bursts} blips in a second at 8 Hz`)
+
+  // Level shut is the other way to reach a gain of zero, and it must not take
+  // the Env jack down with it: an oscillator used purely as an envelope
+  // generator is a thing the manual offers.
+  const asEnvelope = render(
+    {
+      modules: [
+        { id: 'osc1', type: 'osc', params: {} },
+        { id: 'osc2', type: 'osc', params: {} },
+        { id: 'vca1', type: 'vca', params: {} },
+        { id: 'rec1', type: 'rec', params: {} },
+        { id: 'mix1', type: 'mixer', params: {} },
+      ],
+      cables: [
+        cable('osc2', 'out', 'vca1', 'in'),
+        cable('osc1', 'env', 'vca1', 'cv'),
+        cable('vca1', 'out', 'rec1', 'l'),
+      ],
+    },
+    { frames: SR / 4, params: { 'osc1.level': 0, 'osc1.decay': 0.2, 'osc1.sustain': 0 } },
+  ).left
+  check('and its Env jack still works with its Level shut', stats(asEnvelope).peak > 0.1, `peak ${stats(asEnvelope).peak.toFixed(3)}`)
+
+  // A sine has no width, and neither of these may invent one for it.
+  const sineA = solo({ 'osc1.envAmount': 0, 'osc1.envWidth': 0 }, 8192)
+  const sineB = solo({ 'osc1.envAmount': 0, 'osc1.envWidth': 1 }, 8192)
+  check('but not on a sine, which has no width', same(sineA, sineB))
 }
 
 // --- LFO width and PWM ------------------------------------------------
@@ -953,6 +1360,52 @@ console.log('\nladder modes')
     const loud = through(mode, CUTOFF)
     check(`${name} stays bounded at the corner`, Number.isFinite(loud) && loud < 4, loud.toFixed(4))
   }
+}
+
+console.log('\nladder response curve')
+{
+  // The panel's picture of the filter is a formula, not a measurement, so it
+  // is checked against one: a quiet sine through the real filter, whose gain
+  // has to land where the curve says it does. Quiet, because the formula
+  // takes the saturators as straight lines, and at a thousandth of full scale
+  // they are.
+  const measure = (hz: number, cutoff: number, res: number, mode: number) => {
+    const filter = new LadderFilter(SR)
+    const frames = SR
+    let re = 0
+    let im = 0
+    for (let i = 0; i < frames; i++) {
+      const phase = (2 * Math.PI * hz * i) / SR
+      const y = filter.process(1e-3 * Math.sin(phase), cutoff, res, 1, mode)
+      // The second half only, once the resonance has finished ringing up.
+      if (i >= frames / 2) {
+        re += y * Math.sin(phase)
+        im += y * Math.cos(phase)
+      }
+    }
+    return (Math.hypot(re, im) * 2) / (frames / 2) / 1e-3
+  }
+
+  const db = (v: number) => 20 * Math.log10(v)
+  let worst = 0
+  let where = ''
+  for (const mode of [0, 1, 2, 3]) {
+    for (const res of [0, 0.5, 0.9]) {
+      for (const hz of [60, 250, 800, 1000, 1250, 4000, 12000]) {
+        const want = ladderResponse(hz, 1000, res, mode, SR)
+        const got = measure(hz, 1000, res, mode)
+        // Anything more than 60 dB down is under the residue of the probe
+        // itself, and agreeing about silence proves nothing.
+        if (db(want) < -60) continue
+        const off = Math.abs(db(got) - db(want))
+        if (off > worst) {
+          worst = off
+          where = `mode ${mode}, res ${res}, ${hz} Hz`
+        }
+      }
+    }
+  }
+  check('the drawn curve matches the filter to within 0.5 dB', worst < 0.5, `worst ${worst.toFixed(3)} dB at ${where}`)
 }
 
 // --- compressor --------------------------------------------------------
@@ -2137,7 +2590,7 @@ console.log('\nresonator')
 // --- rewiring --------------------------------------------------------
 console.log('\nrewiring')
 {
-  const base = defaultPatch()
+  const base = triggerPatch()
   const rewired: Patch = {
     ...base,
     cables: [...base.cables, cable('osc2', 'out', 'mix1', 'in2')],
@@ -2175,7 +2628,7 @@ console.log('\nrewiring')
   // the output must continue exactly as if nothing had happened. Comparing a
   // seam against a waveform's own step size is far too lenient -- a sawtooth's
   // reset edge is bigger than most clicks.
-  const patch = defaultPatch()
+  const patch = triggerPatch()
   const compiled = compile(patch)
   const FRAMES = 8192
   const HALF = FRAMES / 2
@@ -2214,11 +2667,534 @@ console.log('\nrewiring')
   check('a held gate survives a rebuild', stats(interrupted.subarray(HALF)).peak > 0.01)
 }
 
+// --- the jacks added after the fact -----------------------------------
+/**
+ * Ports added to modules that had been getting along without them.
+ *
+ * Each is here because a patch wanted it and could not have it: an
+ * accelerating wobble, an envelope into a folder, a fixed-length pulse at a
+ * clock's rate, something firing when an envelope finishes, and two signals
+ * on one screen.
+ */
+console.log('\nLFO rate CV')
+{
+  const cycles = (params: Record<string, number>) => {
+    const buf = capture(
+      {
+        modules: [
+          { id: 'cv1', type: 'cv', params: {} },
+          { id: 'lfo1', type: 'lfo', params: {} },
+          { id: 'scope1', type: 'scope', params: {} },
+          { id: 'mix1', type: 'mixer', params: {} },
+        ],
+        cables: [cable('cv1', 'out1', 'lfo1', 'cv'), cable('lfo1', 'out', 'scope1', 'in')],
+      },
+      { params: { 'cv1.offset1': 1, 'lfo1.rate': 100, ...params } },
+    ).scope1
+    let crossings = 0
+    for (let i = 1; i < buf.length; i++) if (buf[i - 1] <= 0 !== buf[i] <= 0) crossings++
+    return crossings / 2
+  }
+
+  // Exponential, like every other rate in the rack: the amount is in octaves,
+  // so one cable is the same interval wherever the knob is set.
+  const base = cycles({ 'lfo1.cvAmount': 0 })
+  const up = cycles({ 'lfo1.cvAmount': 1 })
+  const down = cycles({ 'lfo1.cvAmount': -1 })
+  check('an octave of Rate CV doubles the rate', Math.abs(up / base - 2) < 0.1, `${base} -> ${up} cycles`)
+  check('and a negative amount halves it', Math.abs(down / base - 0.5) < 0.1, `${base} -> ${down} cycles`)
+}
+
+console.log('\nthe shapers take CV')
+{
+  const shapedWith = (type: string, params: Record<string, number>) =>
+    capture(
+      {
+        modules: [
+          { id: 'osc1', type: 'osc', params: { pitch: TONE, wave: 3 } },
+          { id: 'cv1', type: 'cv', params: {} },
+          { id: 'sut', type, params: {} },
+          { id: 'scope0', type: 'scope', params: {} },
+          { id: 'mix1', type: 'mixer', params: {} },
+        ],
+        cables: [
+          cable('osc1', 'out', 'sut', 'in'),
+          cable('cv1', 'out1', 'sut', 'cv'),
+          cable('sut', 'out', 'scope0', 'in'),
+        ],
+      },
+      { params: { 'cv1.offset1': 1, ...params } },
+    ).scope0
+
+  // A steady 1.0 into the jack, with the amount in octaves: the arithmetic
+  // the filter's cutoff CV already does. What makes these worth having is an
+  // envelope there instead, which is a shape that changes as a sound decays.
+  const driveOff = harmonicRatio(shapedWith('drive', { 'sut.drive': 2 }), TONE)
+  const driveOn = harmonicRatio(shapedWith('drive', { 'sut.drive': 2, 'sut.cvAmount': 3 }), TONE)
+  check('Drive CV drives harder', driveOn > driveOff * 1.5, `${driveOff.toFixed(3)} -> ${driveOn.toFixed(3)}`)
+
+  const foldOff = harmonicRatio(shapedWith('fold', { 'sut.fold': 1.5 }), TONE)
+  const foldOn = harmonicRatio(shapedWith('fold', { 'sut.fold': 1.5, 'sut.cvAmount': 2 }), TONE)
+  check('Fold CV folds further', foldOn > foldOff * 1.5, `${foldOff.toFixed(3)} -> ${foldOn.toFixed(3)}`)
+
+  // The crusher's is a sample rate, so what moves is how often the held value
+  // changes rather than how rich it is.
+  const steps = (buf: Float32Array) => {
+    let changes = 0
+    for (let i = 1; i < buf.length; i++) if (buf[i] !== buf[i - 1]) changes++
+    return changes
+  }
+  const fast = steps(shapedWith('crush', { 'sut.rate': 8000 }))
+  const slow = steps(shapedWith('crush', { 'sut.rate': 8000, 'sut.cvAmount': -3 }))
+  check('Rate CV slows the crusher down', slow < fast / 4, `${fast} steps -> ${slow}`)
+}
+
+console.log('\nthe Trigger takes a cable')
+{
+  /** How long each run of high samples lasts. */
+  const runs = (params: Record<string, number>) => {
+    const buf = capture(
+      {
+        modules: [
+          { id: 'clk1', type: 'clock', params: {} },
+          { id: 'gate1', type: 'gate', params: {} },
+          { id: 'scope1', type: 'scope', params: {} },
+          { id: 'mix1', type: 'mixer', params: {} },
+        ],
+        cables: [cable('clk1', 'x1', 'gate1', 'trig'), cable('gate1', 'gate', 'scope1', 'in')],
+      },
+      { gate: false, params: { 'clk1.rate': 20, ...params } },
+    ).scope1
+    const lengths: number[] = []
+    let run = 0
+    for (const v of buf) {
+      if (v > 0.5) run++
+      else if (run > 0) {
+        lengths.push(run)
+        run = 0
+      }
+    }
+    return lengths
+  }
+
+  // Held: the Trigger passes the clock on as it arrives, so the pulse is the
+  // clock's Width -- a quarter of a 20 Hz period is 600 samples.
+  const held = runs({ 'clk1.width': 0.25 })
+  check('a clock into Trig plays the Trigger', held.length >= 1, `${held.length} pulses`)
+  check('and held mode passes its shape', Math.abs(held[0] - 600) < 30, `${held[0]} samples of 600`)
+
+  // Once: a fixed length whatever arrived, which is what the Clock cannot do
+  // on its own. Its Width is a fraction of the period, so its pulses stretch
+  // as the rate falls.
+  const fixed = runs({ 'clk1.width': 0.25, 'gate1.mode': 1, 'gate1.length': 0.005 })
+  const wider = runs({ 'clk1.width': 0.75, 'gate1.mode': 1, 'gate1.length': 0.005 })
+  check('once mode puts out Length instead', Math.abs(fixed[0] - 240) < 3, `${fixed[0]} samples of 240`)
+  check('whatever shape arrived', Math.abs(wider[0] - fixed[0]) < 3, `${fixed[0]} against ${wider[0]}`)
+}
+
+console.log('\nthe envelope says when it is done')
+{
+  const frames = capture(
+    {
+      modules: [
+        { id: 'gate1', type: 'gate', params: {} },
+        { id: 'env1', type: 'adsr', params: {} },
+        { id: 'scope1', type: 'scope', params: {} },
+        { id: 'scope2', type: 'scope', params: {} },
+        { id: 'mix1', type: 'mixer', params: {} },
+      ],
+      cables: [
+        cable('gate1', 'gate', 'env1', 'gate'),
+        cable('env1', 'out', 'scope1', 'in'),
+        cable('env1', 'end', 'scope1', 'in2'),
+        cable('env1', 'inv', 'scope2', 'in'),
+      ],
+    },
+    // Short enough to start and finish inside the 85 ms a scope keeps. An
+    // exponential decay is not over when it sounds over: at a Decay of 10 ms
+    // the stage runs for 115, because it ends where the level does.
+    {
+      gate: true,
+      params: { 'env1.attack': 0.001, 'env1.decay': 0.002, 'env1.sustain': 0, 'env1.release': 0.002 },
+    },
+  )
+  const out = frames.scope1
+  const end = frames['scope1.b']
+  const inv = frames.scope2
+
+  // A pulse, not a level: End says the shape finished, and a shape finishes
+  // once.
+  let pulses = 0
+  for (let i = 1; i < end.length; i++) if (end[i] > 0.5 && end[i - 1] <= 0.5) pulses++
+  check('End fires once when the shape finishes', pulses === 1, `${pulses} pulses`)
+
+  // On the sample the level lands on zero, not a moment later: the pulse is
+  // the end of the shape, so the sample before it is the last one with any
+  // shape left in it.
+  const endAt = end.findIndex((v) => v > 0.5)
+  check(
+    'on the sample the level reaches zero',
+    out[endAt] === 0 && out[endAt - 1] > 0,
+    `${out[endAt - 1].toExponential(1)} then ${out[endAt]}`,
+  )
+
+  // Inv is the shape upside down, which is the one thing a bipolar amount
+  // knob at the far end cannot ask for.
+  let worst = 0
+  for (let i = 0; i < out.length; i++) worst = Math.max(worst, Math.abs(out[i] + inv[i] - 1))
+  check('and Inv is one minus the level, sample for sample', worst < 1e-6, `worst ${worst.toExponential(1)}`)
+}
+
+console.log('\nthe scope has two channels')
+{
+  const rack = (linked: boolean) =>
+    capture({
+      modules: [
+        { id: 'cv1', type: 'cv', params: {} },
+        { id: 'lfo1', type: 'lfo', params: {} },
+        { id: 'scope1', type: 'scope', params: {} },
+        { id: 'mix1', type: 'mixer', params: {} },
+      ],
+      cables: linked
+        ? [cable('cv1', 'out1', 'scope1', 'in'), cable('lfo1', 'out', 'scope1', 'in2')]
+        : [cable('cv1', 'out1', 'scope1', 'in')],
+    })
+
+  const both = rack(true)
+  check('B is captured beside A', !!both['scope1.b'] && !same(both.scope1, both['scope1.b']))
+  check('and A is what it always was', both.scope1.length === SCOPE_CAPTURE)
+  // Nothing patched, nothing published: an empty channel is not a flat line
+  // to draw and not sixteen kilobytes to post thirty times a second.
+  check('an empty B publishes nothing at all', rack(false)['scope1.b'] === undefined)
+}
+
+// --- the sampler ------------------------------------------------------
+/**
+ * The one module that plays audio the rack did not make.
+ *
+ * Its test material is built here rather than loaded: a ramp, because a
+ * position is easiest to read off a signal that is its own clock; a flat
+ * level, because a fade is only visible against something that starts loud;
+ * and a pair of constants, because two jacks are only two jacks if they carry
+ * different things. All at 44.1 kHz against a 48 kHz rack, which is the ratio
+ * a sampler gets wrong.
+ */
+console.log('\nthe sampler')
+{
+  const RATE = 44100
+  const FRAMES = 8820 // 0.2 s
+
+  const filled = (fn: (i: number) => number) => {
+    const d = new Float32Array(FRAMES)
+    for (let i = 0; i < FRAMES; i++) d[i] = fn(i)
+    return d
+  }
+
+  const bank: SampleBank = new Map()
+  bank.set('ramp', { channels: [filled((i) => i / (FRAMES - 1))], rate: RATE, frames: FRAMES })
+  bank.set('flat', { channels: [filled(() => 1)], rate: RATE, frames: FRAMES })
+  bank.set('sides', {
+    channels: [filled(() => 0.5), filled(() => -0.5)],
+    rate: RATE,
+    frames: FRAMES,
+  })
+
+  const play = (sample: string, params: Record<string, number>, seconds = 0.5) =>
+    render(
+      {
+        modules: [
+          { id: 'smp1', type: 'sampler', params: {}, sample: { id: sample, name: `${sample}.wav` } },
+          { id: 'rec1', type: 'rec', params: {} },
+          { id: 'mix1', type: 'mixer', params: {} },
+        ],
+        cables: [cable('smp1', 'l', 'rec1', 'l'), cable('smp1', 'r', 'rec1', 'r')],
+      },
+      { frames: Math.round(SR * seconds), samples: bank, params },
+    )
+
+  const at = (buf: Float32Array, seconds: number) => buf[Math.round(SR * seconds)]
+
+  // Nothing loaded is a state, not a failure: the module names a sample the
+  // bank has never heard of and stays silent rather than reaching for it.
+  const missing = render(
+    {
+      modules: [
+        { id: 'smp1', type: 'sampler', params: {}, sample: { id: 'gone', name: 'gone.wav' } },
+        { id: 'rec1', type: 'rec', params: {} },
+        { id: 'mix1', type: 'mixer', params: {} },
+      ],
+      cables: [cable('smp1', 'l', 'rec1', 'l')],
+    },
+    { frames: 4096, samples: bank },
+  )
+  check('a missing sample is silence, not a crash', stats(missing.left).peak === 0)
+
+  // A ramp read at the right speed is a clock: half way through the region is
+  // half way up the ramp, and it gets there in the time the file lasts rather
+  // than 8.8% early, which is what reading 44.1 kHz audio at 48 would do.
+  const forward = play('ramp', {})
+  check('the middle of the file is the middle of the ramp', Math.abs(at(forward.left, 0.1) - 0.5) < 0.01, at(forward.left, 0.1).toFixed(3))
+  check('and it lasts as long as the file does', Math.abs(at(forward.left, 0.19) - 0.95) < 0.02 && at(forward.left, 0.25) === 0, `${at(forward.left, 0.19).toFixed(3)} then ${at(forward.left, 0.25)}`)
+
+  // Speed is a ratio on top of that, so double it and the same position
+  // arrives in half the time.
+  const fast = play('ramp', { 'smp1.speed': 2 })
+  check('Speed doubles the rate it reads at', Math.abs(at(fast.left, 0.05) - 0.5) < 0.01, at(fast.left, 0.05).toFixed(3))
+
+  // Start moves where it begins; Length moves where it stops.
+  // Measured against the forward pass rather than against a number worked out
+  // by hand: at any instant before either runs out, starting half way in is
+  // the same read plus half a file, and that holds however far the playhead
+  // has already travelled by the time it is sampled.
+  const late = play('ramp', { 'smp1.start': 0.5 })
+  const offset = at(late.left, 0.05) - at(forward.left, 0.05)
+  check('Start offsets the read by exactly that much of the file', Math.abs(offset - 0.5) < 0.01, offset.toFixed(3))
+  const short = play('ramp', { 'smp1.length': 0.25 })
+  check('Length stops it early', at(short.left, 0.04) > 0.1 && at(short.left, 0.08) === 0, `${at(short.left, 0.04).toFixed(2)} then ${at(short.left, 0.08)}`)
+
+  // Reverse starts at the far end and walks back, which on a ramp is the one
+  // reading that cannot be confused with the forward pass.
+  const back = play('ramp', { 'smp1.direction': 1 })
+  check('Reverse reads from the end', at(back.left, 0.01) > 0.9 && at(back.left, 0.19) < 0.1, `${at(back.left, 0.01).toFixed(2)} down to ${at(back.left, 0.19).toFixed(2)}`)
+
+  // One-shot stops at the end of the region; loop does not.
+  const once = play('flat', {})
+  const looped = play('flat', { 'smp1.loop': 1 })
+  check('a one-shot stops when the region ends', stats(once.left.subarray(Math.round(SR * 0.25))).peak === 0)
+  check('and a loop keeps going', stats(looped.left.subarray(Math.round(SR * 0.25))).peak > 0.9)
+
+  // End is a blip, once, when the one-shot finishes.
+  const ended = render(
+    {
+      modules: [
+        { id: 'smp1', type: 'sampler', params: {}, sample: { id: 'flat', name: 'flat.wav' } },
+        { id: 'rec1', type: 'rec', params: {} },
+        { id: 'mix1', type: 'mixer', params: {} },
+      ],
+      cables: [cable('smp1', 'end', 'rec1', 'l')],
+    },
+    { frames: Math.round(SR * 0.5), samples: bank },
+  )
+  let pulses = 0
+  for (let i = 1; i < ended.left.length; i++) {
+    if (ended.left[i] > 0.5 && ended.left[i - 1] <= 0.5) pulses++
+  }
+  check('End fires once, when the region runs out', pulses === 1, `${pulses} pulses`)
+
+  // The fade is what stops a sampler clicking. Against a file that is flat at
+  // full scale, no fade would put a step of 1.0 on the very first sample.
+  const faded = play('flat', { 'smp1.fade': 0.02 })
+  check('the fade eases it in rather than stepping', Math.abs(faded.left[0]) < 0.02, faded.left[0].toFixed(4))
+  check('and it is up to full by the end of the fade', Math.abs(at(faded.left, 0.021) - 1) < 0.02, at(faded.left, 0.021).toFixed(3))
+
+  // Two jacks carry two channels, and a mono file answers both with the same
+  // signal rather than leaving one of them silent.
+  const stereo = play('sides', {})
+  check('a stereo file comes out of both jacks', Math.abs(at(stereo.left, 0.1) - 0.5) < 0.01 && Math.abs(at(stereo.right, 0.1) + 0.5) < 0.01, `${at(stereo.left, 0.1).toFixed(2)} / ${at(stereo.right, 0.1).toFixed(2)}`)
+  const mono = play('ramp', {})
+  check('and a mono file answers both the same', at(mono.left, 0.1) === at(mono.right, 0.1))
+}
+
+// --- voice and formant -------------------------------------------------
+/**
+ * A voice is checked on the things an ear names it by: the pitch it sings at,
+ * the growl an octave under it, and the vowel the Formant shapes it into. A
+ * formant bank with its table read one column over still makes a pleasant
+ * noise, and it says the wrong vowel.
+ */
+console.log('\nvoice and formant')
+{
+  const voice = (params: Record<string, number>) =>
+    capture({
+      modules: [
+        { id: 'vox1', type: 'voice', params: { jitter: 0, breath: 0, level: 1, ...params } },
+        { id: 'scope0', type: 'scope', params: {} },
+      ],
+      cables: [cable('vox1', 'out', 'scope0', 'in')],
+    }).scope0
+
+  // Autocorrelation over the lags a voice at these pitches can have.
+  const period = (buf: Float32Array) => {
+    let best = -Infinity
+    let bestLag = 0
+    for (let lag = 40; lag < 1200; lag++) {
+      let sum = 0
+      for (let i = 0; i < buf.length - lag; i++) sum += buf[i] * buf[i + lag]
+      if (sum > best) {
+        best = sum
+        bestLag = lag
+      }
+    }
+    return bestLag
+  }
+
+  const sung = voice({ pitch: 150 })
+  check(
+    'the Voice sings at the pitch it is set to',
+    Math.abs(period(sung) - SR / 150) <= 1,
+    `${period(sung)} samples, expected ${SR / 150}`,
+  )
+  // With jitter off the drawn cycles are all the same, so the pulse carries
+  // no subharmonic at all until Growl makes alternate ones differ.
+  //
+  // Windowed, unlike `powerAt`: a scope frame is only a few cycles of 75 Hz
+  // long, and without a window the fundamental's leakage alone reads as a
+  // subharmonic a sixth the size of a real one.
+  const windowed = (buf: Float32Array, hz: number) => {
+    let re = 0
+    let im = 0
+    for (let i = 0; i < buf.length; i++) {
+      const w = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (buf.length - 1))
+      const t = (2 * Math.PI * hz * i) / SR
+      re += buf[i] * w * Math.cos(t)
+      im += buf[i] * w * Math.sin(t)
+    }
+    return Math.sqrt(re * re + im * im) / buf.length
+  }
+  const smooth = voice({ pitch: 150, growl: 0 })
+  const growled = voice({ pitch: 150, growl: 1 })
+  check(
+    'Growl puts a subharmonic an octave under it',
+    windowed(growled, 75) > windowed(smooth, 75) * 20,
+    `${windowed(growled, 75).toExponential(2)} against ${windowed(smooth, 75).toExponential(2)}`,
+  )
+  const whisper = voice({ pitch: 150, breath: 1 })
+  check(
+    'Breath at full is a whisper: no pitch left in it',
+    powerAt(whisper, 150) < powerAt(sung, 150) * 0.05,
+    `${powerAt(whisper, 150).toExponential(2)} against ${powerAt(sung, 150).toExponential(2)}`,
+  )
+
+  // A saw at 100 Hz has a harmonic on every hundred, falling evenly, so
+  // which of them come out loudest is the filter speaking and nothing else.
+  const vowel = (params: Record<string, number>) =>
+    capture({
+      modules: [
+        { id: 'osc1', type: 'osc', params: { pitch: 100, wave: 0 } },
+        { id: 'fmt1', type: 'formant', params },
+        { id: 'scope0', type: 'scope', params: {} },
+      ],
+      cables: [cable('osc1', 'out', 'fmt1', 'in'), cable('fmt1', 'out', 'scope0', 'in')],
+    }).scope0
+
+  const ah = vowel({ vowel: 2 })
+  const ee = vowel({ vowel: 4 })
+  check(
+    'ah has its first formant high, near 650 Hz',
+    powerAt(ah, 700) > powerAt(ah, 300) * 2,
+    `700 Hz ${powerAt(ah, 700).toExponential(2)}, 300 Hz ${powerAt(ah, 300).toExponential(2)}`,
+  )
+  check(
+    'ee has it low, near 290 Hz, and its second one up near 1.9 kHz',
+    powerAt(ee, 300) > powerAt(ee, 700) * 2 && powerAt(ee, 1900) > powerAt(ee, 1100) * 2,
+    `300 ${powerAt(ee, 300).toExponential(2)} / 700 ${powerAt(ee, 700).toExponential(2)}, ` +
+      `1900 ${powerAt(ee, 1900).toExponential(2)} / 1100 ${powerAt(ee, 1100).toExponential(2)}`,
+  )
+  // Size 2 halves every formant: ah's first one moves from 650 to 325.
+  const bigAh = vowel({ vowel: 2, size: 2 })
+  check(
+    'Size 2 is a head twice as big: every formant an octave down',
+    powerAt(bigAh, 300) > powerAt(bigAh, 700) * 2,
+    `300 Hz ${powerAt(bigAh, 300).toExponential(2)}, 700 Hz ${powerAt(bigAh, 700).toExponential(2)}`,
+  )
+}
+
+// --- loudness, the EQ and the quantizer --------------------------------
+/**
+ * Loudness is checked against the standard's own reference points: a 1 kHz
+ * sine at full scale in both channels is 0 LUFS give or take the weighting's
+ * tenth of a decibel there, and every 20 dB down is 20 LU down. A meter that
+ * read a few LU out would put every normalised take a few LU off target.
+ */
+console.log('\nloudness')
+{
+  const tone = (amp: number, hz: number, seconds: number) => {
+    const n = Math.round(SR * seconds)
+    const buf = new Float32Array(n)
+    for (let i = 0; i < n; i++) buf[i] = amp * Math.sin((2 * Math.PI * hz * i) / SR)
+    return buf
+  }
+  const full = tone(1, 1000, 3)
+  const quiet = tone(0.1, 1000, 3)
+  const l0 = integratedLoudness(full, full, SR)
+  const l20 = integratedLoudness(quiet, quiet, SR)
+  check('a full-scale 1 kHz sine in both channels reads about 0 LUFS', Math.abs(l0) < 0.2, `${l0.toFixed(2)} LUFS`)
+  check('and 20 dB down reads 20 LU down', Math.abs(l20 + 20) < 0.2, `${l20.toFixed(2)} LUFS`)
+  const withTail = new Float32Array(SR * 6)
+  withTail.set(quiet)
+  const lt = integratedLoudness(withTail, withTail, SR)
+  check('silence after a sound is gated out rather than averaged in', Math.abs(lt - l20) < 0.3, `${lt.toFixed(2)} LUFS`)
+  const click = tone(0.5, 1000, 0.05)
+  check('a sound shorter than a block is still measured', Number.isFinite(integratedLoudness(click, click, SR)))
+
+  const target = normalize(quiet, quiet, SR, '-16')
+  const after = integratedLoudness(target.left, target.right, SR)
+  check('normalising to -16 LUFS lands on -16', Math.abs(after + 16) < 0.2, `${after.toFixed(2)} LUFS`)
+  // Clicks: loud peaks, very little energy -- the kind of sound that cannot
+  // reach a loudness target without clipping on the way.
+  const clicks = new Float32Array(SR * 2)
+  for (let i = 0; i < clicks.length; i += SR / 10) clicks[i] = 0.5
+  const hot = normalize(clicks, clicks, SR, '-14')
+  check('but never past -1 dB peak, and says so', hot.peak <= Math.pow(10, -1 / 20) + 1e-6 && hot.limited,
+    `peak ${hot.peak.toFixed(3)}, limited ${hot.limited}`)
+  const peaked = normalize(quiet, quiet, SR, 'peak')
+  check('peak normalising brings the peak to -1 dB', Math.abs(peaked.peak - Math.pow(10, -1 / 20)) < 1e-4, peaked.peak.toFixed(4))
+  const untouched = normalize(quiet, quiet, SR, 'off')
+  check('and off leaves it alone', untouched.left === quiet && untouched.gain === 1)
+}
+
+console.log('\nEQ')
+{
+  const through = (params: Record<string, number>, hz: number) => {
+    const out = capture({
+      modules: [
+        { id: 'osc1', type: 'osc', params: { pitch: hz, wave: 3 } },
+        { id: 'eq1', type: 'eq', params },
+        { id: 'scope0', type: 'scope', params: {} },
+      ],
+      cables: [cable('osc1', 'out', 'eq1', 'in'), cable('eq1', 'out', 'scope0', 'in')],
+    }).scope0
+    let peak = 0
+    for (let i = out.length / 2; i < out.length; i++) peak = Math.max(peak, Math.abs(out[i]))
+    return 20 * Math.log10(peak)
+  }
+  const flat = through({}, 1000)
+  check('flat, it passes a tone unchanged', Math.abs(flat) < 0.2, `${flat.toFixed(2)} dB`)
+  const lowCut = through({ lowGain: -12, lowFreq: 400 }, 60)
+  check('the low shelf cuts the bottom', Math.abs(lowCut + 12) < 1, `${lowCut.toFixed(2)} dB at 60 Hz`)
+  const lowSpared = through({ lowGain: -12, lowFreq: 400 }, 5000)
+  check('and leaves the top alone', Math.abs(lowSpared) < 0.5, `${lowSpared.toFixed(2)} dB at 5 kHz`)
+  const bell = through({ midGain: 6, midFreq: 1000 }, 1000)
+  check('the mid bell lifts its own frequency by what it says', Math.abs(bell - 6) < 0.5, `${bell.toFixed(2)} dB`)
+  const highBoost = through({ highGain: 9, highFreq: 2000 }, 12000)
+  check('the high shelf lifts the top', Math.abs(highBoost - 9) < 1, `${highBoost.toFixed(2)} dB at 12 kHz`)
+}
+
+console.log('\nquantizer')
+{
+  const quantize = (params: Record<string, number>, level: number) => {
+    const out = capture({
+      modules: [
+        { id: 'cv1', type: 'cv', params: { offset1: level, gain1: 1 } },
+        { id: 'q1', type: 'quant', params },
+        { id: 'scope0', type: 'scope', params: {} },
+      ],
+      cables: [cable('cv1', 'out1', 'q1', 'in'), cable('q1', 'out', 'scope0', 'in')],
+    }).scope0
+    return Math.round(out[out.length - 1] * 12 * 1000) / 1000
+  }
+  check('in C major, a C# goes to the nearest note, D', quantize({ root: 0, scale: 1 }, 1.4 / 12) === 2, String(quantize({ root: 0, scale: 1 }, 1.4 / 12)))
+  check('a note already in the scale stays put', quantize({ root: 0, scale: 1 }, 7 / 12) === 7)
+  check('chromatic rounds to the nearest semitone', quantize({ root: 0, scale: 0 }, 6.4 / 12) === 6)
+  check('the root moves the scale: E from D# in E minor', quantize({ root: 4, scale: 2 }, 3.2 / 12) === 4, String(quantize({ root: 4, scale: 2 }, 3.2 / 12)))
+  check('and it works below the root too', quantize({ root: 0, scale: 1 }, -1.2 / 12) === -1, String(quantize({ root: 0, scale: 1 }, -1.2 / 12)))
+}
+
 // --- determinism -----------------------------------------------------
 console.log('\ndeterminism')
 {
-  const a = render(defaultPatch(), { frames: 8192 })
-  const b = render(defaultPatch(), { frames: 8192 })
+  const a = render(triggerPatch(), { frames: 8192 })
+  const b = render(triggerPatch(), { frames: 8192 })
   let same = true
   for (let i = 0; i < a.left.length; i++) {
     if (a.left[i] !== b.left[i]) {

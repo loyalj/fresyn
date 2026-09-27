@@ -3,14 +3,18 @@ import {
   clampValue,
   denormalize,
   formatValue,
+  hzFromSemitones,
   normalize,
   parseValue,
+  semitonesFrom440,
   snap,
+  snapToNote,
   stepFor,
   unitName,
   type ParamSpec,
 } from '../patch/param'
 import { ContextMenu, type MenuItem } from './Menu'
+import { useKnobHelp } from './KnobHelp'
 
 const SIZE = 52
 const RADIUS = 20
@@ -121,7 +125,12 @@ export function Knob({ spec, value, onChange, step, format }: Props) {
       // impossible to place by hand.
       const scale = e.shiftKey ? FINE : 1
       const next = d.t + (d.y - e.clientY) / (TRAVEL * scale)
-      emit(denormalize(spec, next))
+      const turned = denormalize(spec, next)
+      // Alt lands on whole semitones, which is the only way two oscillators
+      // get tuned to an interval by hand: a fifth is seven of them, and seven
+      // semitones at 110 Hz is a distance of 55 Hz that is 220 Hz at the top
+      // of the same knob.
+      emit(spec.tuned && e.altKey ? snapToNote(spec, turned) : turned)
     },
     [spec, emit],
   )
@@ -173,6 +182,24 @@ export function Knob({ spec, value, onChange, step, format }: Props) {
 
       const { spec: s, value: v, emit: send, step: detent } = latest.current
       const notches = e.deltaY / (NOTCH[e.deltaMode] ?? NOTCH[0])
+
+      // Alt is the exact adjustment for a knob measured in notes: one notch
+      // is one semitone, tidied onto the note it is nearest on the way, the
+      // same way Shift tidies onto the last digit of a readout below.
+      if (s.tuned && e.altKey) {
+        spare.current += notches
+        const whole = Math.trunc(spare.current)
+        if (!whole) return
+        spare.current -= whole
+        const dir = whole > 0 ? -1 : 1
+        let semitones = semitonesFrom440(v)
+        for (let i = Math.abs(whole); i > 0; i--) semitones = nudge(semitones, 1, dir)
+        const emitted = clampValue(s, hzFromSemitones(semitones))
+        wheelT.current = null
+        sent.current = emitted
+        send(emitted)
+        return
+      }
 
       // Shift is the exact adjustment: one notch moves the last digit the
       // readout shows, and lands on a multiple of it. A step proportional to
@@ -279,10 +306,12 @@ export function Knob({ spec, value, onChange, step, format }: Props) {
   // zero reads as centred rather than as half-open.
   const bipolar = spec.min < 0 && spec.max > 0
   const originT = bipolar ? normalize(spec, 0) : 0
+  const help = useKnobHelp(spec.label)
 
   return (
     <div
       className="knob"
+      {...help}
       onContextMenu={(e) => {
         // A field being typed into keeps the browser's own menu, which is
         // where its paste lives.

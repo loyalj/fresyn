@@ -1,5 +1,6 @@
 import { DcBlocker } from '../DcBlocker'
 import { Smoothed } from '../Smoothed'
+import { LiveLoudness } from '../Loudness'
 import { DspModule, type Metering } from './types'
 
 const CHANNELS = 8
@@ -39,7 +40,13 @@ export class MixerModule extends DspModule implements Metering {
   private open = new Float32Array(CHANNELS).fill(1)
   /** Peak per channel since the last report, with the stereo bus last. */
   private peaks = new Float32Array(CHANNELS + 1)
-  private report = new Float32Array(CHANNELS + 1)
+  /**
+   * What is reported: those peaks, then the bus's loudness in LUFS --
+   * momentary and short-term -- which the face shows beside the main meter.
+   * On the end, so everything that reads the peaks by position still does.
+   */
+  private report = new Float32Array(CHANNELS + 3)
+  private loudness = new LiveLoudness(this.ctx.sampleRate)
 
   /**
    * Peaks since the last call, then reset so the next report covers only the
@@ -49,6 +56,10 @@ export class MixerModule extends DspModule implements Metering {
   levels(): Float32Array {
     this.report.set(this.peaks)
     this.peaks.fill(0)
+    // Silence reads as -Infinity, which is not a number a message can be
+    // trusted to carry; the face shows anything this low as no reading.
+    this.report[CHANNELS + 1] = Math.max(-99, this.loudness.momentary)
+    this.report[CHANNELS + 2] = Math.max(-99, this.loudness.shortTerm)
     return this.report
   }
 
@@ -151,5 +162,6 @@ export class MixerModule extends DspModule implements Metering {
     const ar = outR < 0 ? -outR : outR
     const bus = al > ar ? al : ar
     if (bus > this.peaks[CHANNELS]) this.peaks[CHANNELS] = bus
+    this.loudness.push(outL, outR)
   }
 }

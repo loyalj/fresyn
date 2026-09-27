@@ -5,8 +5,10 @@ const P_DRIVE = 0
 const P_CURVE = 1
 const P_BIAS = 2
 const P_LEVEL = 3
+const P_CV_AMOUNT = 4
 
 const IN_SIGNAL = 0
+const IN_CV = 1
 
 /** Curve positions, in the order the def lists them; tanh is position 0. */
 const CLIP = 1
@@ -42,7 +44,12 @@ export class DriveModule extends DspModule {
 
   process(slots: Float32Array) {
     const x = slots[this.ins[IN_SIGNAL]] + this.params[P_BIAS]
-    const driven = x * this.params[P_DRIVE]
+    // An envelope into Drive is a transient: loud and dirty at the moment of
+    // the hit and clean as it falls away, which is what a struck thing does
+    // and what a fixed drive never does.
+    const drive =
+      this.params[P_DRIVE] * Math.pow(2, slots[this.ins[IN_CV]] * this.params[P_CV_AMOUNT])
+    const driven = x * drive
 
     let y: number
     switch (Math.round(this.params[P_CURVE])) {

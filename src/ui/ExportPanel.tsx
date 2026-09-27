@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { NORMALIZE_OPTIONS, type Normalize } from '../audio/normalize'
 import type { BitDepth } from '../audio/wav'
 import type { ParamSpec } from '../patch/param'
 import { Knob } from './Knob'
@@ -11,6 +12,8 @@ export interface ExportSettings {
   seed: number
   sampleRate: number
   bitDepth: BitDepth
+  /** What each take is brought to before it is written; see `normalize`. */
+  normalize: Normalize
 }
 
 export const DEFAULT_EXPORT: ExportSettings = {
@@ -21,6 +24,7 @@ export const DEFAULT_EXPORT: ExportSettings = {
   seed: 1,
   sampleRate: 48000,
   bitDepth: 16,
+  normalize: 'off',
 }
 
 /**
@@ -120,6 +124,20 @@ export function ExportPanel({ onExport, busy }: Props) {
             <option value="44100/24">44.1 kHz &middot; 24-bit</option>
           </select>
           <span className="knob-label">Format</span>
+        </label>
+
+        {/* Beside the format, because both are about what lands in the file
+            rather than about the sound: a whole set of takes at one
+            loudness is what a game's mix is built from. */}
+        <label className="export-format" title="Bring every take to the same level before it is saved">
+          <select value={s.normalize} onChange={(e) => set('normalize', e.target.value as Normalize)}>
+            {NORMALIZE_OPTIONS.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <span className="knob-label">Level</span>
         </label>
       </div>
 

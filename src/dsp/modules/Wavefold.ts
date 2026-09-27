@@ -3,8 +3,10 @@ import { DspModule } from './types'
 
 const P_FOLD = 0
 const P_SYMMETRY = 1
+const P_CV_AMOUNT = 2
 
 const IN_SIGNAL = 0
+const IN_CV = 1
 
 /**
  * A wavefolder: past the rails the signal turns back on itself, again and
@@ -34,7 +36,13 @@ export class WavefoldModule extends DspModule {
     // Fold as well -- and at a Fold of 2 the two ends of the Symmetry knob
     // land exactly one period apart and sound identical. After the gain, the
     // knob shifts the wave by the same amount wherever Fold is set.
-    const x = slots[this.ins[IN_SIGNAL]] * this.params[P_FOLD] + this.params[P_SYMMETRY]
+    // The manual used to tell the reader to put a VCA in front of this module
+    // and sweep its level, which is folding by proxy: it changes how far into
+    // the folds the signal reaches, at the cost of the level going with it.
+    // This moves the folding itself and leaves the level alone.
+    const fold =
+      this.params[P_FOLD] * Math.pow(2, slots[this.ins[IN_CV]] * this.params[P_CV_AMOUNT])
+    const x = slots[this.ins[IN_SIGNAL]] * fold + this.params[P_SYMMETRY]
     slots[this.outs[0]] = this.dc.process(triangleFold(x))
   }
 }

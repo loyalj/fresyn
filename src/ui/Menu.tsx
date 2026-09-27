@@ -264,6 +264,9 @@ function MenuList({ items, onClose, onLeave, nested }: ListProps) {
                   common.onKeyDown(e)
                 }}
               >
+                {/* An empty tick column, so its label lines up with the rows
+                    around it rather than sitting out in the margin. */}
+                <span className="menu-tick" aria-hidden="true" />
                 <span className="menu-text">{item.label}</span>
                 <span className="menu-more" aria-hidden="true">&#9656;</span>
               </button>

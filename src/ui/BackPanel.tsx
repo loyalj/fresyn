@@ -12,6 +12,8 @@ interface Props {
   onJackDown: (ref: PortRef, kind: JackKind, e: React.PointerEvent) => void
   /** Begin a reorder drag from this unit's spine. */
   onGrab?: (e: React.PointerEvent) => void
+  bypassed?: boolean
+  onBypass?: () => void
 }
 
 interface Slot {
@@ -82,6 +84,8 @@ export function BackPanel({
   register,
   onJackDown,
   onGrab,
+  bypassed,
+  onBypass,
 }: Props) {
   const renderJack = ({ port, kind }: Slot) => {
     const ref = { module: moduleId, port: port.id }
@@ -102,7 +106,7 @@ export function BackPanel({
 
   return (
     <div className="unit unit-rear">
-      <UnitSpine def={def} moduleId={moduleId} onGrab={onGrab} />
+      <UnitSpine def={def} moduleId={moduleId} onGrab={onGrab} bypassed={bypassed} onBypass={onBypass} />
 
       <div className="unit-face back-face">
         {blocksOf(def).map((block) => (

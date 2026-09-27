@@ -57,9 +57,39 @@ function isTextEntry(target: EventTarget | null) {
  * at the pointer -- on a knob, say -- has nobody to say that on its behalf,
  * so the same rule is read off the row that holds focus instead.
  */
-function ownsKeyboard(target: EventTarget | null) {
-  if (isTextEntry(target)) return true
+function ownsKeyboard(target: EventTarget | null, e?: KeyboardEvent) {
+  if (isTextEntry(target)) {
+    // A slider, a checkbox or a dropdown is not being typed into. It has the
+    // keys it moves with, and nothing else: with a fader just touched, Ctrl+Z
+    // is still an undo and a Trigger's key still plays it. Only a field that
+    // takes text keeps every key to itself.
+    if (e && isControl(target)) return CONTROL_KEYS.has(e.code) && !(e.ctrlKey || e.metaKey)
+    return true
+  }
   return target instanceof HTMLElement && !!target.closest('[role="menu"]')
+}
+
+/** The keys a slider, a checkbox or a dropdown moves with. */
+const CONTROL_KEYS = new Set([
+  'ArrowUp',
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
+  'PageUp',
+  'PageDown',
+  'Home',
+  'End',
+  'Space',
+  'Enter',
+])
+
+/** A form control that is set rather than typed into. */
+function isControl(target: EventTarget | null) {
+  if (target instanceof HTMLSelectElement) return true
+  return (
+    target instanceof HTMLInputElement &&
+    ['range', 'checkbox', 'radio', 'button', 'color', 'submit', 'reset'].includes(target.type)
+  )
 }
 
 /**
@@ -125,7 +155,7 @@ export class InputManager {
     if (this.detach) return this.detach
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (this.options.suspended || ownsKeyboard(e.target)) return
+      if (this.options.suspended || ownsKeyboard(e.target, e)) return
 
       const binding = this.byCombo.get(comboKey(e))
       if (!binding) {
@@ -152,7 +182,7 @@ export class InputManager {
     }
 
     const onKeyUp = (e: KeyboardEvent) => {
-      if (this.options.suspended || ownsKeyboard(e.target)) return
+      if (this.options.suspended || ownsKeyboard(e.target, e)) return
 
       const binding = this.held.get(e.code)
       if (!binding) {

@@ -5,3 +5,6 @@ dist
 .dev.vars
 .dev.vars.*
 .env*.local
+
+# Unfiltered ideas, kept local. Not a plan and not a queue.
+BRAINSTORM.md

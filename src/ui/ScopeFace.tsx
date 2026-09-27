@@ -28,6 +28,7 @@ export function ScopeFace({ def, moduleId, valueOf, onChange }: Props) {
   const appearance = useAppearance()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const frame = useRef<Float32Array | null>(null)
+  const frameB = useRef<Float32Array | null>(null)
   const dirty = useRef(true)
   const view = useRef<ScopeView>({
     mode: 'wave',
@@ -37,6 +38,7 @@ export function ScopeFace({ def, moduleId, valueOf, onChange }: Props) {
     // Replaced from the stylesheet on mount, and again on every theme
     // change; these only stand in for the frame before that happens.
     accent: '#f0a641',
+    accentB: '#8b919c',
     grid: '#2c2f37',
     dim: '#3d424c',
   })
@@ -62,8 +64,12 @@ export function ScopeFace({ def, moduleId, valueOf, onChange }: Props) {
     if (!engine) return
     return engine.onScopeFrame((frames) => {
       const next = frames[moduleId]
-      if (!next) return
-      frame.current = next
+      // B arrives as its own entry, and only while something is patched to
+      // it, so a frame without one means the jack is empty rather than quiet.
+      const nextB = frames[`${moduleId}.b`] ?? null
+      if (!next && !nextB) return
+      if (next) frame.current = next
+      frameB.current = nextB
       dirty.current = true
     })
   }, [engine, moduleId])
@@ -80,6 +86,7 @@ export function ScopeFace({ def, moduleId, valueOf, onChange }: Props) {
     const pick = (name: string, fallback: string) =>
       style.getPropertyValue(name).trim() || fallback
     view.current.accent = pick('--scope-line', view.current.accent)
+    view.current.accentB = pick('--scope-line-b', view.current.accentB)
     view.current.grid = pick('--scope-grid', view.current.grid)
     view.current.dim = pick('--scope-axis', view.current.dim)
     dirty.current = true
@@ -95,7 +102,7 @@ export function ScopeFace({ def, moduleId, valueOf, onChange }: Props) {
       // draw each one twice. The flag also covers a knob moving between them.
       if (dirty.current) {
         dirty.current = false
-        drawScope(canvas, frame.current, view.current)
+        drawScope(canvas, frame.current, frameB.current, view.current)
       }
       raf = requestAnimationFrame(tick)
     }

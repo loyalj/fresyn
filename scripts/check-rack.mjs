@@ -6,7 +6,7 @@
  * Needs `npm run dev -- --port 5199` in another terminal.
  * Point CHROME_PATH at a Chromium build if the default is wrong.
  */
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import puppeteer from 'puppeteer-core'
@@ -43,7 +43,17 @@ const settle = (ms = 200) => new Promise((r) => setTimeout(r, ms))
 const unitCount = () => page.evaluate(() => document.querySelectorAll('.unit-flip').length)
 const unitIds = () =>
   page.evaluate(() => [...document.querySelectorAll('.unit-face-front .unit-id')].map((e) => e.textContent))
-const patchName = () => page.evaluate(() => document.querySelector('.patch-name').value)
+// The name lives on the selected track in the dock now, so the dock has to be
+// open to reach it.
+const nameField = async () => {
+  if (!(await page.$('.track.on .track-name'))) {
+    await page.click('.dock-fold')
+    await settle(200)
+  }
+  return '.track.on .track-name'
+}
+const patchName = async () =>
+  page.evaluate((sel) => document.querySelector(sel).value, await nameField())
 
 // Everything is reached by the words on it rather than by position: the menus
 // grow, and an index silently starts clicking the wrong row when they do.
@@ -189,6 +199,13 @@ const pickSub = async (menu, sub, item) => {
   return true
 }
 
+// Headless Chrome has the file pickers, and a real one would sit waiting for
+// a person. Everything up to the section on saving in place checks the
+// download path that other browsers use, so the pickers go until then.
+await page.evaluateOnNewDocument(() => {
+  delete window.showOpenFilePicker
+  delete window.showSaveFilePicker
+})
 await page.goto(URL, { waitUntil: 'networkidle0' })
 // Start from a known state; the autosave persists across runs.
 await page.evaluate(() => localStorage.clear())
@@ -235,6 +252,27 @@ console.log('\nadding a module')
     return unit?.querySelector('.knob-readout')?.textContent ?? null
   })
   check('its knobs are seeded from the defaults', readout === '1.40 kHz', String(readout))
+}
+
+// --- adding next to what is picked -------------------------------------
+console.log('\nadding in front of the picked unit')
+{
+  // With a unit picked, a new one goes in front of it rather than at the top:
+  // the picked unit is where you are working.
+  await page.click('[data-module="vca1"] .unit-face-front .unit-spine')
+  await settle(200)
+  check('a unit can be added with one picked', await addModule('Noise'))
+  const ids = await unitIds()
+  check('it lands in front of the picked unit', ids.indexOf('noise1') === ids.indexOf('vca1') - 1, ids.join(','))
+
+  // Put the rack back and let go of the pick, so what follows starts from the
+  // stock rack with nothing picked.
+  await page.keyboard.down('Control')
+  await page.keyboard.press('KeyZ')
+  await page.keyboard.up('Control')
+  await page.keyboard.press('Escape')
+  await settle(300)
+  check('and undo takes it away again', !(await unitIds()).includes('noise1'))
 }
 
 // --- removing --------------------------------------------------------
@@ -341,13 +379,42 @@ console.log('\nthe patch library')
 
   // Counted from the library itself, so adding a template does not make this
   // file wrong -- the same reason the Modules menu is counted that way.
-  const shelved = await page.evaluate(async () => {
-    const { LIBRARY } = await import('/src/patch/library.ts')
-    return LIBRARY.map((t) => t.name)
+  const shelves = await page.evaluate(async () => {
+    const { LIBRARY, CATEGORIES } = await import('/src/patch/library.ts')
+    return CATEGORIES.map((c) => ({
+      name: c.name,
+      racks: LIBRARY.filter((t) => t.category === c.id).map((t) => t.name),
+    }))
   })
-  const listed = await rowNames()
-  check('it lists every template', listed.length === shelved.length, `${listed.length} of ${shelved.length}`)
-  check('and names them', listed.join(',') === shelved.join(','), listed.slice(0, 3).join(', ') + '...')
+  const shelfAt = () =>
+    page.evaluate(() => document.querySelector('.library-shelf.at span')?.textContent?.trim() ?? null)
+
+  // Walked with the arrows, as a keyboard user would: each shelf has to hold
+  // exactly its own racks, and the last one has to lead back to the first.
+  let listedTotal = 0
+  const misfiled = []
+  for (const shelf of shelves) {
+    const on = await shelfAt()
+    const listed = await rowNames()
+    listedTotal += listed.length
+    if (on !== shelf.name || listed.join(',') !== shelf.racks.join(',')) misfiled.push(`${shelf.name} (on ${on})`)
+    await page.keyboard.press('ArrowRight')
+    await settle(120)
+  }
+  const total = shelves.reduce((n, s) => n + s.racks.length, 0)
+  check('it lists every template, shelf by shelf', listedTotal === total, `${listedTotal} of ${total}`)
+  check('and each shelf holds its own', misfiled.length === 0, misfiled.join(', '))
+  // Past the last shipped shelf come the three this browser keeps --
+  // Favourites, Recent and My patches -- and then round to the first again.
+  const personal = []
+  for (let i = 0; i < 3; i++) {
+    personal.push(await shelfAt())
+    await page.keyboard.press('ArrowRight')
+    await settle(120)
+  }
+  check('then the shelves this browser keeps', personal.join(',') === '★ Favourites,Recent,My patches', personal.join(','))
+  check('the arrows go round the shelves', (await shelfAt()) === shelves[0].name, String(await shelfAt()))
+  const shelved = shelves[0].racks
 
   // The arrows have to move the list rather than the page: the rack captures
   // them everywhere else, and a sheet only works if the rack stands down.
@@ -421,46 +488,57 @@ console.log('half-width panels share a row')
 
   const addByName = (text) => addModule(text)
 
-  // The stock rack is a full panel, two halves and a full, so it packs into
-  // three rows with nothing left over -- which is the layout every new reader
-  // sees first.
-  const lpf = await boxOf('lpf1')
-  const lfo = await boxOf('lfo1')
+  // The stock rack's VCA and filter are the halves that share a row, with the
+  // oscillator above them and the mixer below -- which is the layout every new
+  // reader sees first.
+  const lpf = await boxOf('vca1')
+  const lfo = await boxOf('lpf1')
   const mix = await boxOf('mix1')
   check('a full-width panel takes the whole row', mix.width === mix.rack, `${mix.width} of ${mix.rack}`)
-  // Half a row less the gap between the columns, so the arithmetic is loose.
+  // A pair splits its row by what is on the two faces: the two-knob VCA
+  // takes less of it than the five-knob filter, and between them, and the
+  // gap, they fill it.
   check(
-    'a half-width panel takes half of one',
-    Math.abs(lpf.width - lpf.rack / 2) <= 6,
-    `${lpf.width} of ${lpf.rack}`,
+    'a pair of halves fills its row',
+    Math.abs(lpf.width + lfo.width + 6 - lpf.rack) <= 2,
+    `${lpf.width} + ${lfo.width} of ${lpf.rack}`,
   )
+  check('the barer half takes less of it', lpf.width < lfo.width, `${lpf.width} vs ${lfo.width}`)
   check('the stock rack pairs its halves', lpf.top === lfo.top, `${lpf.top} vs ${lfo.top}`)
   check('side by side, in order', lpf.left === 0 && lfo.left > lpf.width, `${lpf.left}, ${lfo.left}`)
 
   // A half panel with a full one after it leaves the rest of its row empty
   // rather than dragging the full panel up beside it. Added in this order
   // because the menu puts each new unit at the top, so the Scope ends up
-  // below the VCA rather than above it.
+  // below the LFO rather than above it.
   await addByName('Scope')
-  await addByName('VCA')
-  const vca = await boxOf('vca1')
+  await addByName('LFO')
+  const vca = await boxOf('lfo1')
   const scope = await boxOf('scope1')
   check('a full panel does not squeeze in beside one', scope.top > vca.top, `${vca.top} -> ${scope.top}`)
-  check('and the lone half keeps its column', vca.left === 0 && vca.width === lpf.width)
+  check(
+    'and the lone half keeps half a row',
+    vca.left === 0 && Math.abs(vca.width - vca.rack / 2) <= 6,
+    `${vca.left}, ${vca.width} of ${vca.rack}`,
+  )
 
   // Two panels sharing a row trade places sideways, not by being dragged the
   // height of the rack: the drag reads the gap the held unit left behind and
   // measures across the row when its neighbour is beside it.
   const order = () =>
     page.evaluate(() => [...document.querySelectorAll('.unit-flip')].map((e) => e.dataset.module))
-  await page.evaluate(() => window.scrollTo(0, 0))
+  // Brought on screen first: the pair sits below the Keyboard and the
+  // oscillator, which is further down than one window at test size.
+  await page.evaluate(() =>
+    document.querySelector('[data-module="vca1"]').scrollIntoView({ block: 'center' }),
+  )
   await settle(120)
   const spine = await page.evaluate(() => {
-    const r = document.querySelector('[data-module="lpf1"] .unit-spine').getBoundingClientRect()
+    const r = document.querySelector('[data-module="vca1"] .unit-spine').getBoundingClientRect()
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
   })
   const past = await page.evaluate(() => {
-    const r = document.querySelector('[data-module="lfo1"]').getBoundingClientRect()
+    const r = document.querySelector('[data-module="lpf1"]').getBoundingClientRect()
     return r.left + r.width / 2 + 20
   })
   const wasPaired = (await order()).join(',')
@@ -476,8 +554,8 @@ console.log('half-width panels share a row')
   const after = await order()
   check(
     'the two changed places',
-    wasPaired.split(',').indexOf('lpf1') < wasPaired.split(',').indexOf('lfo1') &&
-      after.indexOf('lfo1') < after.indexOf('lpf1'),
+    wasPaired.split(',').indexOf('vca1') < wasPaired.split(',').indexOf('lpf1') &&
+      after.indexOf('lpf1') < after.indexOf('vca1'),
     `${wasPaired} -> ${after.join(',')}`,
   )
 
@@ -600,8 +678,10 @@ console.log('the oscillator panel')
   const before = await curve()
   check('the curve is drawn', before.length > 200, `${before.length} chars`)
 
-  // Six stage knobs plus the amount, on top of the four tone controls.
-  check('the envelope knobs are there', (await oscPanel('.knob')) === 10, String(await oscPanel('.knob')))
+  // Six stage knobs and the three things the envelope can be pointed at, on
+  // top of the five tone knobs -- Pitch, Octave, Width, FM Amt and Level,
+  // since Wave and FM Mode are switches rather than knobs.
+  check('the envelope knobs are there', (await oscPanel('.knob')) === 14, String(await oscPanel('.knob')))
 
   // Dragging Decay has to redraw the shape, or the graph is decoration.
   // Scrolled into view before measuring: oscillator panels are tall now, and
@@ -628,14 +708,240 @@ console.log('the oscillator panel')
   check('turning Decay redraws the graph', after !== before)
   check('the graph stays well formed', !after.includes('NaN'), after.slice(0, 60))
 
-  // The knob is deliberately left where it is: undoing here would leave a
+  // The other screen on the panel: two cycles of whatever Wave and Width add
+  // up to. It is drawn by running the oscillator, so a shape that stops
+  // following its knobs is a shape that has stopped matching the sound.
+  check('it draws its waveform as well', (await oscPanel('.wave-graph')) === 1)
+
+  const wave = () =>
+    page.evaluate(() => {
+      const unit = [...document.querySelectorAll('.unit-face-front')].find(
+        (u) => u.querySelector('.unit-id')?.textContent === 'osc1',
+      )
+      return unit?.querySelector('.wave-line')?.getAttribute('d') ?? ''
+    })
+
+  const asSaw = await wave()
+  check('the waveform is drawn', asSaw.length > 200 && !asSaw.includes('NaN'), `${asSaw.length} chars`)
+
+  const pickWave = (name) =>
+    page.evaluate((want) => {
+      const unit = [...document.querySelectorAll('.unit-face-front')].find(
+        (u) => u.querySelector('.unit-id')?.textContent === 'osc1',
+      )
+      const button = [...unit.querySelectorAll('button')].find(
+        (b) => b.textContent.trim().toLowerCase() === want,
+      )
+      button.click()
+    }, name)
+
+  await pickWave('tri')
+  await settle(200)
+  const asTri = await wave()
+  check('switching the wave redraws it', asTri !== asSaw)
+
+  // Width is the half of this the knobs cannot tell you: "pulse" and "0.14"
+  // are two numbers, and a sliver is a picture.
+  const widthKnob = await page.evaluate(() => {
+    const unit = [...document.querySelectorAll('.unit-face-front')].find(
+      (u) => u.querySelector('.unit-id')?.textContent === 'osc1',
+    )
+    const knob = [...unit.querySelectorAll('.knob')].find(
+      (k) => k.querySelector('.knob-label')?.textContent === 'Width',
+    )
+    knob.scrollIntoView({ block: 'center' })
+    const r = knob.querySelector('svg').getBoundingClientRect()
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+  })
+  await new Promise((r) => setTimeout(r, 120))
+  await page.mouse.move(widthKnob.x, widthKnob.y)
+  await page.mouse.down()
+  await page.mouse.move(widthKnob.x, widthKnob.y + 50, { steps: 6 })
+  await page.mouse.up()
+  await settle(250)
+
+  const narrowed = await wave()
+  check('and so does moving Width', narrowed !== asTri)
+  check('the waveform stays well formed', !narrowed.includes('NaN'), narrowed.slice(0, 60))
+
+  // The note beside the screen is what the module is sounding rather than
+  // what any one knob is set to, which is the whole reason it lives here and
+  // not under Pitch: the Octave switch moves the sound and leaves the Pitch
+  // knob exactly where it was.
+  const noteText = () =>
+    page.evaluate(
+      () => document.querySelector('[data-module="osc1"] .osc-wave-note')?.textContent ?? null,
+    )
+  const pitchText = () =>
+    page.evaluate(() => {
+      const unit = [...document.querySelectorAll('.unit-face-front')].find(
+        (u) => u.querySelector('.unit-id')?.textContent === 'osc1',
+      )
+      const knob = [...unit.querySelectorAll('.knob')].find(
+        (k) => k.querySelector('.knob-label')?.textContent === 'Pitch',
+      )
+      return knob.querySelector('.knob-readout')?.textContent ?? null
+    })
+
+  const noteBefore = await noteText()
+  const pitchBefore = await pitchText()
+  check('the panel names the note it is sounding', /^[A-G]#?-?\d/.test(noteBefore ?? ''), String(noteBefore))
+
+  const octave = await page.evaluate(() => {
+    const unit = [...document.querySelectorAll('.unit-face-front')].find(
+      (u) => u.querySelector('.unit-id')?.textContent === 'osc1',
+    )
+    const knob = [...unit.querySelectorAll('.knob')].find(
+      (k) => k.querySelector('.knob-label')?.textContent === 'Octave',
+    )
+    knob.scrollIntoView({ block: 'center' })
+    const r = knob.querySelector('svg').getBoundingClientRect()
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+  })
+  await new Promise((r) => setTimeout(r, 120))
+  await page.mouse.move(octave.x, octave.y)
+  await page.mouse.down()
+  await page.mouse.move(octave.x, octave.y - 40, { steps: 6 })
+  await page.mouse.up()
+  await settle(250)
+
+  const noteAfter = await noteText()
+  const up = (before, after) => {
+    const a = /^([A-G]#?)(-?\d+)/.exec(before ?? '')
+    const b = /^([A-G]#?)(-?\d+)/.exec(after ?? '')
+    return !!a && !!b && a[1] === b[1] && Number(b[2]) === Number(a[2]) + 1
+  }
+  check('and an octave up is the same note an octave up', up(noteBefore, noteAfter), `${noteBefore} -> ${noteAfter}`)
+  check('while the Pitch knob has not moved', (await pitchText()) === pitchBefore, `${pitchBefore} -> ${await pitchText()}`)
+
+  // Everything here is deliberately left where it is: undoing would leave a
   // redo pending, which the next section asserts is empty.
+}
+
+// --- the LFO panel ----------------------------------------------------
+/**
+ * The LFO's shape, over its knobs. It is the same window the oscillator has
+ * and it matters more here: an LFO is never heard, so the picture is the only
+ * account of what it is doing.
+ */
+console.log()
+console.log('the LFO panel')
+{
+  // The stock rack has no LFO; this one stays for the back-panel checks
+  // below, which want a unit with nothing patched to it.
+  check('an LFO was added', await addModule('LFO'))
+  const inLfo = (sel) =>
+    page.evaluate((s) => {
+      const unit = [...document.querySelectorAll('.unit-face-front')].find(
+        (u) => u.querySelector('.unit-id')?.textContent === 'lfo1',
+      )
+      return unit ? unit.querySelectorAll(s).length : -1
+    }, sel)
+
+  const shape = () =>
+    page.evaluate(() => {
+      const unit = [...document.querySelectorAll('.unit-face-front')].find(
+        (u) => u.querySelector('.unit-id')?.textContent === 'lfo1',
+      )
+      return unit?.querySelector('.wave-line')?.getAttribute('d') ?? ''
+    })
+
+  check('it draws its shape', (await inLfo('.wave-graph')) === 1)
+  const asSine = await shape()
+  check('the shape is drawn', asSine.length > 200 && !asSine.includes('NaN'), `${asSine.length} chars`)
+
+  // On top of the Shape buttons, and only as wide as they are. A picture of
+  // what a switch is set to belongs over that switch; stretched across the
+  // panel it would read as belonging to the whole module.
+  const placed = await page.evaluate(() => {
+    const unit = [...document.querySelectorAll('.unit-face-front')].find(
+      (u) => u.querySelector('.unit-id')?.textContent === 'lfo1',
+    )
+    const graph = unit.querySelector('.wave-graph').getBoundingClientRect()
+    const buttons = unit.querySelector('.switch-buttons').getBoundingClientRect()
+    return {
+      graphBottom: Math.round(graph.bottom),
+      buttonTop: Math.round(buttons.top),
+      graphWidth: Math.round(graph.width),
+      buttonWidth: Math.round(buttons.width),
+    }
+  })
+  check('above the Shape buttons', placed.graphBottom <= placed.buttonTop, `${placed.graphBottom} then ${placed.buttonTop}`)
+  check(
+    'and no wider than they are',
+    Math.abs(placed.graphWidth - placed.buttonWidth) <= 1,
+    `${placed.graphWidth} against ${placed.buttonWidth}`,
+  )
+
+  const pickShape = (name) =>
+    page.evaluate((want) => {
+      const unit = [...document.querySelectorAll('.unit-face-front')].find(
+        (u) => u.querySelector('.unit-id')?.textContent === 'lfo1',
+      )
+      const button = [...unit.querySelectorAll('button')].find(
+        (b) => b.textContent.trim().toLowerCase() === want,
+      )
+      button.click()
+    }, name)
+
+  await pickShape('pulse')
+  await settle(200)
+  const asPulse = await shape()
+  check('switching the shape redraws it', asPulse !== asSine)
+
+  const lfoKnob = (label) =>
+    page.evaluate((l) => {
+      const unit = [...document.querySelectorAll('.unit-face-front')].find(
+        (u) => u.querySelector('.unit-id')?.textContent === 'lfo1',
+      )
+      const knob = [...unit.querySelectorAll('.knob')].find(
+        (k) => k.querySelector('.knob-label')?.textContent === l,
+      )
+      knob.scrollIntoView({ block: 'center' })
+      const r = knob.querySelector('svg').getBoundingClientRect()
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+    }, label)
+
+  const turn = async (label, dy) => {
+    const at = await lfoKnob(label)
+    await new Promise((r) => setTimeout(r, 120))
+    await page.mouse.move(at.x, at.y)
+    await page.mouse.down()
+    await page.mouse.move(at.x, at.y + dy, { steps: 6 })
+    await page.mouse.up()
+    await settle(250)
+  }
+
+  await turn('Width', 60)
+  const narrowed = await shape()
+  check('and so does narrowing the pulse', narrowed !== asPulse)
+
+  // Depth is the difference from the oscillator's window, which ignores its
+  // Level: an LFO is only ever seen, so how far it swings is in the picture.
+  const swing = (d) => {
+    let lo = Infinity
+    let hi = -Infinity
+    for (const m of d.matchAll(/[ML] [\d.]+ ([\d.]+)/g)) {
+      const y = Number(m[1])
+      if (y < lo) lo = y
+      if (y > hi) hi = y
+    }
+    return hi - lo
+  }
+  const full = swing(narrowed)
+  await turn('Depth', 45)
+  const quieter = swing(await shape())
+  check('and Depth is how far it swings', quieter < full * 0.95, `${full.toFixed(1)} -> ${quieter.toFixed(1)} of 100`)
 }
 
 // --- the keyboard panel -----------------------------------------------
 console.log()
 console.log('the keyboard panel')
 {
+  // The stock rack already has a Keyboard. Take it out, so the one added here
+  // is the only board on the page and every lookup below finds it.
+  await page.evaluate(() => document.querySelector('[aria-label="Remove key1"]')?.click())
+  await settle(200)
   await addModule('Keyboard')
 
   const board = await page.evaluate(() => {
@@ -952,7 +1258,7 @@ console.log('\nundo and redo')
 // --- persistence -----------------------------------------------------
 console.log('\nsurviving a reload')
 {
-  await page.click('.patch-name', { clickCount: 3 })
+  await page.click(await nameField(), { clickCount: 3 })
   await page.keyboard.type('Thunder Hit')
   await settle(700) // autosave debounce
 
@@ -968,7 +1274,7 @@ console.log('\nsurviving a reload')
 // --- export and import ------------------------------------------------
 console.log('\nexport and import')
 {
-  check('the Export action is there', await pick('Patch', 'Export file...'))
+  check('the Save patch action is there', await pick('Patch', 'Save patch...'))
   await settle(600)
 
   const files = readdirSync(downloads).filter((f) => f.endsWith('.json'))
@@ -977,7 +1283,7 @@ console.log('\nexport and import')
   let parsed = null
   if (files.length) {
     parsed = JSON.parse(readFileSync(join(downloads, files[0]), 'utf8'))
-    check('it is named after the patch', files[0] === 'thunder-hit.fresyn.json', files[0])
+    check('it is named after the patch', files[0] === 'thunder-hit.fpatch.json', files[0])
     check('it carries a format version', parsed.version === 1)
     check('it carries the name', parsed.name === 'Thunder Hit')
     check('it carries the rack', parsed.patch.modules.length === (await unitCount()))
@@ -989,16 +1295,16 @@ console.log('\nexport and import')
   // Change the rack, then import the file back over it. New has no confirm
   // step now that reaching it means opening a menu, but it does go through the
   // history like any other edit -- which the undo below is what proves.
-  check('New is in the Patch menu', await pick('Patch', 'New'))
+  check('New project is in the Project menu', await pick('Project', 'New project'))
   await settle(400)
-  check('New reset the rack', (await patchName()) === 'Untitled', await patchName())
+  check('New reset the rack', (await patchName()) === 'Rack', await patchName())
 
   await page.keyboard.down('Control')
   await page.keyboard.press('KeyZ')
   await page.keyboard.up('Control')
   await settle(400)
   check('and New is undoable', (await patchName()) === 'Thunder Hit', await patchName())
-  await pick('Patch', 'New')
+  await pick('Project', 'New project')
   await settle(400)
 
   if (files.length) {
@@ -1010,11 +1316,61 @@ console.log('\nexport and import')
   }
 }
 
+// --- a project is not a patch ------------------------------------------
+console.log('\na project is not a patch')
+{
+  const tracks = () => page.evaluate(() => document.querySelectorAll('.track').length)
+  const projectName = () => page.evaluate(() => document.querySelector('.dock-name').value)
+
+  // Named on the dock bar, and nothing else writes it: renaming the track
+  // (the patch) leaves the project's name where it was.
+  await page.click('.dock-name', { clickCount: 3 })
+  await page.keyboard.type('Storm Scene')
+  await page.click(await nameField(), { clickCount: 3 })
+  await page.keyboard.type('Rumble')
+  await settle(300)
+  check('the project keeps its own name', (await projectName()) === 'Storm Scene', await projectName())
+
+  for (const f of readdirSync(downloads)) unlinkSync(join(downloads, f))
+  await pick('Project', 'Save project')
+  await settle(600)
+  const saved = readdirSync(downloads)
+  check(
+    'a project saves under its own name',
+    saved.length === 1 && saved[0] === 'storm-scene.fproject.json',
+    saved.join(','),
+  )
+
+  // A patch comes in as a track of its own, and the arrangement is untouched.
+  const before = await tracks()
+  const patchFile = join(downloads, 'rumble.fpatch.json')
+  await pick('Patch', 'Save patch...')
+  await settle(600)
+  if (existsSync(patchFile)) {
+    await (await page.$('.track-file')).uploadFile(patchFile)
+    await settle(600)
+    check('a patch can be added as a track', (await tracks()) === before + 1, `${await tracks()}`)
+    check('under its own name', (await patchName()) === 'Rumble', await patchName())
+  } else {
+    check('the patch was saved', false, readdirSync(downloads).join(','))
+  }
+
+  // And a project handed to the patch opener is turned away, by name.
+  if (saved.length === 1) {
+    const count = await tracks()
+    await (await page.$('.patch-file')).uploadFile(join(downloads, saved[0]))
+    await settle(600)
+    const notice = await page.evaluate(() => document.querySelector('.notice')?.textContent ?? '')
+    check('a project is not opened as a patch', notice.includes('not a patch'), notice)
+    check('and nothing changed', (await tracks()) === count)
+  }
+}
+
 // --- jacks on the back panel ------------------------------------------
 console.log()
 console.log('jacks on the back panel')
 {
-  await pick('Patch', 'New')
+  await pick('Project', 'New project')
   await settle(400)
   // The starting rack already has the Mixer and the Oscillator; these three
   // are the rest of what has enough patch points to crowd a panel, and where
@@ -1055,7 +1411,7 @@ console.log('jacks on the back panel')
   check('the sequencer keeps step apart from chain', (await blocks('seq1')) === 'in,step,chain', await blocks('seq1'))
   check('the oscillator says what plays it', (await blocks('osc1')) === 'mod,play,out', await blocks('osc1'))
   // A module that groups nothing is the panel's own doing, and unchanged.
-  check('an ungrouped module is still in and out', (await blocks('lfo1')) === 'in,out', await blocks('lfo1'))
+  check('an ungrouped module is still in and out', (await blocks('vca1')) === 'in,out', await blocks('vca1'))
 
   /**
    * Jacks that have escaped the unit they belong to.
@@ -1098,6 +1454,91 @@ console.log('jacks on the back panel')
   await settle(400)
   await page.keyboard.press('Tab')
   await settle(700)
+}
+
+// --- saving in place ---------------------------------------------------
+console.log('\nsaving a project in place')
+{
+  // Stand-ins for the browser's file pickers, which headless Chrome has but a
+  // script cannot answer. A "file" is a string in `__fakeFiles`; the counts
+  // say how often the page had to ask where.
+  await page.evaluateOnNewDocument(() => {
+    window.__fakeFiles = {}
+    window.__writes = []
+    window.__asked = { save: 0, open: 0 }
+    const handle = (name) => ({
+      kind: 'file',
+      name,
+      getFile: async () => new File([window.__fakeFiles[name] ?? ''], name),
+      createWritable: async () => {
+        const chunks = []
+        return {
+          write: async (b) => void chunks.push(b),
+          abort: async () => {},
+          close: async () => {
+            window.__fakeFiles[name] = await new Blob(chunks).text()
+            window.__writes.push(name)
+          },
+        }
+      },
+    })
+    window.showSaveFilePicker = async (o) => {
+      window.__asked.save++
+      return handle(o.suggestedName)
+    }
+    window.showOpenFilePicker = async () => {
+      window.__asked.open++
+      return [handle(window.__openName)]
+    }
+  })
+  await page.evaluate(() => localStorage.clear())
+  await page.reload({ waitUntil: 'networkidle0' })
+  await settle(400)
+
+  const state = () => page.evaluate(() => ({ asked: { ...window.__asked }, writes: [...window.__writes] }))
+  const chord = async (key, shift = false) => {
+    await page.keyboard.down('Control')
+    if (shift) await page.keyboard.down('Shift')
+    await page.keyboard.press(key)
+    if (shift) await page.keyboard.up('Shift')
+    await page.keyboard.up('Control')
+    await settle(400)
+  }
+
+  await chord('KeyS')
+  let s = await state()
+  check('the first save asks where', s.asked.save === 1, JSON.stringify(s))
+  check('and writes the file', s.writes.at(-1) === 'untitled.fproject.json', s.writes.join(','))
+
+  await chord('KeyS')
+  s = await state()
+  check('saving again does not ask', s.asked.save === 1, JSON.stringify(s.asked))
+  check('and writes the same file', s.writes.length === 2 && s.writes[1] === 'untitled.fproject.json', s.writes.join(','))
+
+  await pick('Project', 'Save project as...')
+  await settle(400)
+  s = await state()
+  check('save as always asks', s.asked.save === 2, JSON.stringify(s.asked))
+
+  // An opened file is the one a later save goes back into.
+  await page.evaluate(() => {
+    const saved = JSON.parse(window.__fakeFiles['untitled.fproject.json'])
+    window.__fakeFiles['opened.fproject.json'] = JSON.stringify({ ...saved, name: 'Opened' })
+    window.__openName = 'opened.fproject.json'
+  })
+  await chord('KeyO')
+  const opened = await page.evaluate(() => document.querySelector('.dock-name').value)
+  check('a project opens through the picker', opened === 'Opened', opened)
+  await chord('KeyS')
+  s = await state()
+  check('saving an opened project writes to it without asking', s.asked.save === 2 && s.writes.at(-1) === 'opened.fproject.json', JSON.stringify(s))
+
+  // A new project has never been to disk.
+  await pick('Project', 'New project')
+  await settle(400)
+  await chord('KeyS')
+  s = await state()
+  check('a new project asks again', s.asked.save === 3, JSON.stringify(s.asked))
 }
 
 console.log('\nproblems    :', problems.length ? problems : 'none')

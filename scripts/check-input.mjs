@@ -281,10 +281,17 @@ console.log("a knob's value can be said outright")
   await page.evaluate(() => window.scrollTo(0, 0))
 
   /** The middle of one part of the knob carrying `label`, in page coords. */
+  // `lpf1::CV Amt` narrows the search to one unit, for a label that more
+  // than one module in the rack carries.
+  const knobsFor = (l) => {
+    const [unit, label] = l.includes('::') ? l.split('::') : [null, l]
+    const scope = unit ? `[data-module="${unit}"] .knob` : '.knob'
+    return { scope, label }
+  }
   const partAt = (label, sel) =>
     page.evaluate(
-      (l, s) => {
-        const knob = [...document.querySelectorAll('.knob')].find(
+      ({ scope, label: l }, s) => {
+        const knob = [...document.querySelectorAll(scope)].find(
           (k) => k.querySelector('svg')?.getAttribute('aria-label') === l,
         )
         const el = knob?.querySelector(s)
@@ -292,16 +299,16 @@ console.log("a knob's value can be said outright")
         const r = el.getBoundingClientRect()
         return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
       },
-      label,
+      knobsFor(label),
       sel,
     )
   const valueOf = (label) =>
-    page.evaluate((l) => {
-      const svg = [...document.querySelectorAll('.knob svg')].find(
+    page.evaluate(({ scope, label: l }) => {
+      const svg = [...document.querySelectorAll(`${scope} svg`)].find(
         (s) => s.getAttribute('aria-label') === l,
       )
       return svg ? Number(svg.getAttribute('aria-valuenow')) : null
-    }, label)
+    }, knobsFor(label))
   const clickPart = async (label, sel, options) => {
     const at = await partAt(label, sel)
     if (!at) return false
@@ -343,6 +350,53 @@ console.log("a knob's value can be said outright")
   await new Promise((r) => setTimeout(r, 150))
   check('Escape gives up on it', !(await entryOpen()) && (await valueOf('FM Amt')) === 1)
 
+  // A pitch is a note, and a knob that spans twelve octaves cannot be tuned
+  // against another one by eye. So the panel says which note it is sounding,
+  // the knob takes one as a value, and Alt lands it on one exactly.
+  //
+  // The note is read from beside the waveform rather than from under the
+  // knob: the knob is set in hertz and the note belongs to the module, which
+  // is the only thing that knows about the Octave switch as well.
+  const noteOf = () =>
+    page.evaluate(
+      () => document.querySelector('[data-module="osc1"] .osc-wave-note')?.textContent ?? null,
+    )
+
+  // Set outright rather than assumed: the wheel section above left this knob
+  // wherever it finished with it.
+  await clickPart('Pitch', '.knob-readout')
+  await page.keyboard.type('110')
+  await page.keyboard.press('Enter')
+  await new Promise((r) => setTimeout(r, 150))
+  check('a pitch says which note it is', (await noteOf()) === 'A2', String(await noteOf()))
+
+  await clickPart('Pitch', '.knob-readout')
+  await page.keyboard.type('A3')
+  await page.keyboard.press('Enter')
+  await new Promise((r) => setTimeout(r, 150))
+  check('and takes one as a value', Math.abs((await valueOf('Pitch')) - 220) < 0.01, `${await valueOf('Pitch')} Hz`)
+  check('and says it back', (await noteOf()) === 'A3', String(await noteOf()))
+
+  // Dragged with Alt held, every value it passes through is a note: a fifth
+  // is seven of them, and seven semitones is a different number of hertz
+  // wherever you are on the knob.
+  const dial = await partAt('Pitch', 'svg')
+  await page.keyboard.down('Alt')
+  await page.mouse.move(dial.x, dial.y)
+  await page.mouse.down()
+  await page.mouse.move(dial.x, dial.y - 37, { steps: 8 })
+  await page.mouse.up()
+  await page.keyboard.up('Alt')
+  await new Promise((r) => setTimeout(r, 150))
+  const snapped = await valueOf('Pitch')
+  const semitones = 12 * Math.log2(snapped / 440)
+  check(
+    'Alt-dragging lands on a semitone',
+    Math.abs(semitones - Math.round(semitones)) < 0.02 && snapped > 220,
+    `${snapped} Hz, ${semitones.toFixed(3)} semitones from A4`,
+  )
+  check('which the note readout agrees with', !(await noteOf())?.includes('¢'), String(await noteOf()))
+
   // Copy, and then paste it somewhere it belongs and somewhere it does not.
   await clearSeen()
   check('right-clicking a knob opens a menu', await clickPart('FM Amt', 'svg', { button: 'right' }))
@@ -352,12 +406,14 @@ console.log("a knob's value can be said outright")
   await copy.click()
   await new Promise((r) => setTimeout(r, 150))
 
-  await clickPart('CV Amt', 'svg', { button: 'right' })
+  // The filter's, in octaves like FM Amt. The VCA has a CV Amt too, and it
+  // measures nothing.
+  await clickPart('lpf1::CV Amt', 'svg', { button: 'right' })
   const paste = await row('Paste')
   check('Paste is offered on a knob in the same unit', !!paste && !(await page.evaluate((b) => b.disabled, paste)))
   await paste.click()
   await new Promise((r) => setTimeout(r, 150))
-  check('and it arrives exactly', (await valueOf('CV Amt')) === 1, `${await valueOf('CV Amt')}`)
+  check('and it arrives exactly', (await valueOf('lpf1::CV Amt')) === 1, `${await valueOf('lpf1::CV Amt')}`)
 
   const cutoffWas = await valueOf('Cutoff')
   await clickPart('Cutoff', 'svg', { button: 'right' })
@@ -491,18 +547,40 @@ console.log('\nescape hatches')
 // --- trigger key bindings ----------------------------------------------
 //
 // Last in the file, and it starts and ends on a cleared autosave: this is the
-// one section that edits the patch, and a run that left the stock Trigger on
-// some other key would fail every Space check above on the next run.
+// one section that edits the patch, and a run that left a Trigger on some
+// other key would carry into the next run.
+//
+// On the tutorial rack, because the stock rack has no Trigger to bind: its
+// Keyboard is played by its own keys. The tutorial rack keeps one on Space.
 console.log('\ntrigger keys')
 {
   await page.evaluate(() => localStorage.clear())
   await page.reload({ waitUntil: 'networkidle0' })
+  // Real clicks: the menu opens on a pointer press, which a scripted
+  // element.click() does not make.
+  const menu = await page.evaluateHandle(() =>
+    [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Patch'),
+  )
+  await menu.click()
+  await new Promise((r) => setTimeout(r, 150))
+  const item = await page.evaluateHandle(() =>
+    [...document.querySelectorAll('[role=menuitem], button')].find((b) => b.textContent.includes('Library')),
+  )
+  await item.click()
+  await page.waitForSelector('.library-row')
+  const row = await page.evaluateHandle(() =>
+    [...document.querySelectorAll('.library-row')].find(
+      (r) => r.querySelector('.library-name')?.textContent?.trim() === 'Tutorial rack',
+    ),
+  )
+  await row.click()
+  await new Promise((r) => setTimeout(r, 400))
 
   const capText = () =>
     page.evaluate(() => document.querySelector('.trigger-cap')?.textContent ?? null)
   const listening = () => page.evaluate(() => !!document.querySelector('.trigger-cap.listening'))
 
-  check('the stock Trigger has a cap', (await capText()) === 'Space', `${await capText()}`)
+  check('the Trigger has a cap', (await capText()) === 'Space', `${await capText()}`)
 
   // Start the engine the way a user does, and let the note decay away again
   // so the meters below start from silence.
@@ -529,7 +607,7 @@ console.log('\ntrigger keys')
     return fill.some((v) => v > 0.05)
   }
 
-  check('Space plays the stock rack', await sounds('Space'))
+  check('Space plays the rack', await sounds('Space'))
 
   await page.click('.trigger-cap')
   check('clicking the cap starts the wait', await listening())
@@ -571,7 +649,7 @@ console.log('\ntrigger keys')
   // this is the only place it can be checked.
   console.log('\nlatch')
 
-  /** Click a position on the stock Trigger's Mode switch. */
+  /** Click a position on the Trigger's Mode switch. */
   const setMode = async (label) => {
     const found = await page.evaluate((want) => {
       const unit = [...document.querySelectorAll('.unit-face-front')].find(

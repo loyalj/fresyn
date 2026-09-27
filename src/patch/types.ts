@@ -61,6 +61,28 @@ export interface ModuleDef {
    * this is the recorder: what reaches these jacks is what lands in the wav.
    */
   tap?: [string, string]
+  /**
+   * Notes can be played on this module: it has a pitch and a velocity as well
+   * as a gate. Declared here so that finding what a sequencer should play in
+   * a given patch is a question about the catalogue rather than a list of
+   * module types kept somewhere else and forgotten about.
+   */
+  playable?: true
+  /**
+   * One of these serves every voice at once. A chord is played by giving each
+   * held note its own copy of the modules it passes through, and those copies
+   * are summed where they reach a module marked here -- the mixer, the room,
+   * the echo. Copying a reverb per note would cost eight reverbs and sound
+   * like one, and a compressor or a scope has to hear the chord, not a note.
+   */
+  shared?: true
+  /**
+   * The module can be switched out of the signal path, leaving whatever
+   * reaches its In jack to go straight on to wherever its Out went (both of
+   * them, for a stereo pair). For the filters and effects, which is where a
+   * before-and-after is what you want to hear.
+   */
+  bypass?: true
   inputs: PortDef[]
   outputs: PortDef[]
   params: import('./param').ParamSpec[]
@@ -72,6 +94,17 @@ export interface PatchModule {
   /** Sparse: anything absent falls back to the def's default. */
   params: Record<string, number>
   /**
+   * The audio this module plays, when it plays any.
+   *
+   * Beside `params` for the same reason a key binding is: it is not a number,
+   * and nothing about interpolating, clamping or smoothing it means anything.
+   * Only the hash and the name travel with the patch -- a patch stays a small
+   * file you can read -- and the audio itself lives in the browser's own
+   * storage, or arrives in a bundle. A patch whose sample is not to hand
+   * still loads; the module comes up silent and says which file it wants.
+   */
+  sample?: { id: string; name: string }
+  /**
    * The key this module's gate answers to, as a `KeyboardEvent.code`.
    *
    * Beside `params` rather than in it because it is not a number and has no
@@ -80,12 +113,23 @@ export interface PatchModule {
    * button alone.
    */
   key?: string
+  /**
+   * Switched out of the signal path; see `bypass` on the def. The module is
+   * still there, cables and knobs and all, so switching it back in is the
+   * sound it was.
+   */
+  bypass?: true
 }
 
 export interface Cable {
   id: string
   from: { module: string; port: string }
   to: { module: string; port: string }
+  /**
+   * A hue, 0..360, chosen for this cable, overriding however the rack colours
+   * the rest. For picking out the one cable that matters in a dense patch.
+   */
+  color?: number
 }
 
 export interface Patch {

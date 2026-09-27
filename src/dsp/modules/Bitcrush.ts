@@ -3,8 +3,10 @@ import { DspModule } from './types'
 const P_BITS = 0
 const P_RATE = 1
 const P_MIX = 2
+const P_CV_AMOUNT = 3
 
 const IN_SIGNAL = 0
+const IN_CV = 1
 
 /**
  * Two kinds of damage in one panel, because they are the two halves of what
@@ -35,7 +37,12 @@ export class BitcrushModule extends DspModule {
   process(slots: Float32Array) {
     const dry = slots[this.ins[IN_SIGNAL]]
 
-    this.phase += this.params[P_RATE] / this.ctx.sampleRate
+    // A falling envelope into Rate is a machine winding down: the sampler
+    // slows, the steps get longer and the pitch of what it is holding drops
+    // with it.
+    const rate =
+      this.params[P_RATE] * Math.pow(2, slots[this.ins[IN_CV]] * this.params[P_CV_AMOUNT])
+    this.phase += rate / this.ctx.sampleRate
     if (this.phase >= 1) {
       // Not a while loop: asking for a rate above the one the rack runs at
       // means every sample is a fresh reading, which is what dropping the

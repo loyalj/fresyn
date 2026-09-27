@@ -37,8 +37,10 @@ interface Props {
 export function KeysFace({ def, valueOf, onChange, onGate }: Props) {
   const noteSpec = def.params.find((p) => p.id === 'note')!
   const octaveSpec = def.params.find((p) => p.id === 'octave')!
+  const voicesSpec = def.params.find((p) => p.id === 'voices')!
   const note = Math.round(valueOf('note') ?? noteSpec.default)
   const octave = Math.round(valueOf('octave') ?? octaveSpec.default)
+  const voices = Math.round(valueOf('voices') ?? voicesSpec.default)
 
   /** True between pressing a key and letting go, so a drag can glissando. */
   const held = useRef(false)
@@ -61,6 +63,11 @@ export function KeysFace({ def, valueOf, onChange, onGate }: Props) {
   const shift = (by: number) => {
     const next = Math.min(octaveSpec.max, Math.max(octaveSpec.min, octave + by))
     if (next !== octave) onChange('octave', next)
+  }
+
+  const voice = (by: number) => {
+    const next = Math.min(voicesSpec.max, Math.max(voicesSpec.min, voices + by))
+    if (next !== voices) onChange('voices', next)
   }
 
   const key = (n: number) => (
@@ -106,6 +113,19 @@ export function KeysFace({ def, valueOf, onChange, onGate }: Props) {
             +
           </button>
           <span className="knob-label">Octave</span>
+        </div>
+
+        {/* How many notes sound at once. A stepper like Octave rather than a
+            knob, because it is a count: one is a single line, more is chords. */}
+        <div className="keys-octave">
+          <button type="button" onClick={() => voice(-1)} aria-label="Fewer voices">
+            &minus;
+          </button>
+          <span className="keys-octave-value">{voices}</span>
+          <button type="button" onClick={() => voice(1)} aria-label="More voices">
+            +
+          </button>
+          <span className="knob-label">{voices === 1 ? 'Mono' : 'Voices'}</span>
         </div>
 
         <div className="keys-readout">

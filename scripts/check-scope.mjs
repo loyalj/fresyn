@@ -91,6 +91,45 @@ const trace = () =>
   })
 
 /**
+ * The same, for the second trace.
+ *
+ * B is drawn in the text colour rather than the accent, so it is picked out
+ * the other way round: bright, and with no warmth to it. A screen with only
+ * A on it has to come back empty here, or the check below would pass on the
+ * first trace being counted twice.
+ */
+const traceB = () =>
+  page.evaluate(() => {
+    const canvas = document.querySelector('.scope-screen')
+    if (!canvas) return null
+    const ctx = canvas.getContext('2d')
+    const { width, height } = canvas
+    const { data } = ctx.getImageData(0, 0, width, height)
+
+    let lit = 0
+    let top = height
+    let bottom = -1
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = (y * width + x) * 4
+        const r = data[i]
+        const g = data[i + 1]
+        const b = data[i + 2]
+        // Grey: no channel far from any other, and bright enough to be a
+        // stroke rather than the grid. The accent is orange and fails the
+        // first half of that outright.
+        const spreadRgb = Math.max(r, g, b) - Math.min(r, g, b)
+        if (data[i + 3] > 40 && spreadRgb < 24 && r > 110) {
+          lit++
+          if (y < top) top = y
+          if (y > bottom) bottom = y
+        }
+      }
+    }
+    return { lit, spread: bottom - top }
+  })
+
+/**
  * The column where the trace reaches its highest point.
  *
  * Deliberately not "the trace's height in some fixed column": where the
@@ -233,14 +272,24 @@ const menuModules = async () => {
   )
 }
 
+/**
+ * A short press on the Keyboard's first key, which is how the stock rack is
+ * played by hand -- it has no Trigger -- and what starts the audio at all.
+ */
+async function tapKey() {
+  const key = await (await page.$('.keys-key')).boundingBox()
+  await page.mouse.move(key.x + key.width / 2, key.y + key.height * 0.8)
+  await page.mouse.down()
+  await settle(120)
+  await page.mouse.up()
+}
+
 // --- nothing patched yet ---------------------------------------------
 // Worth checking before the signal, not after: a scope that draws a lively
 // trace with its input unpatched is drawing something other than its input.
 console.log('\nwith nothing patched')
 {
-  await page.keyboard.down('Space')
-  await settle(120)
-  await page.keyboard.up('Space')
+  await tapKey()
   await settle(700)
 
   const idle = await trace()
@@ -314,9 +363,7 @@ console.log('\nwith an oscillator patched in')
 
   // The oscillator now runs continuously, so the gate only has to open once
   // to get the audio context going.
-  await page.keyboard.down('Space')
-  await settle(120)
-  await page.keyboard.up('Space')
+  await tapKey()
   await settle(800)
 
   const live = await trace()
@@ -353,6 +400,54 @@ console.log('\nwith an oscillator patched in')
       `${spread}px of drift across ${live.width}`,
     )
   }
+}
+
+// --- the second channel ----------------------------------------------
+/**
+ * B is the reason the scope has two inputs: one signal against another on the
+ * same screen, at the same instant. The filter's output against the
+ * oscillator that feeds it is the patch anyone tries first.
+ */
+console.log('\nwith a second signal on B')
+{
+  const empty = await traceB()
+  check('nothing is drawn on B while it is empty', empty && empty.lit < 40, empty ? `${empty.lit} px` : '')
+
+  await page.keyboard.press('Tab')
+  await settle(FLIP_SETTLE)
+
+  const from = await centreOf('lpf1', 'out')
+  const to = await centreOf('scope1', 'in2')
+  check('the B jack is there', !!from && !!to)
+
+  if (from && to) {
+    await page.mouse.move(from.x, from.y)
+    await page.mouse.down()
+    await page.mouse.move(to.x, to.y, { steps: 8 })
+    await page.mouse.up()
+    await settle(200)
+    check(
+      'B is patched',
+      await page.evaluate(() =>
+        document
+          .querySelector('.jack[data-module="scope1"][data-port="in2"]')
+          ?.classList.contains('occupied'),
+      ),
+    )
+  }
+
+  await page.keyboard.press('Tab')
+  await settle(FLIP_SETTLE)
+  await settle(600)
+
+  const drawn = await traceB()
+  check('a second trace is drawn', drawn && drawn.lit > empty.lit + 200, `${empty?.lit} px -> ${drawn?.lit} px`)
+  check('and it has a shape rather than a line', drawn && drawn.spread > 8, drawn ? `${drawn.spread}px tall` : '')
+
+  // A is still A: a second channel that displaced the first would be a
+  // regression nobody would notice until they were comparing two things.
+  const a = await trace()
+  check('A is still drawn beside it', a && a.lit > 0 && a.spread > 8, a ? `${a.lit} px, ${a.spread}px tall` : '')
 }
 
 // --- spectrum --------------------------------------------------------

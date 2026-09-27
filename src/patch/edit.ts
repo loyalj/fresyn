@@ -84,6 +84,28 @@ export function disconnect(patch: Patch, id: string): Patch {
  *   top of the page, so a unit added from it appears where the eye already
  *   is, rather than off the bottom of a rack that may be pages long.
  */
+/**
+ * Point a module at a sample, or at none.
+ *
+ * An edit like any other, so it lands in the history: dropping the wrong file
+ * on a panel is undone the same way a mistaken cable is.
+ */
+export function setSample(
+  patch: Patch,
+  moduleId: string,
+  sample: { id: string; name: string } | null,
+): Patch {
+  const modules = patch.modules.map((m) => {
+    if (m.id !== moduleId) return m
+    if (!sample) {
+      const { sample: _dropped, ...rest } = m
+      return rest
+    }
+    return { ...m, sample: { ...sample } }
+  })
+  return { ...patch, modules }
+}
+
 export function addModule(
   patch: Patch,
   module: PatchModule,
@@ -110,6 +132,22 @@ export function addModuleAfter(patch: Patch, afterId: string, module: PatchModul
 }
 
 /**
+ * Put a module into the rack directly above another one.
+ *
+ * Where a new unit goes when something is picked: the picked unit is where
+ * you are working, and a new one arriving at the top of a long rack would be
+ * pages from it.
+ */
+export function addModuleBefore(patch: Patch, beforeId: string, module: PatchModule): Patch {
+  const at = patch.modules.findIndex((m) => m.id === beforeId)
+  if (at < 0) return addModule(patch, module, 'top')
+
+  const modules = patch.modules.slice()
+  modules.splice(at, 0, module)
+  return { ...patch, modules }
+}
+
+/**
  * Bind a module's gate to a key, or clear the binding with `undefined`.
  *
  * Two modules on one key is allowed and useful -- it fires both, which is how
@@ -124,6 +162,101 @@ export function setModuleKey(patch: Patch, id: string, key: string | undefined):
   const { key: _dropped, ...rest } = modules[at]
   modules[at] = key ? { ...rest, key } : rest
   return { ...patch, modules }
+}
+
+/**
+ * What copying some modules holds: the modules with their knobs where they
+ * were standing, and the cables that ran between them. Cables to anything
+ * left behind are not in it -- a pasted group arrives wired to itself and to
+ * nothing else, the way a duplicated unit arrives unpatched.
+ */
+export interface ModuleClip {
+  modules: PatchModule[]
+  cables: Cable[]
+}
+
+export function copyModules(
+  patch: Patch,
+  values: Record<string, number>,
+  ids: Iterable<string>,
+): ModuleClip {
+  const wanted = new Set(ids)
+  // In rack order, so they paste in the order they were seen.
+  const modules = patch.modules
+    .filter((m) => wanted.has(m.id))
+    .map((m) => {
+      const params: Record<string, number> = { ...m.params }
+      for (const spec of defOf(m.type).params) {
+        const v = values[`${m.id}.${spec.id}`]
+        if (v !== undefined) params[spec.id] = v
+      }
+      const copy: PatchModule = { ...m, params }
+      if (m.sample) copy.sample = { ...m.sample }
+      return copy
+    })
+  const cables = patch.cables
+    .filter((c) => wanted.has(c.from.module) && wanted.has(c.to.module))
+    .map((c) => ({ ...c, from: { ...c.from }, to: { ...c.to } }))
+  return { modules, cables }
+}
+
+/**
+ * Put a copied group into a rack -- the same one or another track's -- with
+ * fresh ids, its own cables re-pointed at the new ids, and its knobs where
+ * they were copied from. At the top, where a module added from the menu goes,
+ * because that is where the eye is.
+ */
+export function pasteModules(
+  patch: Patch,
+  values: Record<string, number>,
+  clip: ModuleClip,
+): { patch: Patch; values: Record<string, number>; ids: string[] } {
+  let next = patch
+  const renamed = new Map<string, string>()
+  const added: PatchModule[] = []
+  for (const m of clip.modules) {
+    const id = nextModuleId({ ...next, modules: [...next.modules, ...added] }, m.type)
+    renamed.set(m.id, id)
+    added.push({ ...m, id, params: { ...m.params } })
+  }
+  next = { ...next, modules: [...added, ...next.modules] }
+  for (const c of clip.cables) {
+    const from = { module: renamed.get(c.from.module)!, port: c.from.port }
+    const to = { module: renamed.get(c.to.module)!, port: c.to.port }
+    const wired = connect(next, from, to)
+    next = c.color === undefined ? wired : setCableColor(wired, cableId(from, to), c.color)
+  }
+  const out = reconcileValues(next, values)
+  for (const m of added) {
+    for (const [param, v] of Object.entries(m.params)) out[`${m.id}.${param}`] = v
+  }
+  return { patch: next, values: out, ids: added.map((m) => m.id) }
+}
+
+/** Switch a module out of the signal path, or back in. */
+export function toggleBypass(patch: Patch, id: string): Patch {
+  const modules = patch.modules.map((m) => {
+    if (m.id !== id || !defOf(m.type).bypass) return m
+    if (m.bypass) {
+      const { bypass: _dropped, ...rest } = m
+      return rest
+    }
+    return { ...m, bypass: true as const }
+  })
+  return { ...patch, modules }
+}
+
+/** Give one cable a colour of its own, or none to hand it back to the rack's. */
+export function setCableColor(patch: Patch, id: string, color: number | undefined): Patch {
+  const cables = patch.cables.map((c) => {
+    if (c.id !== id) return c
+    if (color === undefined) {
+      const { color: _dropped, ...rest } = c
+      return rest
+    }
+    return { ...c, color }
+  })
+  return { ...patch, cables }
 }
 
 /** A free id for a new module of this type: osc1, osc2, ... */

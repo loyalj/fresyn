@@ -16,7 +16,7 @@ import {
 } from '../src/audio/render'
 import { encodeWav } from '../src/audio/wav'
 import { makeZip } from '../src/audio/zip'
-import { defaultPatch } from '../src/patch/defaultPatch'
+import { triggerPatch } from '../src/patch/defaultPatch'
 import { defOf } from '../src/patch/defs'
 import { initialValues } from '../src/patch/edit'
 import type { Patch } from '../src/patch/types'
@@ -33,7 +33,7 @@ const same = (a: Float32Array, b: Float32Array) =>
 
 /** The stock rack with noise cabled into the mixer, so randomness is audible. */
 function noisyPatch(): Patch {
-  const p = defaultPatch()
+  const p = triggerPatch()
   // The stock rack holds nothing random -- an oscillator, a filter, an LFO
   // and a mixer are all deterministic -- so a seed would have nothing to
   // change. Noise is the cheapest source that gives it something.
@@ -66,7 +66,7 @@ console.log('\nreproducibility')
 // --- shaping -----------------------------------------------------------
 console.log('\nlength and tail')
 {
-  const patch = defaultPatch()
+  const patch = triggerPatch()
   const values = initialValues(patch)
   const out = renderPatch(patch, values, { duration: 4, gateSeconds: 0.05 })
 

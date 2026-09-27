@@ -92,7 +92,77 @@ function concat(parts: Uint8Array[]): Uint8Array<ArrayBuffer> {
 
 let table: Uint32Array | null = null
 
-function crc32(data: Uint8Array): number {
+/**
+ * Read a zip back, which is only worth having because we write them.
+ *
+ * Through the central directory rather than by walking the local headers.
+ * Our own writer puts the sizes in both places, but an archive that has been
+ * unzipped, edited and zipped again by a file manager may carry them in a
+ * trailing descriptor instead, leaving the local header saying zero -- and
+ * the central directory is the one place they are always right.
+ *
+ * Stored entries come out as they went in. Deflated ones -- which is what
+ * anything re-zipped elsewhere will be -- go through the browser's own
+ * decompressor, so reading somebody else's bundle still costs no dependency.
+ */
+export async function readZip(bytes: Uint8Array): Promise<ZipEntry[]> {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  const decoder = new TextDecoder()
+
+  // The end record is last, but may be followed by a comment, so it is found
+  // by scanning back rather than by arithmetic.
+  let eocd = -1
+  for (let i = bytes.length - 22; i >= 0 && i > bytes.length - 22 - 0xffff; i--) {
+    if (view.getUint32(i, true) === 0x06054b50) {
+      eocd = i
+      break
+    }
+  }
+  if (eocd < 0) throw new Error('not a zip file')
+
+  const count = view.getUint16(eocd + 10, true)
+  let at = view.getUint32(eocd + 16, true)
+  const entries: ZipEntry[] = []
+
+  for (let n = 0; n < count; n++) {
+    if (at + 46 > bytes.length || view.getUint32(at, true) !== 0x02014b50) break
+    const method = view.getUint16(at + 10, true)
+    const compressed = view.getUint32(at + 20, true)
+    const nameLength = view.getUint16(at + 28, true)
+    const extraLength = view.getUint16(at + 30, true)
+    const commentLength = view.getUint16(at + 32, true)
+    const localAt = view.getUint32(at + 42, true)
+    const name = decoder.decode(bytes.subarray(at + 46, at + 46 + nameLength))
+    at += 46 + nameLength + extraLength + commentLength
+
+    // The local header repeats the name and carries its own extra field,
+    // which is often a different length from the central one.
+    const localName = view.getUint16(localAt + 26, true)
+    const localExtra = view.getUint16(localAt + 28, true)
+    const from = localAt + 30 + localName + localExtra
+    const raw = bytes.slice(from, from + compressed)
+
+    if (method === 0) {
+      entries.push({ name, data: raw as Uint8Array<ArrayBuffer> })
+    } else if (method === 8) {
+      entries.push({ name, data: await inflate(raw) })
+    } else {
+      throw new Error(`${name} is compressed in a way this cannot read`)
+    }
+  }
+
+  return entries
+}
+
+async function inflate(data: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
+  const stream = new Blob([data as BlobPart])
+    .stream()
+    .pipeThrough(new DecompressionStream('deflate-raw'))
+  const out = new Uint8Array(await new Response(stream).arrayBuffer())
+  return out as Uint8Array<ArrayBuffer>
+}
+
+export function crc32(data: Uint8Array): number {
   if (!table) {
     table = new Uint32Array(256)
     for (let i = 0; i < 256; i++) {

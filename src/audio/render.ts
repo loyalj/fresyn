@@ -1,3 +1,4 @@
+import type { SampleBank } from '../dsp/samples'
 import { GraphEngine } from '../dsp/GraphEngine'
 import { streamFor, streamSeed } from '../dsp/Rng'
 import { compile } from '../patch/compile'
@@ -8,6 +9,8 @@ import type { Patch } from '../patch/types'
 const BLOCK = 128
 
 export interface RenderOptions {
+  /** Audio for any Sampler in the patch. Without it they render silent. */
+  samples: SampleBank | undefined
   sampleRate: number
   /** Longest the render may run, in seconds. */
   duration: number
@@ -33,6 +36,10 @@ export interface RenderResult {
 }
 
 export const DEFAULT_RENDER: RenderOptions = {
+  // Undefined rather than an empty bank: a render that was given no audio and
+  // a render whose audio is missing are the same thing to a Sampler, and both
+  // of them are silence rather than a failure.
+  samples: undefined,
   sampleRate: 48000,
   duration: 2,
   gateSeconds: 0.1,
@@ -64,7 +71,7 @@ export function renderPatch(
     if (index !== undefined) params[index] = value
   }
 
-  const engine = new GraphEngine(compiled, opts.sampleRate, params, opts.seed)
+  const engine = new GraphEngine(compiled, opts.sampleRate, params, opts.seed, opts.samples)
   // A render is what reaches the recorder, not what reaches the speakers.
   // With nothing patched to it the two are the same signal.
   engine.setTap('recorder')
@@ -95,18 +102,46 @@ export function renderPatch(
   return finish(left, right, opts)
 }
 
-/** Trim the silent tail, fade what is left, and report the peak. */
-function finish(left: Float32Array, right: Float32Array, opts: RenderOptions): RenderResult {
+export interface TrimOptions {
+  sampleRate: number
+  /** Fade applied to the tail, to stop the trim from clicking. */
+  fadeMs: number
+  /** Trim anything quieter than this off the end. */
+  silenceDb: number
+  /**
+   * Never trim below this, and never fade inside it.
+   *
+   * What a song bounce needs. An arrangement's length is a decision somebody
+   * made -- a bar with notes only in its first half is still a bar -- so
+   * trimming the quiet end of it would produce a file that no longer tiles,
+   * which for a piece of looping game music is the whole job. Everything past
+   * it is release and reverb, and that is fair game.
+   */
+  minFrames?: number
+}
+
+/**
+ * Trim the silent tail, fade what is left, and report the peak.
+ *
+ * Shared with the song bounce, which wants exactly this and nothing else: a
+ * piece ends when its last reverb tail has died away, and where that is
+ * cannot be worked out from the arrangement.
+ */
+export function trimTail(left: Float32Array, right: Float32Array, opts: TrimOptions) {
   const threshold = Math.pow(10, opts.silenceDb / 20)
+  const floor = Math.min(left.length, Math.max(BLOCK, opts.minFrames ?? 0))
 
   let end = left.length
-  while (end > BLOCK) {
+  while (end > floor) {
     const i = end - 1
     if (Math.abs(left[i]) > threshold || Math.abs(right[i]) > threshold) break
     end--
   }
 
-  const fade = Math.min(Math.round((opts.fadeMs / 1000) * opts.sampleRate), end)
+  // Only the part beyond the arrangement may be faded. With nothing left past
+  // it there is nothing to fade and nothing to click: the cut is exactly where
+  // the piece ends, which is where the next pass of a loop begins.
+  const fade = Math.min(Math.round((opts.fadeMs / 1000) * opts.sampleRate), end - floor)
   const l = left.subarray(0, end)
   const r = right.subarray(0, end)
 
@@ -125,13 +160,16 @@ function finish(left: Float32Array, right: Float32Array, opts: RenderOptions): R
   }
 
   return {
-    left: l.slice(),
-    right: r.slice(),
-    sampleRate: opts.sampleRate,
-    seed: opts.seed,
+    left: l.slice() as Float32Array<ArrayBuffer>,
+    right: r.slice() as Float32Array<ArrayBuffer>,
     peak,
     seconds: end / opts.sampleRate,
   }
+}
+
+function finish(left: Float32Array, right: Float32Array, opts: RenderOptions): RenderResult {
+  const trimmed = trimTail(left, right, opts)
+  return { ...trimmed, sampleRate: opts.sampleRate, seed: opts.seed }
 }
 
 /** The seed for one take in a batch. */

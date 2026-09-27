@@ -8,9 +8,37 @@ const P_RELEASE = 3
 
 const IN_GATE = 0
 
+const OUT_LEVEL = 0
+const OUT_END = 1
+const OUT_INV = 2
+
+/** How long the End pulse stays up, matching the Burst's. */
+const END_SECONDS = 0.002
+
+/**
+ * The standalone envelope: a gate in, a shape out, and two ways of saying
+ * more about that shape.
+ *
+ * **End** fires when the shape finishes, the way the Burst and the Sequencer
+ * report that they are done. It is what chains two of these into one longer
+ * gesture -- a fast sweep that hands over to a slow one -- and what fires
+ * something at the moment a hit stops rather than when it starts.
+ *
+ * **Inv** is the same shape upside down: full while the envelope is shut and
+ * shut while it is full. Not the negative of it, which every destination in
+ * the rack can already ask for by turning its own amount knob below zero;
+ * this is the one that cannot be had that way, and it is the one ducking
+ * wants -- patch it to a VCA and everything else gets out of the way each
+ * time this envelope fires.
+ */
 export class AdsrModule extends DspModule {
   private env = new Envelope(this.ctx.sampleRate)
   private gate = new EdgeDetector()
+  /** Whether the shape was running last sample, for spotting the end of it. */
+  private wasActive = false
+  /** Samples of End pulse left to put out. */
+  private ending = 0
+  private readonly endPulse = Math.max(1, Math.round(END_SECONDS * this.ctx.sampleRate))
 
   process(slots: Float32Array) {
     // Parameters first: gateOn() branches on the stage lengths, so setting
@@ -27,6 +55,18 @@ export class AdsrModule extends DspModule {
     if (rose) this.env.gateOn()
     else if (!this.gate.isHigh && this.env.isActive) this.env.gateOff()
 
-    slots[this.outs[0]] = this.env.next()
+    const level = this.env.next()
+
+    // The edge, not the state: an envelope that has been idle for a second is
+    // not ending, it has ended. Read after next(), so the sample the envelope
+    // goes quiet on is the sample End goes high.
+    const active = this.env.isActive
+    if (this.wasActive && !active) this.ending = this.endPulse
+    this.wasActive = active
+    if (this.ending > 0) this.ending--
+
+    slots[this.outs[OUT_LEVEL]] = level
+    slots[this.outs[OUT_END]] = this.ending > 0 ? 1 : 0
+    slots[this.outs[OUT_INV]] = 1 - level
   }
 }

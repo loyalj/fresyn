@@ -16,9 +16,14 @@
     "check:rack": "node scripts/check-rack.mjs",
     "check:render": "esbuild scripts/check-render.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/check-render.mjs --log-level=warning && node node_modules/.cache/check-render.mjs",
     "check:export": "node scripts/check-export.mjs",
+    "check:roll": "node scripts/check-roll.mjs",
+    "check:sampler": "node scripts/check-sampler.mjs",
     "check:scope": "node scripts/check-scope.mjs",
+    "check:song": "esbuild scripts/check-song.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/check-song.mjs --log-level=warning && node node_modules/.cache/check-song.mjs",
     "check:manual": "esbuild scripts/check-manual.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/check-manual.mjs --log-level=warning && node node_modules/.cache/check-manual.mjs",
+    "check:instruments": "esbuild scripts/check-instruments.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/check-instruments.mjs --log-level=warning && node node_modules/.cache/check-instruments.mjs",
     "check:modules": "esbuild scripts/check-modules.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/check-modules.mjs --log-level=warning && node node_modules/.cache/check-modules.mjs",
+    "check:tools": "node scripts/check-tools.mjs",
     "check:theme": "node scripts/check-theme.mjs"
   },
   "dependencies": {

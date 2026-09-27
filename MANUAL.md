@@ -49,13 +49,16 @@ controls that make a sound.
 
 The rack you start with is already wired into a working synth voice.
 
-1. Click anywhere on the page once (browsers will not let a page make sound
-   until you interact with it).
-2. Hold the **spacebar**.
+1. Click a key on the **Keyboard** panel.
 
-You should hear a short plucked note. Space is what the rack's **Trigger**
-module is bound to, and the Trigger's Gate jack is patched to the oscillator.
-Hold the key and the gate opens; let go and it releases.
+You should hear a short plucked note — clicking is also what lets a browser
+make sound at all. Hold the key and the gate opens; let go and it releases.
+Drag across the keys to play each in turn.
+
+**To play from the computer keyboard, add a Trigger.** **Modules → Control →
+Trigger** adds one to the rack, bound to **Space**; patch its Gate
+to the Keyboard's Gate input and Space plays whichever key you clicked last.
+Every rack in **Patch → Library** already has one.
 
 **One key does not fire the whole rack.** What a key plays is decided by
 cables, like everything else here: a Trigger fires whatever its Gate jack is
@@ -70,23 +73,24 @@ layer of a sound and do not want to hear the rest.
 
 ### What you started with
 
-Five modules and four cables:
+Five modules and six cables, set up so the piano roll plays it in tune:
 
-- **gate1** — a **Trigger**, bound to **Space**. Its Gate jack is patched to
-  the oscillator, which is the only reason a key makes a sound at all. It is
-  the one module in the rack the keyboard reaches.
-- **osc1** — an **Oscillator** making the sound. Its own envelope is turned
-  up, which is what makes it a pluck instead of a drone.
-- **lpf1** — a **Ladder Filter** taking the top off it. The oscillator's Env
-  jack is patched to its CV, so the filter opens with the note and closes as
-  it fades.
-- **lfo1** — an **LFO**, patched to nothing. It is there because it is the
-  first thing you will want, and where you send it is the first interesting
-  decision.
+- **key1** — a **Keyboard**. Notes from the piano roll land here. Its
+  **Pitch** goes to the oscillator's FM input, its **Gate** to the
+  oscillator's Gate, and its **Vel** to the VCA. Its **Voices** are at 6, so
+  the roll can play chords on it.
+- **osc1** — an **Oscillator** making the sound. **FM Amt** is at +1.00, so
+  one octave in the roll is one octave out of the speaker; with the keyboard
+  on its lowest key it plays whatever its Pitch knob says. Its own envelope is
+  turned up, which is what makes it a pluck instead of a drone.
+- **vca1** — a **VCA** with its Level at zero, so its gain is the note's
+  velocity. A softer note in the roll is a quieter one.
+- **lpf1** — a **Ladder Filter**, set to **highpass**.
 - **mix1** — a **Mixer**, which is the way out to your speakers.
 
 **The smallest rack that works is an Oscillator and a Mixer**, so you can
-throw most of this away and still have a sound.
+throw most of this away and still have a sound. **Add track** in the Music
+dock starts each new track from this same rack.
 
 **There is no recorder.** The rack makes noise without one; add a **Recorder**
 from **Modules → Output → Recorder** when you want files out of it, and its panel carries the
@@ -94,20 +98,40 @@ render controls.
 
 ### Or start from a finished rack
 
-**Patch → Library...** opens a shelf of fifteen racks that already make a
-sound — a laser, a footstep, wind, an explosion, gunfire, a sci-fi door.
+**Patch → Library...** opens a set of shelves of racks that already make a
+sound. **Tutorials** holds every rack the tutorials below build — a laser, a
+footstep, wind, an explosion, gunfire, a sci-fi door — plus the tutorial rack
+they start from. The other shelves are instruments to write music with:
+
+- **Keys** — electric piano, organ, harpsichord, clavinet, music box, synth piano
+- **Plucked** — nylon guitar, harp, pizzicato strings, koto, kalimba
+- **Bells & mallets** — tubular bell, glockenspiel, marimba, vibraphone, steel drum
+- **Strings & pads** — string ensemble, warm pad, glass pad, slow-evolving pad
+- **Brass & winds** — brass section, trumpet, French horn, flute, clarinet, pan flute
+- **Bass** — synth, sub, acid, plucked, FM and Reese basses
+- **Leads** — square, glide, sync and chiptune leads
+- **Drums** — kick, snare, closed and open hats, clap, tom, woodblock, cowbell, shaker, crash
+
+**↑ and ↓** move through a shelf and **← and →** move between shelves. The
+badge on each instrument says how it plays: **voices** means it plays chords,
+**Mono** means one note at a time — a bass or a lead, where each note takes
+over from the last — and **Hit** is a drum, one lane in the roll. Every
+pitched instrument has its bottom key on a C, and is played from Space as well
+as from the roll.
+
 Choosing one puts it on the bench with every cable patched and every knob set,
 which is the fastest way to see what this rack can do before you have learned
-where anything is.
+where anything is. Load an instrument onto each track of a song and you have
+a band.
 
 They are **templates, not files**. Choosing one replaces what you are working
 on with a copy of it; nothing is ever written back, and there is no way to
 change what is on the shelf from inside the app. What you do to the copy is
-yours, and **Patch → Export file...** is how you keep it.
+yours, and **Patch → Save patch...** is how you keep it.
 
 It lands as one edit, so **Ctrl+Z** puts back whatever you had.
 
-Each one is a tutorial from section 7, already built. Load it, take it apart,
+Each one is a tutorial from section 8, already built. Load it, take it apart,
 and read the tutorial when you want to know why it works.
 
 ---
@@ -116,22 +140,26 @@ and read the tutorial when you want to know why it works.
 
 | Action | How |
 | --- | --- |
-| Play a Trigger | Hold the key on its cap — **Space** on the stock rack |
+| Play a Trigger | Hold the key on its cap — **Space** on every library rack |
 | Trigger one module | Hold its **TRIGGER** button |
 | Turn the rack around | **Tab** |
 | Undo | **Ctrl+Z** |
 | Redo | **Ctrl+Shift+Z** or **Ctrl+Y** |
+| Save the project | **Ctrl+S**; **Ctrl+Shift+S** to save as a new file |
+| Open a project | **Ctrl+O** |
 | Patch a cable | Drag from one jack to another (back panel) |
 | Unplug a cable | Drag out of a jack and let go anywhere |
 | Unplug a cable | Click the middle of the cable |
 | Clear a jack | Right-click it |
-| Add a module | **Modules** in the menu bar; it arrives at the top of the rack |
+| Add a module | **Modules** in the menu bar; it arrives in front of the first picked unit, or at the top of the rack when nothing is picked |
 | Start from a finished rack | **Patch → Library...** |
 | Render to WAV | **Render**, on the Recorder panel |
 | Turn a knob | Drag it up and down |
 | Turn a knob finely | Hold **Shift** while dragging |
 | Nudge a knob | **Mouse wheel** over it |
 | Step a knob exactly | **Shift + mouse wheel** |
+| Snap a pitch to a note | Hold **Alt** while dragging |
+| Step a pitch by a semitone | **Alt + mouse wheel** |
 | Type a knob's value | Click the number under it |
 | Copy or paste a value | Right-click a knob |
 | Reset a knob | Double-click it |
@@ -141,6 +169,19 @@ and read the tutorial when you want to know why it works.
 | Remove a unit | Hover it on the back, use **×** |
 | Change the theme | The dropdown at the top |
 | Switch dark and light | The sun/moon button beside it |
+
+**Tuning by note.** Hold **Alt** while dragging an oscillator's Pitch knob and
+it lands on whole notes only; **Alt + wheel** steps one semitone at a time.
+You can also type a note into its readout -- `A3`, `f#2`, `Bb1` -- which is
+the quickest way to put two oscillators an exact interval apart. It is the one
+knob that takes this: everything else measured in hertz, a filter cutoff or an
+LFO rate, is a frequency rather than a note.
+
+The oscillator reports the note it is **sounding** under the waveform window
+on its panel -- `A2`, or `C3 -26¢` when it is between two. It is read there
+rather than under the Pitch knob because the knob only knows what it is set
+to: with Octave at +1, a Pitch knob reading 110 Hz is an oscillator sounding
+A3.
 
 **Setting a knob to an exact number.** Dragging and the plain wheel are for
 finding a value; **Shift + wheel** is for saying one. A notch moves the last
@@ -153,14 +194,14 @@ knob to copy its value or paste one in; a paste is refused if it measures
 something else, so a decay time cannot land in a cutoff.
 
 The bar across the top is a panel of its own, bolted to the head of the rack:
-it stays put while the rack scrolls under it, so the transport, the patch name
-and **Tab** are always in reach.
+it stays put while the rack scrolls under it, so the menus and **Tab** are
+always in reach.
 
-The patch name at the top is just a text field. It saves automatically, and
-it becomes the filename when you export sounds.
-
-**Import** and **Export** load and save the whole rack as a `.json` file.
-**New** starts over from the stock rack, and asks once before it does.
+A patch is named on its track, in the list down the side of the **Music** dock:
+click the name and type. The project is named in the box at the left end of the
+dock's bar. Both save automatically, and each becomes the filename of what it
+names: takes and saved patches are called after the patch, saved projects and
+bounces after the project. See [Projects, tracks and patches](#projects-tracks-and-patches).
 
 Beside them are the two appearance controls. The dropdown picks a **theme** and
 the button next to it swings that theme between **dark and light**:
@@ -235,6 +276,21 @@ uses them — the cap says *In use* rather than silently doing nothing.
 Add one Trigger per sound you want to play separately. Two on the same key is
 allowed, and fires both.
 
+- **Inputs:** Trig (fires it, like the key)
+- **Outputs:** Gate, Vel (how hard a note from the roll struck it)
+
+**Vel is for drums.** On a track with no Keyboard, the roll plays the Trigger,
+and each note's velocity comes out of **Vel** — 1.00 for the key, the button
+or a cable, which have none. Patch it into a **VCA**'s CV, with the VCA's
+Level at about 0.25 and CV Amt at 0.75, and a soft hit in the roll is a
+quieter one without a ghost note disappearing altogether. Every drum in the
+library is wired this way.
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Mode | held / once / latch | held | What a press does: open while held, a fixed length, or on until pressed again |
+| Length | 2 ms – 2.00 s | 80 ms | How long the gate stays open in **once** mode |
+
 **Mode** is what the gate does with a press.
 
 | Mode | What a press does |
@@ -254,9 +310,16 @@ engine you want running while both hands are on other knobs. It is the only
 mode a render ignores: a render has no second press, so a latched Trigger
 holds for the render's Gate setting like any other.
 
+**The Trig jack makes this a gate shaper.** Anything that puts out a gate can
+fire a Trigger, and Mode then decides what comes out the other side. A Clock
+into Trig with Mode on **once** gives a fixed length at the clock's rate,
+which the Clock cannot do on its own: its Width is a fraction of the period,
+so its pulses stretch as it slows down and this one does not.
+
 You can still hold a **once** Trigger down — nothing stops you — but the gate
 it puts out will not get any longer.
 
+- **Inputs:** Trig (fires it, exactly as the key does)
 - **Outputs:** Gate
 - **Knobs:** Mode, Length
 - **Key:** set on the cap. A new Trigger arrives on **Space**.
@@ -273,16 +336,21 @@ it puts out will not get any longer.
 The main sound source: a repeating waveform. It also contains a complete
 envelope of its own, so a simple sound can be made from this module alone.
 
-- **Inputs:** FM, PWM, Sync, Gate
+- **Inputs:** FM, PWM, Sync, Gate, Pitch (one octave per 1.0, for a keyboard)
 - **Outputs:** Out (the sound), Env (its envelope as CV)
 
 | Knob | Range | Default | What it does |
 | --- | --- | --- | --- |
-| Pitch | 20 Hz – 4.00 kHz | 110 Hz | How high it sounds |
+| Pitch | 2.00 Hz – 12.00 kHz | 110 Hz | How high it sounds. **Alt** while dragging snaps it to a note, and one can be typed in |
+| Octave | −3 – +3 | 0 | Whole octaves on top of Pitch. The coarse half of the pair |
 | Wave | saw / pulse / tri / sine | saw | Its tone. Saw is bright and buzzy, sine is pure, pulse is hollow, tri is soft |
 | Width | 0.02 – 0.98 | 0.50 | Shapes **pulse** and **tri**; saw and sine ignore it. Away from 0.50 a pulse gets thinner and nasal, and a triangle tilts into a ramp |
 | FM Amt | −4.00 – +4.00 | 0.00 | How far the FM input moves the pitch, in octaves |
+| FM Mode | exp / linear | exp | What kind of move that is. **exp** is in octaves, **linear** is in multiples of the Pitch knob |
+| Level | 0.00 – 1.00 | 1.00 | How loud it leaves the module. The bar beside it shows what is going out |
 | Env Amt | 0.00 – 1.00 | 0.00 | How much its own envelope shapes its volume. **At 0 the envelope is not heard** |
+| Env Pitch | −4.00 – +4.00 | 0.00 | How far its own envelope moves the pitch, in octaves |
+| Env Width | −1.00 – +1.00 | 0.00 | How far its own envelope moves the Width |
 | Delay | 0 ms – 2.00 s | 0 ms | Wait this long after the trigger before starting |
 | Attack | 1 ms – 2.00 s | 2 ms | Time to rise to full |
 | Hold | 0 ms – 2.00 s | 0 ms | Stay at full this long |
@@ -290,19 +358,137 @@ envelope of its own, so a simple sound can be made from this module alone.
 | Sustain | 0.00 – 1.00 | 0.00 | Level it rests at while the trigger is held |
 | Release | 2 ms – 4.00 s | 150 ms | Time to fade out after you let go |
 
-The graph on the panel is drawn by running the envelope itself, so it always
-matches what you will hear.
+**The two screens are drawn by the module itself.** The envelope graph is the
+envelope, run; the little window at the end of the top row is two cycles of
+the oscillator, run. Neither is an illustration of what the knobs are meant to
+do -- they are what the knobs are doing, so they always match what you will
+hear. The wave window is the quickest way to see what Width is up to: "pulse"
+and "0.14" are two numbers, and a sliver is a picture.
+
+**Pitch and Octave are a pair.** Pitch covers everything from a 2 Hz rumble
+you can count to a 12 kHz sparkle, which is more than twelve octaves across
+one knob -- so Octave is the coarse control and Pitch is the fine one. Hold
+**Shift** while dragging any knob for five times the resolution.
+
+**And it is tuned in notes as well as hertz.** Under the waveform window the
+panel says which note it is sounding -- `A2`, or `C3 -26¢` on the way between
+two -- counting the Octave switch, because that is the note you hear. Holding
+**Alt** while dragging Pitch puts it on whole notes, and you can type one into
+its readout. That is what makes two oscillators tunable against each other: a
+fifth apart is seven semitones, which is 55 Hz at the bottom of this knob and
+3.6 kHz at the top, and no amount of careful dragging finds it by eye.
+
+**The Pitch jack is for playing it.** A signal of 1.0 there is one octave up,
+always, with no knob to set — so a Keyboard's Pitch patched here plays in tune
+straight away. It adds to whatever the FM jack is doing rather than sharing
+it, which is the point: with the note on its own jack, FM is free for another
+oscillator, and a voice can be played and frequency-modulated at once. That
+is how the electric piano, the bells and the FM bass in the library work.
 
 **About FM Amt:** the pitch change is in octaves, so +1.00 means a signal of
 1.0 raises the pitch by one octave. An envelope running 1 → 0 with FM Amt at
 +3.00 therefore starts three octaves up and falls to the Pitch knob. That is
 a laser.
 
+**About FM Mode.** On **exp** the amount is in octaves, which is what you want
+whenever something is *playing* the pitch: a keyboard, a sequencer, an
+envelope sweep. The same signal is the same interval wherever the oscillator
+is tuned.
+
+On **linear** the amount is in multiples of the Pitch knob instead, so +1.00
+means a signal of 1.0 doubles the frequency and −1.00 takes it to zero — and
+past that, straight through into negative frequencies, where the wave simply
+runs backwards. That sounds like nothing on its own. It matters when the thing
+patched into FM is another *oscillator*, at audio rate: linear FM leaves the
+average pitch exactly where you tuned it, so instead of a wobble you get a
+fixed set of extra partials, spaced by the modulator's rate. That is the sound
+of bells, chimes, coins and clangs — see [Tutorial 16](#tutorial-16--bell).
+
 **Env Amt is a blend, not a switch.** At 0.00 the oscillator drones. At 1.00
 it is entirely the envelope's to shape. Halfway, it never fully goes quiet.
 
 **The Env output works whatever Env Amt is set to.** You can use the
 oscillator purely as an envelope generator if you like.
+
+**The envelope has three destinations, not one.** Env Amt is its volume, Env
+Pitch is a sweep and Env Width is a PWM sweep, and all three run off the same
+shape at the same time. Env Pitch is the one to know: **Env Pitch +3.00** with
+a short Decay is [Tutorial 1](#tutorial-1--laser) with no envelope module, no
+cable and no second panel -- one oscillator is a laser on its own. Env Width
+does the same for the thickening sweep a pulse gets, without the LFO.
+
+**Level is the last thing before the jack**, after the envelope, and the bar
+beside it shows what is actually leaving. It is there so that stacking two
+oscillators into a mixer does not mean fighting the master fader, and so that
+you can see which of them is loud when a patch comes out muddy.
+
+---
+
+### Sampler
+
+Plays a sound file. Drop a WAV onto its panel, or click the panel to choose
+one; the file is kept in this browser and travels in a saved rack.
+
+- **Inputs:** Gate (plays it), Pitch (one octave per 1.0, times Pitch Amt)
+- **Outputs:** L, R, End (a pulse when a one-shot reaches the end)
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Start | 0.00 – 1.00 | 0.00 | Where in the file it starts, as a fraction of the whole |
+| Length | 0.00 – 1.00 | 1.00 | How much of what is left after Start it plays. 1.00 is to the end |
+| Speed | 0.25x – 4.00x | 1.00x | How fast it reads the file, which is also how high it sounds |
+| Pitch Amt | −4.00 – +4.00 | +0.00 | How far the Pitch input moves it, in octaves |
+| Fade | 1 ms – 500 ms | 2 ms | A fade at both ends of the region, so it never clicks |
+| Level | 0.00 – 1.00 | 1.00 | How loud it leaves the module |
+| Loop | one-shot / loop | one-shot | Play the region once, or round and round while the gate is held |
+| Direction | forward / reverse | forward | Which way through the file it reads |
+
+**Start and Length pick a slice of a longer file**, which is how one recording
+of a drawer being opened becomes a creak, a thud and a rattle.
+
+---
+
+### Voice
+
+A buzz shaped like the one your vocal cords make, rather than a waveform from
+a synthesiser. On its own it is a reedy drone. Patch it into a **Formant** and
+it becomes a voice. The Voice makes the buzz and the Formant makes the vowel,
+the same split a real throat and mouth make.
+
+- **Inputs:** Gate, Pitch (one octave per 1.0, for a keyboard), Breath (added
+  to the Breath knob)
+- **Outputs:** Out (the sound), Env (its envelope as CV)
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Pitch | 30 Hz – 1.20 kHz | 110 Hz | The note it sings. **Alt** while dragging snaps it to a note |
+| Tone | 0.00 – 1.00 | 0.50 | Soft and breathy at 0, pressed and buzzy at 1 |
+| Breath | 0.00 – 1.00 | 0.10 | Air in the voice. **At 1.00 the buzz is gone and it whispers** |
+| Jitter | 0.00 – 1.00 | 0.20 | Tiny cycle-to-cycle wobble in pitch and loudness. What makes it sound alive; high settings are old, rough or huge |
+| Growl | 0.00 – 1.00 | 0.00 | Makes alternate cycles differ, which adds a rumble an octave under the note: vocal fry, a growl, a zombie |
+| Vib Rate | 1.00 Hz – 12 Hz | 5.50 Hz | How fast the vibrato wobbles |
+| Vib Depth | 0.00 – 1.00 | 0.00 | How far it wobbles, up to a semitone either side |
+| Mode | drone / gated | drone | **drone** sounds all the time. **gated** sounds only while the Gate is open or the button is held |
+| Attack | 2 ms – 2.00 s | 40 ms | In gated mode, how long a note takes to swell in |
+| Release | 5 ms – 4.00 s | 200 ms | In gated mode, how long it takes to die away |
+| Level | 0.00 – 1.00 | 0.80 | How loud it leaves the module |
+
+**To play it from a Keyboard**, set Mode to gated and patch the Keyboard's
+Pitch and Gate into the matching jacks, the same way you would an Oscillator.
+
+**Env is the note's envelope, whichever mode it is in.** Patched into a
+Formant's Vowel jack, every note opens its mouth on the way in: "wah".
+
+**The recipes are mostly one or two knobs:**
+
+- **Monster:** Pitch low (40–70 Hz), Growl and Jitter well up, Tone high, into
+  a Formant with Size around 2.
+- **Robot:** Jitter at 0, Tone at 1, Vib Depth at 0. A perfectly steady voice
+  is one nobody has.
+- **Whisper:** Breath at 1.00. The Formant still shapes the vowel, because a
+  whisper is the same mouth with no buzz.
+- **Singer:** Tone low, Vib Depth around 0.30, a slow Attack, and a Space
+  after the Formant.
 
 ---
 
@@ -313,17 +499,19 @@ lit, because it is the note the Pitch jack is putting out.
 
 - **Inputs:** Gate (fires the note you clicked last)
 - **Outputs:** Pitch (which note, in octaves), Gate (high while a key is held,
-  or while the Gate input is)
+  or while the Gate input is), Vel (how hard a sequenced note was struck)
 
 | Control | Range | Default | What it does |
 | --- | --- | --- | --- |
 | The keys | 25, two octaves | bottom C | Which note, and the gate while held |
 | Octave | −3 – +3 | 0 | Moves the whole keyboard by whole octaves |
+| Voices | 1 – 8 | 1 | How many notes sound at once |
 
 **Pitch comes out in octaves, not in hertz.** That is the unit every
 destination in this rack already takes, so the way to play an oscillator is:
 
-- **key1 · Pitch → osc1 · FM**, with **osc1 · FM Amt** at **+1.00**.
+- **key1 · Pitch → osc1 · Pitch**, which is always in tune, or
+  **key1 · Pitch → osc1 · FM** with **osc1 · FM Amt** at **+1.00**.
 - **key1 · Gate → env1 · Gate**, or straight to an oscillator's own Gate.
 
 With FM Amt at +1.00 the keyboard plays in tune: the bottom key puts out
@@ -344,8 +532,40 @@ Anything that puts out a gate works there, not just a Trigger — a **Burst**
 gives you a run of one note, a **Sequencer**'s Gate gives you a rhythm on it,
 and a **Clock** gives you a metronome.
 
+**Vel is 1.00 until something plays this module with a velocity**, which
+nothing in the rack does yet -- it is there for the piano roll, and for a game
+asking for a sound at a pitch. Patch it into a **VCA**'s CV, or into an
+oscillator's **Env Amt**, and a sequenced line gets its dynamics; a key
+pressed by hand still plays at full, so adding the cable costs nothing until
+there is a velocity to hear.
+
+It holds its value after the gate shuts, exactly as Pitch does, so a release
+tail fades at the level the note was struck at instead of jumping to full.
+
 **Nothing glides.** The keyboard steps from note to note, as a keyboard
 should. Put a **Slew** between Pitch and FM if you want portamento.
+
+**Voices is how many notes can sound at once.** At **1** the rack plays a
+single line: each note takes over from the last, which is what a bass or a
+lead wants, and what a Slew glide needs. Above 1, every note gets its own
+copy of everything downstream of the Keyboard — the oscillators, envelopes,
+filters and VCAs it passes through — so a chord in the roll is a chord out of
+the speaker, and a note's release rings on while the next one starts.
+
+The copies stop at the modules every note shares: the **Mixer**, **Reverb**,
+**Delay**, **Compressor**, **Granular**, **Scope** and **Recorder**. Those
+hear the voices summed, so a chord goes through one room rather than six.
+Anything the Keyboard does not feed — a free-running LFO, a Noise source —
+is shared too, and every voice hears the same one.
+
+When a chord asks for more notes than there are voices, the newest note takes
+the voice that let go longest ago, or failing that the one held longest. A
+voice costs nothing while it is silent, so a high setting on a rack that
+mostly plays one note at a time is free.
+
+With more than one voice, **Space and the panel keys play notes of their
+own** alongside whatever the roll is playing: each press takes a voice at the
+key you clicked last, and a new press lets go of the last one.
 
 **Try:** FM Amt at **+2.00** makes every key a whole tone, which is a scale
 nobody has — useful for alien speech. Negative FM Amt plays the keyboard
@@ -375,7 +595,7 @@ pink than to white, and white through a filter never quite gets there.
 
 An oscillator too slow to hear, used as CV to make something wobble.
 
-- **Inputs:** Sync (restarts the shape), PWM
+- **Inputs:** Sync (restarts the shape), PWM, Rate
 - **Outputs:** Out (swings negative and positive), Uni (never goes negative)
 
 | Knob | Range | Default | What it does |
@@ -384,6 +604,13 @@ An oscillator too slow to hear, used as CV to make something wobble.
 | Shape | saw / pulse / tri / sine | sine | The shape of the wobble |
 | Width | 0.02 – 0.98 | 0.50 | Shapes **pulse** and **tri**, exactly as the Oscillator's does |
 | Depth | 0.00 – 1.00 | 1.00 | How far it swings |
+| Rate Amt | −5.00 – +5.00 | 0.00 | How far the Rate input moves the rate, in octaves |
+
+**The window above the Shape buttons is the shape, drawn by running the LFO
+itself.** Two cycles of it, whatever the Rate -- a real time base would be a
+flat line at 0.02 Hz and a blur at 200 -- scaled by Depth, so a shallow wobble
+is drawn as a shallow wobble. It is the quickest way to see what Width is
+doing, which is two different things depending on the Shape.
 
 **Out or Uni?** Use **Uni** for anything that should not go backwards — filter
 cutoff, VCA level, pulse width. Use **Out** for anything that should swing
@@ -403,8 +630,15 @@ down-ramp into a filter is a decay you never have to trigger.
 it by 0.45. A second, slower LFO into PWM is the classic shifting pulse; an
 envelope into PWM makes a gate that grows or shrinks as a sound develops.
 
+**The Rate input is how a wobble speeds up or slows down.** It is in octaves,
+like every other rate in the rack, so a falling envelope into Rate with Rate
+Amt at −2.00 drops the wobble two octaves as the sound decays — an engine
+winding down. Run the envelope the other way for one revving up; a siren that
+accelerates is the same cable with a longer envelope.
+
 Turn Rate all the way up and it reaches audio range, which is a different
 instrument entirely — patch it into an Oscillator's FM for metallic tones.
+The Rate input reaches further still: five octaves above 200 Hz is 6.40 kHz.
 
 ---
 
@@ -414,7 +648,8 @@ A shape that happens when you trigger it. On its own it is silent; it exists
 to move something else.
 
 - **Inputs:** Gate
-- **Outputs:** Out
+- **Outputs:** Out, End (a blip when the shape finishes), Inv (the shape
+  upside down)
 
 | Knob | Range | Default | What it does |
 | --- | --- | --- | --- |
@@ -422,6 +657,20 @@ to move something else.
 | Decay | 2 ms – 4.00 s | 350 ms | Time to fall to Sustain |
 | Sustain | 0.00 – 1.00 | 0.00 | Level held while the trigger is down |
 | Release | 2 ms – 4.00 s | 150 ms | Time to fade after release |
+
+**End fires when the shape is over**, the way the Burst and the Sequencer
+report that they are done. Patch it to a second Envelope's Gate and you have
+one gesture handing over to another — a fast sweep into a slow one — or use
+it to start something at the moment a hit stops rather than when it lands.
+Note that an exponential fall is not over when it sounds over: a Decay of
+10 ms runs for about 115 before the level actually reaches zero.
+
+**Inv is the shape upside down**: full while the envelope is shut, shut while
+it is full. That is not the same as the negative of it, which every
+destination can already ask for by turning its own amount knob below zero.
+Inv is the one you cannot get that way, and it is what ducking wants — patch
+it to a VCA and everything else gets out of the way each time this envelope
+fires.
 
 **With Sustain at 0** the sound dies on its own whether or not you keep
 holding — which is what you want for impacts, footsteps and gunshots. Raise
@@ -601,6 +850,29 @@ Three jobs in one module:
 
 ---
 
+### Quantizer
+
+Snaps a pitch signal to the nearest note of a scale. Whatever it is fed —
+a Sample & Hold's random steps, an LFO, an envelope — comes out as notes of the
+key, which is the difference between a random bleep and a random melody.
+
+- **Inputs:** In
+- **Outputs:** Out (the note, one octave per 1.0), Trig (a short pulse on every new note)
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Root | C – B | C | The key's home note |
+| Scale | chrom / major / minor / harm / dorian / mixo / pent / pent m / blues | major | Which notes it may land on. **chrom** is every semitone |
+
+**Trig fires every time the note changes**, so a note can be struck on each
+one: patch it into an Envelope, or a Burst into a Resonator.
+
+A Sample & Hold into In, Out into an Oscillator's Pitch jack, and Trig into
+that Oscillator's Gate is a generative melody in two cables. Put a Slew between
+the Quantizer and the Oscillator for glides between the notes.
+
+---
+
 ### CV Utility
 
 Two channels that scale, flip and offset a control signal before it arrives,
@@ -668,6 +940,13 @@ tannoy, a machine heard through a wall.
 The four modes come off the same four filter stages, so **Res** and **Drive**
 mean the same thing in all of them, and the CV input sweeps all of them.
 
+**The screen beside Mode draws the filter's shape**: low frequencies on the
+left, high on the right, louder going up. The bright level line is where a
+sound passes through unchanged, and the dashed line marks the cutoff. Turn Res
+and you can watch the peak rise. The screen shows the filter as its knobs are
+set, so it does not follow the CV input while a note plays, and it leaves out
+Drive's grit.
+
 **A filter with an envelope on its CV is most of what "synthesised" sounds
 like.** The tone opening and closing over the length of a note is what your
 ear reads as a real object being struck, scraped or fired.
@@ -677,12 +956,77 @@ frequency even with nothing going in.
 
 ---
 
+### Formant
+
+The resonances of a throat and mouth: a buzz goes in and a vowel comes out.
+It is a bank of five narrow filters, tuned together to the five peaks that
+make a vowel that vowel.
+
+- **Inputs:** In, Vowel (CV), Size (CV)
+- **Outputs:** Out
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Vowel | u – i | a | Which vowel. Sweeps continuously through **u** (oo), **o** (oh), **a** (ah), **e** (eh) and **i** (ee). Type a letter to jump to one |
+| Size | 0.40x – 2.50x | 1.00x | How big the head is. Above 1 is bigger and lower, towards a giant; below 1 is smaller, towards a child or a cartoon |
+| Res | 0.00 – 1.00 | 0.50 | How narrow the resonances are. High is a nasal, singing tone; low is a mouth half open |
+| Vowel Amt | −4.00 – 4.00 | 2.00 | How far the Vowel input moves the vowel, in vowels. At 2.00 a full-scale LFO sweeps from oo to ee |
+| Size Amt | −2.00 – +2.00 | +0.00 | How far the Size input changes the size, in octaves |
+
+**The vowels are in the order a mouth moves through them**, oo to ee, rather
+than alphabetical. Sweeping between neighbours passes through sounds a real
+mouth makes on the way, so a slow LFO on Vowel says "wow" and "yeah" instead of
+sounding like a wobbling filter.
+
+**Size is not pitch.** The note comes from whatever you feed in; Size moves the
+mouth around that note. A high Voice through a large Size is a big creature
+with a thin voice, and a low one through a small Size is a tiny creature
+speaking deep. Most of the difference between a child, a man and an ogre is
+this knob.
+
+**Feed it something with harmonics in it:** the Voice, a saw or pulse from an
+Oscillator, or Noise for a whisper. A sine has one harmonic, and one harmonic
+has no vowel in it.
+
+**Gibberish** is a Sample & Hold channel into the Vowel jack, through a Slew
+set to about 30 ms so the mouth moves rather than jumps. Every step of the
+clock is a new syllable.
+
+---
+
+### EQ
+
+Three bands of tone: a low shelf, a bell in the middle, and a high shelf,
+each with its own gain and frequency. The everyday corrections a Ladder
+Filter is the wrong tool for.
+
+- **Inputs:** In
+- **Outputs:** Out
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Low | −24.0 dB – +12.0 dB | +0.0 dB | Lifts or cuts everything below Low Freq |
+| Low Freq | 40.0 Hz – 800 Hz | 200 Hz | Where the low shelf starts |
+| Mid | −24.0 dB – +12.0 dB | +0.0 dB | Lifts or cuts a band around Mid Freq, about an octave and a half wide |
+| Mid Freq | 200 Hz – 8.00 kHz | 1.00 kHz | The middle of that band |
+| High | −24.0 dB – +12.0 dB | +0.0 dB | Lifts or cuts everything above High Freq |
+| High Freq | 1.50 kHz – 16.00 kHz | 5.00 kHz | Where the high shelf starts |
+
+**Cut more than you boost.** Taking the weight out of one layer of an impact is
+Low pulled down to −6 dB, not a highpass that takes the thump with it. A sound
+that is too harsh usually wants a few decibels out with Mid around 3 kHz.
+
+The lamp on its ear bypasses it, which is the quickest way to hear whether the
+EQ is helping.
+
+---
+
 ### Drive
 
 Push a signal into something that cannot pass all of it, and what comes out
 has harmonics that were never in what went in.
 
-- **Inputs:** In
+- **Inputs:** In, Drive
 - **Outputs:** Out
 
 | Knob | Range | Default | What it does |
@@ -691,6 +1035,7 @@ has harmonics that were never in what went in.
 | Curve | tanh / clip / fold / rect | tanh | The shape it runs into |
 | Bias | −1.00 – 1.00 | 0.00 | Slides the signal off centre before shaping, so one half clips harder than the other |
 | Level | 0.00 – 1.00 | 1.00 | Output trim |
+| Drive Amt | −4.00 – +4.00 | 0.00 | How far the Drive input moves Drive, in octaves |
 
 The four curves are four ways of running out of room:
 
@@ -719,13 +1064,14 @@ definition. The harmonics that do the work are unaffected by taking it out.
 Past the rails the signal turns back on itself, again and again, so a sine
 that went in comes out with a dozen creases in it.
 
-- **Inputs:** In
+- **Inputs:** In, Fold
 - **Outputs:** Out
 
 | Knob | Range | Default | What it does |
 | --- | --- | --- | --- |
 | Fold | 1.00x – 16.00x | 2.00x | How far past the rails the signal is driven, and so how many times it folds |
 | Sym | −1.00 – 1.00 | 0.00 | Slides the wave off centre within the fold pattern |
+| Fold Amt | −4.00 – +4.00 | 0.00 | How far the Fold input moves Fold, in octaves |
 
 **This is the opposite of overdrive, not a stronger version of it.** Drive
 takes the peaks *off* a wave, so past a point it stops changing much — a
@@ -786,7 +1132,7 @@ is where one turns into the other.
 Two kinds of damage in one panel, because they are the two halves of what
 digital audio throws away and they are always wanted together.
 
-- **Inputs:** In
+- **Inputs:** In, Rate
 - **Outputs:** Out
 
 | Knob | Range | Default | What it does |
@@ -794,6 +1140,12 @@ digital audio throws away and they are always wanted together.
 | Bits | 1 – 16 | 8 | How finely the level is measured |
 | Rate | 100 Hz – 24.00 kHz | 8.00 kHz | How often it is measured at all |
 | Mix | 0.00 – 1.00 | 1.00 | Dry at 0, crushed at 1 |
+| Rate Amt | −5.00 – +5.00 | 0.00 | How far the Rate input moves Rate, in octaves |
+
+**A falling envelope into Rate is a machine winding down.** The sampler slows,
+the steps get longer, and whatever it is holding drops in pitch with it. It is
+the sound of a console losing power, and the Bits knob decides how gritty it
+is on the way.
 
 **Bits** is quantisation. Drop it and the quiet parts of a sound land on the
 same few values, which is heard as grit that gets *worse* as the sound fades
@@ -1015,6 +1367,10 @@ out ringing at that note.
 | Decay | 10 ms – 10.00 s | 600 ms | How long it rings for, whatever the pitch |
 | Damp | 0.00 – 1.00 | 0.40 | Takes the high end off each time round, so the ring gets duller as it fades |
 
+**It rings at the note it says**, whatever Damp is set to: the delay a darker
+ring adds is taken back off the line, so a Keyboard patched to CV with CV Amt
+at +1.00 plays a string in tune from the bottom of the range to the top.
+
 **What you patch in is the exciter**, and the rack is full of things to patch:
 
 - A **burst of noise** through a short envelope is a plucked string.
@@ -1110,7 +1466,7 @@ not the mix.
 Shows you the signal at any jack. It has no output and cannot change your
 sound — you tap a signal rather than passing through it.
 
-- **Inputs:** In
+- **Inputs:** A, B (a second trace, drawn only while something is patched)
 - **Outputs:** none
 
 | Knob | Range | Default | What it does |
@@ -1118,6 +1474,13 @@ sound — you tap a signal rather than passing through it.
 | Time | 1 ms – 80 ms | 20 ms | How much time fills the screen. Lower = more zoomed in |
 | Gain | 0.10x – 16.00x | 1.00x | Vertical zoom. Turn up to see quiet signals |
 | Mode | wave / spectrum | wave | Shape over time, or loudness by frequency |
+
+**Two traces.** Patch a second signal to **B** and it is drawn alongside A in
+a quieter colour: a carrier against its modulator, or what goes into a filter
+against what comes out. Both are drawn from A's trigger point rather than
+each from its own, so they line up — two traces you cannot compare would be
+worse than one. The spectrum reads A alone; two log spectra on one screen is
+a wall rather than a comparison.
 
 **wave** shows the waveform. It is held still by starting each frame at the
 same point in the cycle, so a steady tone looks stationary.
@@ -1152,7 +1515,249 @@ just as audible as it was.
 
 ---
 
-## 6. Rendering sounds to files
+## 6. Writing music
+
+**Press MUSIC**, at the right-hand end of the bar across the bottom of the
+window, and a dock comes up under the rack. It holds the tracks, a piano roll
+and a playlist, and it plays them through the racks above it. The rack stays
+visible the whole time, which is the point: reach for the filter while the
+loop is running and you hear the change on the next note rather than after a
+trip through a second window.
+
+### Tracks are racks
+
+**Every track has a rack of its own**, and the one lit in the list down the
+left is the one on the bench. Click another and the panels above change to
+that track's. That is the whole of the relationship: a track *is* a rack, and
+the roll is what plays it.
+
+**+ TRACK** adds one, with a fresh rack to build on. Each row carries the
+track's name, a level slider, **M** to mute it, **S** to solo it, and **×** to
+take it away — which also takes its notes, since they had nowhere else to go.
+Solo is exclusive, as it is on a desk: pressing it on one track clears it
+everywhere else, and pressing it again lets everything back in.
+
+A track with a **!** beside its name has nothing in its rack a note can be
+played on. A track marked **T** has a Trigger but no Keyboard, so its notes
+are hits rather than pitches.
+
+**With only one track, the name at the top of the window is that rack's
+name.** Add a second and it becomes the name of the piece, and each track
+keeps its own.
+
+### The roll
+
+**Drag in the grid to draw a note.** Where you let go is how long it is. Drag
+a note to move it, drag its right-hand edge to change its length, and
+**alt-click** it — or right-click it — to take it away. Everything snaps to
+whatever **GRID** says, and one drag is one step of undo, so **Ctrl+Z** takes
+back a whole note rather than the sixty positions it passed through.
+
+**The strip along the bottom is velocity.** Drag in it to set how hard the
+note under the pointer was struck; the note in the grid above gets heavier or
+fainter to match. That reaches the rack on the Keyboard's **Vel** jack, so it
+does nothing until you patch it somewhere — a VCA's CV, or an oscillator's Env
+Amt.
+
+**The faint notes behind yours belong to the other tracks.** A pattern holds
+the parts for every track at once, so the bass is there to write against while
+you are on the lead. They are a guide and nothing more: only the track on the
+bench can be edited.
+
+**With a Keyboard in the rack, the roll plays pitches.** A note's row is its
+key, counting up from the bottom of the Keyboard's own two octaves, and the
+Keyboard's **Octave** switch moves the whole roll with it — so on a pattern it
+is a transpose. Patch **key1 · Pitch → osc1 · FM** with **FM Amt** at **+1.00**
+and it plays in tune, exactly as it does when you click the keys by hand.
+
+**Stack notes in a column and they play as a chord** — as many at once as the
+Keyboard's **Voices** allow. At one voice the track is a single line, and a
+note that starts while another is held takes over from it.
+
+**With no Keyboard, every note fires the Trigger.** The rows mean nothing and
+what you are writing is a rhythm, which is the right way to play a coin, a
+laser or a footstep. Velocity still counts: it comes out of the Trigger's
+**Vel** jack, so accents and ghost notes work on a drum track too.
+
+### Patterns and the playlist
+
+**A pattern is a bar or two of the whole band**, not of one instrument: it
+holds the notes for every track together, so the kick, the bass and the lead
+that belong with each other are written together and placed together.
+
+**+ PATTERN**, under the playlist, starts an empty one, and so does **New
+pattern** at the bottom of the pattern menu on the dock's bar. The **⧉** on a
+pattern's row makes a new one from it — which is how a variation is written,
+rather than by keeping three clips lined up by hand — and **×** deletes it.
+
+**SONG** shows the playlist: one row per pattern, one column per bar. Click a
+cell to put that pattern in that bar, and click it again to take it out. A
+pattern longer than a bar fills several cells, and any of them will remove it.
+**Click a pattern's name** at the start of its row to pick it, and type to
+rename it, the same way you rename a track. The circle beside it gives it a
+colour, which its placements wear on the playlist.
+
+**ROLL plays the pattern; SONG plays the arrangement.** Which view is showing
+decides what the transport does, so there is no third button to forget about.
+
+### The transport
+
+| Control | What it does |
+| --- | --- |
+| ▶ / ■ | Starts and stops |
+| Loop | Whether it comes round again at the end, or plays once and stops |
+| Tempo | Beats per minute, 20 to 300 |
+| Pattern | Which pattern the roll writes into, and the playlist lights |
+| Bars | How long that pattern is. Notes past the new end are kept, not cut |
+| Grid | What notes snap to, from a quarter note down to a thirty-second |
+| Hide | Folds the dock away, leaving the bar |
+
+**Space still plays the Trigger**, as it always has. The transport has its own
+button rather than taking the key the rack is played with.
+
+**Drag the top edge of the dock** to make it taller or shorter. The roll's
+rows grow and shrink with it, so the whole two octaves are always on screen
+and there is never anything to scroll to.
+
+**Edits while it is playing are heard about a quarter of a second later.**
+That is how far ahead the notes are handed to the audio thread, which is what
+keeps the timing exact whatever else the browser is doing. Changing the tempo
+is the one edit that stops and restarts the notes already queued.
+
+### Projects, tracks and patches
+
+Three words, each a size up from the last:
+
+| | What it is | Named | Saved as |
+| --- | --- | --- | --- |
+| **Patch** | One sound: the modules, the cables, every knob, and any audio its Samplers play. No notes. | On its track, in the dock's track list | `name.fpatch.json` |
+| **Track** | A lane in the song that plays one patch. | Same name as its patch | Only inside a project |
+| **Project** | The whole piece: every track and its patch, the patterns, the arrangement, the tempo, and all the audio. | The box on the dock's bar | `name.fproject.json` |
+
+The **rack** is where you edit a patch. It always shows the patch on
+whichever track is selected.
+
+**The Project menu** works on the whole piece. **Save project** (**Ctrl+S**)
+writes it all out and **Open project...** (**Ctrl+O**) replaces everything you
+have with a file. In Chrome and Edge, Save works like a desktop program: the
+first save asks where, and after that each save updates the same file, as does
+saving a project you opened. **Save project as...** (**Ctrl+Shift+S**) always
+asks. Other browsers download a new copy on every save.
+**New project** starts again from one stock track. **Bounce song...** and
+**Bounce stems...** render it to audio. A project file is also the one a game
+would load: everything needed to play the music is in it, and none of it needs
+a browser.
+
+**The Patch menu** works on one sound, the one on the selected track, and
+never touches a note. **Save patch...** writes that sound out. **Open
+patch...** replaces the selected track's sound with one from a file, keeping
+its notes. **Add patch as track...** puts a sound on a new track of its own,
+which is how you bring a sound from one project into another. **Library...**
+works like **Open patch...**, but takes its sounds from the built-in shelf.
+Send somebody a patch when you mean "here is a sound", and a project when you
+mean "here is the piece".
+
+Either file stays readable JSON unless something in it uses a Sampler. Then it
+becomes a zip (`.fpatch.zip`, `.fproject.zip`) with the audio inside. Handing
+a project to **Open patch...** is refused rather than guessed at. Patches saved
+by earlier versions, which used `.fresyn.json`, still open with either menu.
+
+---
+
+
+### The Mix view
+
+The third view of the dock — **Roll | Song | Mix** on the dock's bar — is the
+song's own mixing desk. Every track has a channel strip, and every track's
+sound goes through it on the way to the speakers, a bounce, and a game.
+
+Each strip has:
+
+- **High, Mid, Low**: three bands of tone, shelves at 5 kHz and 200 Hz and a
+  bell at 1 kHz, each ±12 dB and down to −24 dB.
+- **Space** and **Delay**: how much of the track goes to the two shared
+  effects. Post-fader, so pulling a track down pulls its reverb down with it.
+- **Pan**: a rack is already stereo, so this is a balance.
+- **The fader**, in dB, with a meter beside it; **M** and **S**.
+
+On the right are the **returns** — one Space and one Delay the whole song
+shares, a room the band is in rather than a reverb per instrument — and the
+**master**: EQ, balance, level, a readout of the mix's loudness in LUFS, and
+the **limiter**. The limiter is on to begin with: it holds the mix under
+−1 dB so the finished song can never clip, and does nothing at all until
+something would.
+
+**A strip nobody has touched changes nothing.** A song mixed before the desk
+existed sounds exactly as it did.
+
+### Bouncing it out
+
+**Project → Bounce song...** renders the arrangement to a WAV, faster than
+realtime and with nothing waiting for a speaker. It comes out stereo, 24-bit,
+at the rate the rack is running at.
+
+**It is the same arithmetic that plays it.** The bounce runs the same
+scheduler the transport does, and notes land on exactly the samples they
+landed on while you were listening. What you hear is the file.
+
+**The file is never shorter than the arrangement.** A bar with notes only in
+its first half is still a bar, so a bounce that trimmed the quiet end would
+give you a file that no longer tiles — which, for a loop, is the whole job.
+What *is* trimmed is whatever hangs past the end: the last release, the
+reverb tail. Keep going past the arrangement and the file ends where the sound
+does, faded so the cut cannot click; end exactly on the arrangement and there
+is no fade at all, because that point is the seam.
+
+**Project → Bounce stems** writes one file per track instead, zipped and
+numbered in track order, and asks what each stem should carry of its channel
+on the Mix view:
+
+- **Channel only**: through its EQ, pan and fader, as it sits in the mix.
+- **Channel and sends**: that, and its own share of the Space and the Delay.
+- **Raw rack output**: the rack alone, none of the desk.
+
+Never the master bus: the limiter works on the whole mix, and a stem run
+through it on its own would be squeezed by a limiter that never touched it in
+the mix. Taken with their sends, the stems add back up to the mix before its
+master. Mute and solo apply, so a track that is not reaching the speakers
+gets no file rather than a file of silence.
+
+**Watch the peak.** With the master's limiter on, a bounce cannot clip; with
+it off, several tracks summing can, and the notice after a bounce says so when
+it has. The fix is the faders on the Mix view.
+
+### Playing a project in a game
+
+A project file is everything needed to play the piece: the arrangement, every
+rack, and any audio they use. Nothing in it needs a browser, and neither does
+the code that plays it — no AudioContext, no worklet, no DOM.
+
+```js
+import { loadProject, SongPlayer } from './song/runtime'
+
+const project = loadProject(await fetch('theme.fproject.json').then((r) => r.text()))
+const player = new SongPlayer(project.song, project.racks, {
+  sampleRate: 48000,
+  loop: { from: 0, to: 4 * 4 * 960 },   // four bars, round and round
+})
+
+// Then pull audio out of it, a block at a time, wherever your audio comes from.
+player.render(left, right)
+```
+
+Any block size gives the same samples, so a game pulling 1024 at a time and a
+bounce walking 128 agree exactly. That is worth saying plainly: the music in
+the game is the music you wrote, not a second implementation of it.
+
+Generating it at runtime rather than streaming a WAV buys two things. The file
+is a few kilobytes rather than a few megabytes, and the piece is still
+*patches* — so a game can change the tempo, mute a track, or reach into a rack
+and open a filter as something in the world changes.
+
+---
+
+
+## 7. Rendering sounds to files
 
 Everything so far has been about the rack. This is about getting files out of
 it. The render settings live on the **Recorder** module. Its jacks decide
@@ -1186,7 +1791,7 @@ make it again exactly, even after closing the browser.
 
 ---
 
-## 7. Tutorials
+## 8. Tutorials
 
 Knob values are written as they read on the panel. You do not have to hit them
 exactly — these are sound effects, and near enough is near enough.
@@ -1196,41 +1801,39 @@ hand teaches you more than loading it does, which is why the steps are
 written out — but if you only want to hear where a tutorial ends up, or you
 have lost your place half way through, the finished rack is one menu away.
 
-### Build the tutorial rack
+### Load the tutorial rack
 
-Every tutorial below starts from the same rack. The stock rack you get from
-**New** is a voice, not a workbench: several of these run **noise** through the
-filter, and noise carries no envelope of its own, so they need a separate
-envelope and a VCA for it to open. The **Trigger** that fires them is already
-there, on **Space**.
+Every tutorial below starts from the same rack, and it is not the one New
+project gives you: several of these run **noise** through the filter, and
+noise carries no envelope of its own, so they need a separate envelope and a
+VCA for it to open.
 
-Build it once and keep it. Press **New** if you want to start over — it does
-not ask, because **Ctrl+Z** brings back whatever it replaced.
+**Choose Patch → Library → Tutorials → Tutorial rack.** It loads onto the selected track,
+and **Ctrl+Z** brings back whatever it replaced. Load it again whenever you
+want to start a tutorial over.
 
-**You already have five modules.** New gives you `gate1`, `osc1`, `lpf1`,
-`lfo1` and `mix1` — a Trigger, an oscillator, a filter, an LFO and the mixer.
-Four of those turn up in the wiring below; you are adding the other four.
+It holds nine modules, named the way the tutorials name them:
 
-1. From the **Modules** menu add, in this order: **Modulation → Envelope**,
-   **Voice → VCA**, **Voice → Noise**, **Voice → Oscillator**. They arrive as
-   `env1`, `vca1`, `noise1` and `osc2`.
-   Each one lands at the top of the rack, so they end up stacked in the
-   reverse of the order you added them — which changes nothing, because what
-   a patch does is decided by its cables and not by the order of its units.
-2. Press **Tab** and patch:
-   - **gate1 · Gate → env1 · Gate**  *(an output feeds as many inputs as you
-     like, so the Trigger's stock cable into `osc1 · Gate` stays where it is)*
-   - **env1 · Out → lpf1 · CV**
-   - **lpf1 · Out → vca1 · In**
-   - **env1 · Out → vca1 · CV**
-   - **vca1 · Out → mix1 · 1**
-3. Press **Tab** back to the front and set **osc1 · Env Amt** to **0.00**.
+- `gate1` — a **Trigger** on **Space**, which fires every tutorial
+- `osc1` and `osc2` — two **Oscillators**; `osc2` is idle until a tutorial
+  patches it
+- `noise1` — **Noise**, also idle until a tutorial wants it
+- `env1` — an **Envelope**, fired by `gate1`
+- `lpf1` — a **Ladder Filter**, opened by `env1`
+- `vca1` — a **VCA**, also opened by `env1`
+- `lfo1` — an **LFO**, patched to nothing
+- `mix1` — the **Mixer**
 
-Two of those cables land in occupied inputs and push the stock cables out,
-which is the point: the envelope takes the filter over from the oscillator,
-and the VCA takes over the feed to the mixer.
+and these cables:
 
-Step 3 hands the oscillator's envelope duties to `env1`. Left at full, the
+- **gate1 · Gate → osc1 · Gate** and **gate1 · Gate → env1 · Gate**
+- **osc1 · Out → lpf1 · In**
+- **env1 · Out → lpf1 · CV**
+- **lpf1 · Out → vca1 · In**
+- **env1 · Out → vca1 · CV**
+- **vca1 · Out → mix1 · 1**
+
+**osc1 · Env Amt** is at **0.00**: `env1` does the shaping. Left at full, the
 oscillator would shape the sound a second time underneath whatever the
 tutorial is setting.
 
@@ -2156,13 +2759,171 @@ room — not a concert hall, because the damping is low and it is too metallic
 for that.
 
 > **Try:** `fold1` Fold is how much metal there is. `dly1` Time Amt decides
-> which way the door goes — **−1.20** makes it close instead of open. Put a
-> **VCA** between the oscillator and the folder, with the envelope on its CV,
-> and the folding sweeps as the sound decays, which is even better.
+> which way the door goes — **−1.20** makes it close instead of open. Patch
+> `env1 · Out` to `fold1 · Fold` with Fold Amt at **+2.00** and the
+> folding sweeps as the sound decays, which is even better.
 
 ---
 
-## 8. When you get no sound
+### Tutorial 16 — Bell
+
+**What you will learn:** linear FM, which is how this rack makes metal.
+
+So far every FM cable in these tutorials has moved a pitch around slowly: an
+envelope falling, an LFO wobbling. Send an *oscillator* into an FM input
+instead, at a pitch you can hear, and the result stops being a movement and
+becomes a tone. That is FM synthesis, and it is the cheapest way there is to
+make something sound struck.
+
+#### Patch
+
+1. Start from the [tutorial rack](#build-the-tutorial-rack).
+2. On the back, patch three cables:
+
+- `osc2 · Out` → `vca1 · In` — *replaces the filter's cable*
+- `vca1 · Out` → `osc1 · FM`
+- `osc1 · Out` → `mix1 · 1` — *replaces the VCA's cable*
+
+`osc1` is already wired to the Trigger in the tutorial rack, and it is going to
+use its own envelope, so nothing else needs a cable.
+
+#### Set
+
+| Module | Knob | Value |
+| --- | --- | --- |
+| osc1 | Pitch | 440 Hz |
+| osc1 | Wave | sine |
+| osc1 | FM Mode | **linear** |
+| osc1 | FM Amt | +1.40 |
+| osc1 | Env Amt | 1.00 |
+| osc1 | Attack | 2 ms |
+| osc1 | Decay | 2.50 s |
+| osc1 | Sustain | 0.00 |
+| osc1 | Release | 1.00 s |
+| osc2 | Pitch | 1.21 kHz |
+| osc2 | Wave | sine |
+| env1 | Attack | 1 ms |
+| env1 | Decay | 500 ms |
+| env1 | Sustain | 0.00 |
+| env1 | Release | 300 ms |
+
+Tap **Space**.
+
+**Only one of these oscillators is heard.** `osc1` is the one going to the
+mixer — the *carrier*. `osc2` never reaches the speakers at all; it goes
+through the VCA and into `osc1`'s FM jack, where all it does is push that
+oscillator's pitch about, thousands of times a second. It is the *modulator*.
+
+**The ratio between them is the timbre.** 1.21 kHz is 2.76 times 440 Hz, which
+is no musical interval whatsoever, and that is the entire trick: the partials
+it adds land between the harmonics rather than on them, and a sound whose
+partials are not harmonics is heard as metal. Retune `osc2` to 880 Hz — exactly
+twice — and the same patch turns into a reedy organ. Nothing else changed.
+
+**FM Amt is the index**, and how bright the bell is. At 0.00 you have a sine
+and nothing else. Past 1.00 the modulator is swinging the frequency further
+than the frequency itself, and the wave spends part of each cycle running
+backwards through zero — which is fine, and where the richest tones live.
+
+**The VCA is what makes it a bell rather than a buzz.** `env1` is on the VCA's
+CV, so the modulator is loud at the moment of the strike and gone half a
+second later, while the note itself rings on for another two. Real metal does
+exactly that: the clang is in the first instant and what is left ringing is
+much closer to a pure tone. Pull the `vca1 · Out` cable and listen to the same
+bell with a fixed index — it buzzes all the way down, and it sounds like a
+machine.
+
+> **Try:** `osc2` Pitch is the whole instrument here. Sweep it and listen to
+> the sound cross from tuned to clangourous and back. Then set `osc1` FM Mode
+> to **exp** and tap again: the note vanishes, because exponential FM this
+> deep does not average out to the pitch you tuned — it is a siren, not a
+> bell.
+
+---
+
+### Tutorial 17 — Coin
+
+**What you will learn:** whole-number FM ratios, and the envelope's Delay
+stage, which is how one key press makes two notes.
+
+#### Patch
+
+1. Start from the [tutorial rack](#build-the-tutorial-rack).
+2. Add one module: **Oscillator**.
+3. On the back, patch six cables:
+
+- `osc2 · Out` → `vca1 · In` — *replaces the filter's cable*
+- `vca1 · Out` → `osc1 · FM`
+- `vca1 · Out` → `osc3 · FM`
+- `gate1 · Gate` → `osc3 · Gate`
+- `osc1 · Out` → `mix1 · 1` — *replaces the VCA's cable*
+- `osc3 · Out` → `mix1 · 2`
+
+One modulator, two carriers: an output drives as many cables as you like, so
+both notes are made by the same `osc2` and shaped by the same index envelope.
+
+#### Set
+
+| Module | Knob | Value |
+| --- | --- | --- |
+| osc1 | Pitch | 989 Hz |
+| osc1 | Wave | sine |
+| osc1 | FM Mode | **linear** |
+| osc1 | FM Amt | +1.20 |
+| osc1 | Env Amt | 1.00 |
+| osc1 | Attack | 1 ms |
+| osc1 | Decay | 50 ms |
+| osc1 | Sustain | 0.00 |
+| osc1 | Release | 50 ms |
+| osc3 | Pitch | 1.32 kHz |
+| osc3 | Wave | sine |
+| osc3 | FM Mode | **linear** |
+| osc3 | FM Amt | +1.20 |
+| osc3 | Env Amt | 1.00 |
+| osc3 | Delay | **90 ms** |
+| osc3 | Attack | 1 ms |
+| osc3 | Decay | 450 ms |
+| osc3 | Sustain | 0.00 |
+| osc3 | Release | 300 ms |
+| osc2 | Pitch | 330 Hz |
+| osc2 | Wave | sine |
+| env1 | Attack | 1 ms |
+| env1 | Decay | 150 ms |
+| env1 | Sustain | 0.00 |
+| env1 | Release | 50 ms |
+| gate1 | Mode | once |
+| gate1 | Length | 120 ms |
+| mix1 | Lvl 1 | 0.60 |
+| mix1 | Lvl 2 | 0.60 |
+
+Tap **Space**.
+
+**Ding-DING.** Both oscillators are fired by the same press. `osc1` starts
+straight away and is gone in a tenth of a second; `osc3` sits through its
+**Delay** stage for 90 ms first, and then rings for half a second. Two notes
+out of one gate, with no sequencer and no clock — the Delay knob is the only
+thing placing the second one.
+
+**The Trigger is in `once` mode for a reason.** A delayed envelope has to
+still be gated when its delay runs out, and a quick tap of the spacebar is
+shorter than 90 ms. In `once` the Trigger puts out a fixed 120 ms gate however
+briefly you hit the key, so the second note always gets to start. Set Mode
+back to `held` and tap quickly: the coin loses its second half.
+
+**Whole numbers, this time.** 989 Hz is three times the modulator and 1.32 kHz
+is four times it, so both notes are pitched and bright rather than clangourous
+— and three against four puts them a fourth apart, which is the interval the
+sound is made of. Compare that with [the bell](#tutorial-16--bell), where the
+ratio was deliberately not a whole number at all.
+
+> **Try:** raise `osc2` to 396 Hz. Both notes go with it, because in linear FM
+> the partials are spaced by the modulator — so the carriers keep their
+> pitches and the sound gets brighter, rather than transposing. Then give
+> `osc3` a Delay of 200 ms for a lazier, more fanfare-like pickup.
+
+---
+
+## 9. When you get no sound
 
 Work down this list; it is roughly in order of likelihood.
 

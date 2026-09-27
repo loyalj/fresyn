@@ -1,0 +1,850 @@
+import puppeteer from 'puppeteer-core'
+import { join } from 'node:path'
+import { mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+
+/**
+ * End-to-end check for the music dock, against a running dev server.
+ *
+ * The headless checks prove the scheduling arithmetic and the arrangement
+ * edits; this proves the part none of them can reach -- that a note drawn
+ * with a pointer lands in the document, that a track selected in the list
+ * really is the rack on the bench, that a pattern placed on the playlist is
+ * the one that plays, and that all of it survives the autosave. Every step
+ * goes through the real app, and the sound is read off the mixer's meters
+ * rather than out of the engine.
+ *
+ * Needs `npm run dev -- --port 5199` in another terminal.
+ * Point CHROME_PATH at a Chromium build if the default is wrong.
+ */
+const CHROME =
+  process.env.CHROME_PATH || 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'
+const URL = process.env.DEV_URL || 'http://localhost:5199/'
+
+const downloads = mkdtempSync(join(tmpdir(), 'fresyn-'))
+
+const browser = await puppeteer.launch({
+  executablePath: CHROME,
+  headless: 'new',
+  args: ['--autoplay-policy=no-user-gesture-required', '--no-sandbox'],
+})
+const page = await browser.newPage()
+await page.setViewport({ width: 1280, height: 1000 })
+
+const problems = []
+page.on('console', (m) => {
+  if (m.type() !== 'error') return
+  if (m.text().includes('favicon')) return
+  problems.push('console: ' + m.text())
+})
+page.on('pageerror', (e) => problems.push('pageerror: ' + e.message))
+
+let failures = 0
+const check = (name, ok, detail = '') => {
+  if (!ok) failures++
+  console.log(`  ${ok ? 'ok  ' : 'FAIL'}  ${name}${detail ? '  ' + detail : ''}`)
+}
+const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+
+const cdp = await page.createCDPSession()
+await cdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads })
+
+/** Choose an item from one of the menus on the bar. */
+async function pickMenu(menu, item) {
+  const handle = await page.evaluateHandle(
+    (name) => [...document.querySelectorAll('.menubar-label')].find((b) => b.textContent.trim() === name),
+    menu,
+  )
+  const el = handle.asElement()
+  if (!el) return false
+  await el.click()
+  await wait(120)
+  const itemHandle = await page.evaluateHandle(
+    (name) =>
+      [...document.querySelectorAll('.menu-item .menu-text')].find(
+        (e) => e.textContent.trim() === name,
+      ) ?? null,
+    item,
+  )
+  const itemEl = itemHandle.asElement()
+  if (!itemEl) {
+    await page.keyboard.press('Escape')
+    return false
+  }
+  await itemEl.click()
+  await wait(200)
+  return true
+}
+
+/** Choose an item from a submenu of one of the menus on the bar. */
+async function pickNested(menu, submenu, item) {
+  const top = await page.evaluateHandle(
+    (name) => [...document.querySelectorAll('.menubar-label')].find((b) => b.textContent.trim() === name),
+    menu,
+  )
+  if (!top.asElement()) return false
+  await top.asElement().click()
+  await wait(120)
+  const sub = await page.evaluateHandle(
+    (name) => [...document.querySelectorAll('.menu-item .menu-text')].find((e) => e.textContent.trim() === name) ?? null,
+    submenu,
+  )
+  if (!sub.asElement()) {
+    await page.keyboard.press('Escape')
+    return false
+  }
+  await sub.asElement().hover()
+  await wait(150)
+  const leaf = await page.evaluateHandle(
+    (name) => [...document.querySelectorAll('.menu-nested .menu-item .menu-text')].find((e) => e.textContent.trim() === name) ?? null,
+    item,
+  )
+  if (!leaf.asElement()) {
+    await page.keyboard.press('Escape')
+    return false
+  }
+  await leaf.asElement().click()
+  await wait(200)
+  return true
+}
+
+/** Wait for a file with this extension to finish landing in the download dir. */
+async function waitForDownload(ext, seconds = 60) {
+  for (let i = 0; i < seconds * 10; i++) {
+    const found = readdirSync(downloads).filter((f) => f.endsWith(ext))
+    if (found.length) {
+      // Chrome renames a .crdownload once the write is complete, but the size
+      // can still be settling; wait for it to stop growing.
+      const path = join(downloads, found[0])
+      let last = -1
+      for (let j = 0; j < 60; j++) {
+        const size = statSync(path).size
+        if (size === last && size > 0) return path
+        last = size
+        await wait(100)
+      }
+      return path
+    }
+    await wait(100)
+  }
+  return null
+}
+
+/** What a WAV header says about itself. */
+function readWav(path) {
+  const b = readFileSync(path)
+  if (b.toString('ascii', 0, 4) !== 'RIFF' || b.toString('ascii', 8, 12) !== 'WAVE') return null
+  const channels = b.readUInt16LE(22)
+  const rate = b.readUInt32LE(24)
+  const bits = b.readUInt16LE(34)
+  const dataBytes = b.readUInt32LE(40)
+  return { channels, rate, bits, seconds: dataBytes / (rate * channels * (bits / 8)) }
+}
+
+
+// A fresh session every run, so a project left behind by the last one cannot
+// make a broken build look like it works.
+await page.goto(URL, { waitUntil: 'networkidle0' })
+await page.evaluate(() => localStorage.clear())
+await page.reload({ waitUntil: 'networkidle0' })
+
+/** The project as the autosave has it, which is the document itself. */
+const stored = () =>
+  page.evaluate(() => {
+    const raw = localStorage.getItem('fresyn.project.v1')
+    return raw ? JSON.parse(raw) : null
+  })
+
+const notesOf = async (patternIndex = 0) =>
+  (await stored())?.song?.patterns?.[patternIndex]?.notes ?? []
+
+/** Add a module from the Modules menu, wherever in its submenus it lives. */
+async function addModule(name) {
+  const menu = await page.evaluateHandle(() =>
+    [...document.querySelectorAll('.menubar-label')].find((b) => b.textContent.trim() === 'Modules'),
+  )
+  const trigger = menu.asElement()
+  if (!trigger) return false
+  await trigger.click()
+  await wait(120)
+
+  const groups = await page.evaluate(() =>
+    [...document.querySelectorAll('.menu > .menu-slot > .menu-item .menu-text')].map((e) =>
+      e.textContent.trim(),
+    ),
+  )
+  for (const group of groups) {
+    const gh = await page.evaluateHandle(
+      (g) =>
+        [...document.querySelectorAll('.menu > .menu-slot > .menu-item .menu-text')].find(
+          (e) => e.textContent.trim() === g,
+        ),
+      group,
+    )
+    const gel = gh.asElement()
+    if (!gel) continue
+    await gel.hover()
+    await wait(120)
+    const ih = await page.evaluateHandle(
+      (n) =>
+        [...document.querySelectorAll('.menu-nested .menu-item .menu-text')].find(
+          (e) => e.textContent.trim() === n,
+        ) ?? null,
+      name,
+    )
+    const iel = ih.asElement()
+    if (iel) {
+      await iel.click()
+      await wait(300)
+      return true
+    }
+  }
+  await page.keyboard.press('Escape')
+  await wait(120)
+  return false
+}
+
+console.log('\nthe dock')
+{
+  check('it starts folded away', (await page.$('.roll-canvas')) === null)
+  await page.click('.dock-fold')
+  await wait(250)
+  check('the fold opens it', (await page.$('.roll-canvas')) !== null)
+  check('the transport is there', (await page.$('.dock-play')) !== null)
+  check('and so is the track list', (await page.$('.track')) !== null)
+  check('with one track to start', (await page.$$('.track')).length === 1)
+}
+
+/** Draw a note by dragging on the canvas, the way a hand would. */
+async function drawNote(rowFromTop, fromX, toX) {
+  const box = await page.$eval('.roll-canvas', (el) => {
+    const r = el.getBoundingClientRect()
+    return { x: r.x, y: r.y }
+  })
+  const y = box.y + 16 + rowFromTop * 12 + 4
+  await page.mouse.move(box.x + fromX, y)
+  await page.mouse.down()
+  await page.mouse.move(box.x + toX, y, { steps: 4 })
+  await page.mouse.up()
+  await wait(120)
+}
+
+console.log('\ndrawing notes')
+{
+  await drawNote(4, 60, 140)
+  await wait(700)
+  const notes = await notesOf()
+  check('a drag writes a note', notes.length === 1, `got ${notes.length}`)
+  check('it is on the bench track', notes[0]?.track === 'bench', `got ${notes[0]?.track}`)
+  check('it snapped to the grid', notes[0]?.tick % 240 === 0, `tick ${notes[0]?.tick}`)
+  check('the drag gave it a length', notes[0]?.length > 0, `length ${notes[0]?.length}`)
+
+  const box = await page.$eval('.roll-canvas', (el) => {
+    const r = el.getBoundingClientRect()
+    return { x: r.x, y: r.y }
+  })
+  await page.keyboard.down('Alt')
+  await page.mouse.click(box.x + 70, box.y + 16 + 4 * 12 + 4)
+  await page.keyboard.up('Alt')
+  await wait(700)
+  check('alt-click removes it', (await notesOf()).length === 0)
+
+  await page.keyboard.down('Control')
+  await page.keyboard.press('KeyZ')
+  await page.keyboard.up('Control')
+  await wait(700)
+  check('ctrl+z puts it back', (await notesOf()).length === 1)
+}
+
+/**
+ * Where things are on the roll. The row height and the scroll are read off
+ * the canvas, which publishes them for exactly this; the rest is the roll's
+ * own arithmetic -- the ruler on top, the velocity lane under the rows, and
+ * the pattern filling the width.
+ */
+async function rollGeometry() {
+  const r = await page.$eval('.roll-canvas', (el) => {
+    const b = el.getBoundingClientRect()
+    return {
+      x: b.x,
+      y: b.y,
+      w: el.clientWidth,
+      h: el.clientHeight,
+      rowH: Number(el.dataset.rowH),
+      scroll: Number(el.dataset.scroll),
+    }
+  })
+  const project = await stored()
+  const length = project?.song?.patterns?.[0]?.length ?? 3840
+  const pxPerTick = (r.w - 40) / length
+  const room = r.h - 16 - 34 - 2
+  const viewH = Math.min(room, 25 * r.rowH)
+  // Borders: the canvas has a one-pixel one, which getBoundingClientRect
+  // includes and the drawing does not.
+  const top = r.y + 1 + 16
+  return {
+    ...r,
+    top,
+    bottom: top + viewH,
+    tickX: (tick) => r.x + 1 + 40 + tick * pxPerTick,
+    pitchY: (pitch) => top - r.scroll + (24 - pitch) * r.rowH + r.rowH / 2,
+  }
+}
+
+const press = async (key, mods = []) => {
+  for (const m of mods) await page.keyboard.down(m)
+  await page.keyboard.press(key)
+  for (const m of [...mods].reverse()) await page.keyboard.up(m)
+  await wait(700)
+}
+
+console.log('\nselecting, copying and stretching')
+{
+  const g = await rollGeometry()
+  check('rows are a comfortable height to aim at', g.rowH >= 16, `${g.rowH.toFixed(1)}px`)
+  const [first] = await notesOf()
+  const noteX = g.tickX(first.tick + first.length / 2)
+  const noteY = g.pitchY(first.pitch)
+
+  // A click selects it, and Ctrl+C / Ctrl+V put a copy at the start of the
+  // column under the pointer.
+  await page.mouse.click(noteX, noteY)
+  await wait(100)
+  await press('KeyC', ['Control'])
+  await page.mouse.move(g.tickX(1920 + 100), g.pitchY(first.pitch))
+  await wait(100)
+  await press('KeyV', ['Control'])
+  let notes = await notesOf()
+  check('a copied note pastes', notes.length === 2, `got ${notes.length}`)
+  check(
+    'at the start of the column the pointer is over',
+    notes[1]?.tick === 1920 && notes[1]?.pitch === first.pitch,
+    `tick ${notes[1]?.tick}, pitch ${notes[1]?.pitch}`,
+  )
+
+  // Ctrl+D puts another copy of the selection straight after it.
+  await press('KeyD', ['Control'])
+  notes = await notesOf()
+  check('Ctrl+D duplicates it straight after itself', notes.length === 3 && notes[2]?.tick === 1920 + first.length,
+    JSON.stringify(notes.map((n) => n.tick)))
+
+  // A rubber band over everything, then up an octave with the keyboard.
+  await page.keyboard.down('Control')
+  await page.mouse.move(g.tickX(0) + 2, g.top + 2)
+  await page.mouse.down()
+  await page.mouse.move(g.tickX(3800), g.bottom - 2, { steps: 6 })
+  await page.mouse.up()
+  await page.keyboard.up('Control')
+  await wait(100)
+  await press('ArrowDown', ['Shift'])
+  notes = await notesOf()
+  check('a Ctrl+drag selects every note it touches, and Shift+Down moves them an octave',
+    notes.every((n) => n.pitch === first.pitch - 12), JSON.stringify(notes.map((n) => n.pitch)))
+
+  // The octave down may have scrolled the view to follow the notes.
+  const moved = await rollGeometry()
+  check('and the view follows them', moved.pitchY(notes[0].pitch) > moved.top && moved.pitchY(notes[0].pitch) < moved.bottom,
+    `row at ${moved.pitchY(notes[0].pitch).toFixed(0)}, view ${moved.top.toFixed(0)}..${moved.bottom.toFixed(0)}`)
+
+  // Stretching one of a selection by its end stretches them all by the same.
+  const before = notes.map((n) => n.length)
+  const endX = moved.tickX(notes[0].tick + notes[0].length) - 1
+  const rowY = moved.pitchY(notes[0].pitch)
+  await page.mouse.move(endX, rowY)
+  await page.mouse.down()
+  await page.mouse.move(endX + 60, rowY, { steps: 5 })
+  await page.mouse.up()
+  await wait(700)
+  notes = await notesOf()
+  const grown = notes.map((n, i) => n.length - before[i])
+  check('dragging an end stretches the whole selection by the same amount',
+    grown[0] > 0 && grown.every((d) => d === grown[0]), `grew by ${grown.join(', ')}`)
+
+  // The wheel scrolls the rows when they do not all fit, and Ctrl+wheel
+  // makes them taller.
+  if (g.bottom - g.top < 25 * g.rowH) {
+    await page.mouse.move(g.tickX(2000), (g.top + g.bottom) / 2)
+    await page.mouse.wheel({ deltaY: 120 })
+    await wait(150)
+    const after = await rollGeometry()
+    check('the wheel scrolls the rows', after.scroll !== g.scroll, `${g.scroll} -> ${after.scroll}`)
+    await page.mouse.wheel({ deltaY: -2000 })
+    await wait(150)
+    check('and stops at the top', (await rollGeometry()).scroll === 0)
+
+    // Wheeling on past the end is still the roll's: whatever scrolls behind
+    // it -- the page, or the rack -- stays where it was.
+    const scrolled = () =>
+      page.evaluate(() =>
+        [document.scrollingElement, ...document.querySelectorAll('*')]
+          .filter(Boolean)
+          .reduce((sum, el) => sum + el.scrollTop, 0),
+      )
+    // Give whatever can scroll somewhere to go in both directions first, or
+    // a rack already at its end could not show the leak.
+    await page.evaluate(() => {
+      for (const el of [document.scrollingElement, ...document.querySelectorAll('*')]) {
+        if (el && el.scrollHeight > el.clientHeight + 40 && !el.closest('.dock')) el.scrollTop = 20
+      }
+    })
+    const behind = await scrolled()
+    await page.mouse.wheel({ deltaY: -400 })
+    await page.mouse.wheel({ deltaY: 4000 })
+    await page.mouse.wheel({ deltaY: 400 })
+    await wait(200)
+    // The roll's own scroll is drawn, not a DOM scroll, so it is not in the
+    // sum: anything that moved here moved behind the roll.
+    const behindAfter = await scrolled()
+    check('and the rack behind does not scroll with it', behind > 0 && behindAfter === behind,
+      `${behind} before, ${behindAfter} after`)
+    await page.mouse.wheel({ deltaY: -4000 })
+    await wait(150)
+  } else {
+    check('the wheel scrolls the rows', false, 'the dock is tall enough to show every row, so nothing to scroll')
+  }
+  await page.keyboard.down('Control')
+  await page.mouse.wheel({ deltaY: -120 })
+  await page.keyboard.up('Control')
+  await wait(150)
+  const zoomed = await rollGeometry()
+  check('Ctrl+wheel makes the rows taller', zoomed.rowH > g.rowH, `${g.rowH.toFixed(1)} -> ${zoomed.rowH.toFixed(1)}`)
+  await page.keyboard.down('Control')
+  await page.mouse.wheel({ deltaY: 120 })
+  await page.keyboard.up('Control')
+  await wait(150)
+
+  // Delete takes the selection away, and undo brings it back.
+  await press('Delete')
+  check('Delete removes the selection', (await notesOf()).length === 0)
+  await press('KeyZ', ['Control'])
+  check('and undo brings it back', (await notesOf()).length === 3)
+
+  // Alt+drag paints a note on every step it crosses, spaced by the last
+  // length drawn; a right-drag sweeps them away again.
+  {
+    const p = await rollGeometry()
+    const row = 20
+    const y = p.pitchY(row)
+    const before = (await notesOf()).length
+    await page.keyboard.down('Alt')
+    await page.mouse.move(p.tickX(10), y)
+    await page.mouse.down()
+    await page.mouse.move(p.tickX(1900), y, { steps: 12 })
+    await page.mouse.up()
+    await page.keyboard.up('Alt')
+    await wait(700)
+    let all = await notesOf()
+    const painted = all.filter((n) => n.pitch === row)
+    const gaps = painted.map((n, i) => (i ? n.tick - painted[i - 1].tick : 0)).slice(1)
+    check('Alt+drag paints a line of notes', painted.length >= 3 && all.length === before + painted.length,
+      `${painted.length} notes at ${painted.map((n) => n.tick).join(', ')}`)
+    check('evenly, at the last length drawn', gaps.length > 0 && gaps.every((d) => d === gaps[0] && d === painted[0].length),
+      `gaps ${gaps.join(', ')}`)
+
+    await page.mouse.move(p.tickX(60), y)
+    await page.mouse.down({ button: 'right' })
+    await page.mouse.move(p.tickX(1950), y, { steps: 3 })
+    await page.mouse.up({ button: 'right' })
+    await wait(700)
+    all = await notesOf()
+    check('a right-drag erases everything it sweeps over', all.length === before && !all.some((n) => n.pitch === row),
+      `${all.length} notes left`)
+    await press('KeyZ', ['Control'])
+    check('in one step of undo', (await notesOf()).filter((n) => n.pitch === row).length === painted.length)
+    await press('KeyZ', ['Control'])
+  }
+
+  // A triplet grid, and Quantize bringing a note back to sixteenths.
+  {
+    const gridSelect = await page.evaluateHandle(() =>
+      [...document.querySelectorAll('.dock-field select')].find((s) =>
+        [...s.options].some((o) => o.textContent === '1/8 T'),
+      ),
+    )
+    const pick = async (label) => {
+      await gridSelect.asElement().evaluate((s, l) => {
+        const o = [...s.options].find((x) => x.textContent === l)
+        s.value = o.value
+        s.dispatchEvent(new Event('change', { bubbles: true }))
+      }, label)
+      await wait(200)
+    }
+    await pick('1/8 T')
+    const p = await rollGeometry()
+    const before = (await notesOf()).length
+    await page.mouse.click(p.tickX(330), p.pitchY(22))
+    await wait(700)
+    let drawn = (await notesOf()).find((n) => n.pitch === 22)
+    check('a triplet grid puts notes on triplets', drawn?.tick === 320, `tick ${drawn?.tick}`)
+    await pick('1/16')
+    const quantize = await page.evaluateHandle(() =>
+      [...document.querySelectorAll('.roll-tools .dock-toggle')].find((b) => b.textContent.trim() === 'Quantize'),
+    )
+    await quantize.asElement().click()
+    await wait(700)
+    drawn = (await notesOf()).find((n) => n.pitch === 22)
+    check('Quantize snaps the selected note to the grid', drawn?.tick === 240, `tick ${drawn?.tick}`)
+    const humanize = await page.evaluateHandle(() =>
+      [...document.querySelectorAll('.roll-tools .dock-toggle')].find((b) => b.textContent.trim() === 'Humanize'),
+    )
+    await humanize.asElement().click()
+    await wait(700)
+    const after = await notesOf()
+    check('Humanize keeps every note', after.length === before + 1)
+  }
+
+  // A key: the rows off it are shaded, and with Snap on a note drawn on one
+  // lands on the scale.
+  {
+    await page.select('.roll-tools select[aria-label="Scale"]', 'major')
+    await wait(300)
+    const snap = await page.evaluateHandle(() =>
+      [...document.querySelectorAll('.roll-tools .dock-toggle')].find((b) => b.textContent.trim() === 'Snap to key'),
+    )
+    await snap.asElement().click()
+    await wait(700)
+    check('the key is saved with the song', JSON.stringify((await stored()).song.scale) === '{"root":0,"mode":"major","snap":true}',
+      JSON.stringify((await stored()).song.scale))
+    const p = await rollGeometry()
+    await page.mouse.click(p.tickX(2900), p.pitchY(13))
+    await wait(700)
+    const onKey = (await notesOf()).find((n) => n.tick === 2880)
+    check('a note drawn on C# with C major snapped lands on D', onKey?.pitch === 14, `pitch ${onKey?.pitch}`)
+    await page.select('.roll-tools select[aria-label="Scale"]', '')
+    await wait(700)
+    check('and No scale takes the key off the song', (await stored()).song.scale === undefined)
+  }
+
+  // A chord: one click lays all of it, rooted on the row clicked, and a drag
+  // stretches the whole chord.
+  {
+    await page.select('.roll-tools select[aria-label="Chord"]', 'min7')
+    await wait(200)
+    const p = await rollGeometry()
+    const y = p.pitchY(14)
+    await page.mouse.move(p.tickX(3360 + 20), y)
+    await page.mouse.down()
+    await page.mouse.move(p.tickX(3840) - 2, y, { steps: 4 })
+    await page.mouse.up()
+    await wait(700)
+    const chord = (await notesOf()).filter((n) => n.tick === 3360)
+    check('a chord click lays every note of the chord', chord.map((n) => n.pitch).sort((a, b) => a - b).join() === '14,17,21,24',
+      chord.map((n) => n.pitch).join())
+    check('and the drag stretches all of them', chord.length > 0 && chord.every((n) => n.length === chord[0].length && n.length === 480),
+      chord.map((n) => n.length).join())
+
+    // Its velocity bars are drawn on top of one another, so they are one bar
+    // to the eye -- and dragging it, with nothing selected, moves them all.
+    await press('Escape')
+    const laneBottom = p.y + 1 + p.h - 3
+    const barX = p.tickX(3360) + 2
+    await page.mouse.move(barX, laneBottom - 4)
+    await page.mouse.down()
+    await page.mouse.move(barX, laneBottom - 14, { steps: 4 })
+    await page.mouse.up()
+    await wait(700)
+    const quieter = (await notesOf()).filter((n) => n.tick === 3360)
+    check("dragging a chord's velocity bar moves every note of it",
+      quieter.length === 4 && quieter.every((n) => n.velocity === quieter[0].velocity && n.velocity < 0.8),
+      quieter.map((n) => n.velocity).join(', '))
+    await page.select('.roll-tools select[aria-label="Chord"]', '')
+    await wait(200)
+  }
+
+  // A key down the side sounds the note, and stops when let go.
+  const meter = () =>
+    page.evaluate(() => {
+      let best = 0
+      for (const el of document.querySelectorAll('.strip-meter-fill')) {
+        const m = /inset\(([\d.]+)%/.exec(el.style.clipPath || '')
+        best = Math.max(best, m ? 1 - Number(m[1]) / 100 : 0)
+      }
+      return best
+    })
+  await page.mouse.move(g.x + 10, g.pitchY(12))
+  await page.mouse.down()
+  let heard = 0
+  for (let i = 0; i < 10; i++) {
+    await wait(60)
+    heard = Math.max(heard, await meter())
+  }
+  await page.mouse.up()
+  check('holding a key in the gutter plays that note', heard > 0.02, `peak ${(heard * 100).toFixed(1)}%`)
+
+  // Back to the one note the rest of this check expects. A click on the
+  // ruler to give the roll the keyboard, since the rows have moved.
+  await page.mouse.click(g.tickX(3700), g.top - 8)
+  await wait(100)
+  await press('KeyA', ['Control'])
+  await press('Delete')
+  await drawNote(4, 60, 140)
+  await wait(700)
+  check('and the roll is back to one note', (await notesOf()).length === 1)
+}
+
+console.log('\na second track is a second rack')
+{
+  // Counted from the document rather than off the page: a unit draws its id
+  // on both faces, so the DOM has two of everything.
+  const before = (await stored()).racks.bench.patch.modules.length
+  await page.click('.track-add')
+  await wait(400)
+  check('a track is added', (await page.$$('.track')).length === 2)
+  check('and it is the one selected', await page.$eval('.track.on .track-name', (e) => e.value) !== '')
+
+  // The rack on the bench must be the new track's, not the first one's.
+  check('adding a module to it works', await addModule('Noise'))
+  await wait(700)
+  const project = await stored()
+  const ids = Object.keys(project.racks)
+  check('the project holds a rack per track', ids.length === 2, ids.join(', '))
+
+  const counts = ids.map((id) => project.racks[id].patch.modules.length)
+  check('the two racks differ', counts[0] !== counts[1], counts.join(' vs '))
+  check(
+    'and the first one was left alone',
+    project.racks.bench.patch.modules.length === before,
+    `${project.racks.bench.patch.modules.length} vs ${before}`,
+  )
+
+  // Notes drawn now belong to the new track.
+  await drawNote(9, 60, 200)
+  await wait(700)
+  const notes = await notesOf()
+  check('notes go to the selected track', notes.length === 2, `got ${notes.length}`)
+  check('the new one names it', notes.some((n) => n.track !== 'bench'), notes.map((n) => n.track).join())
+
+  // And going back puts the first rack in front of you again. Read off the
+  // page this time, because the question is what is on the bench.
+  await page.click('.track')
+  await wait(300)
+  // Counted as distinct ids: a unit is drawn on both faces, so every element
+  // in a panel appears twice in the DOM.
+  const onBench = await page.$eval(
+    '.rack',
+    (el) => new Set([...el.querySelectorAll('.unit-id')].map((e) => e.textContent)).size,
+  )
+  check('selecting the first track brings its rack back', onBench === before, `${onBench} vs ${before}`)
+}
+
+console.log('\nmute and solo')
+{
+  await page.click('.track:nth-child(2) .track-flag[title="Mute"]')
+  await wait(500)
+  let tracks = (await stored()).song.tracks
+  check('mute is written to the track', tracks[1].mute === true, JSON.stringify(tracks[1]))
+
+  await page.click('.track:nth-child(1) .track-flag[title="Solo"]')
+  await wait(500)
+  tracks = (await stored()).song.tracks
+  check('solo is written too', tracks[0].solo === true)
+  check('and it is exclusive', tracks.filter((t) => t.solo).length === 1)
+
+  await page.click('.track:nth-child(1) .track-flag[title="Solo"]')
+  await page.click('.track:nth-child(2) .track-flag[title="Mute"]')
+  await wait(500)
+  tracks = (await stored()).song.tracks
+  check('both clear again', tracks.every((t) => !t.solo && !t.mute))
+}
+
+console.log('\npatterns and the playlist')
+{
+  // From the roll, through the last row of the pattern menu: the playlist,
+  // with its own add button, is not on screen here.
+  await page.select('.dock-bar select[aria-label="Pattern"]', '__new')
+  await wait(600)
+  const project = await stored()
+  check('a second pattern is added', project.song.patterns.length === 2, `got ${project.song.patterns.length}`)
+  check('and it is empty', project.song.patterns[1].notes.length === 0)
+
+  // The roll follows the new pattern, so the notes from the first are gone
+  // from view -- and drawing here writes into the second.
+  await drawNote(6, 40, 100)
+  await wait(700)
+  check('notes go into the new pattern', (await notesOf(1)).length === 1)
+  check('and the first one is untouched', (await notesOf(0)).length === 2)
+
+  // In song: a pattern that is not in the song yet -- this new one -- says
+  // so, and one click puts it there.
+  const inSong = await page.evaluateHandle(() =>
+    [...document.querySelectorAll('.dock-toggle')].find((b) => b.textContent.trim() === 'In song'),
+  )
+  await inSong.asElement().click()
+  await wait(200)
+  const hint = await page.evaluate(() => document.querySelector('.dock-hint')?.textContent ?? '')
+  check('In song says when the pattern is not in the song', hint.includes('Not in the song'), hint)
+  const put = await page.evaluateHandle(() =>
+    [...document.querySelectorAll('.dock-hint .dock-toggle')].find((b) => b.textContent.includes('bar 1')),
+  )
+  await put.asElement().click()
+  await wait(700)
+  check('and puts it at bar 1 when asked', JSON.stringify((await stored()).song.playlist) === '[{"pattern":"main","tick":0},{"pattern":"p1","tick":0}]')
+  await press('KeyZ', ['Control'])
+  check('which undoes like any other edit', (await stored()).song.playlist.length === 1)
+  const pat = await page.evaluateHandle(() =>
+    [...document.querySelectorAll('.dock-toggle')].find((b) => b.textContent.trim() === 'Pattern'),
+  )
+  await pat.asElement().click()
+  await wait(200)
+
+  // Copy in one pattern, choose another from the dropdown, and paste: with
+  // the pointer over the roll the keys are the roll's, even though the last
+  // thing clicked was the dropdown.
+  {
+    const g = await rollGeometry()
+    const [lead] = await notesOf(1)
+    await page.mouse.click(g.tickX(lead.tick + lead.length / 2), g.pitchY(lead.pitch))
+    await wait(100)
+    await press('KeyC', ['Control'])
+    // Focused first, as a click on it would leave it: `select` alone changes
+    // the value without ever taking the keyboard, which is not what a hand does.
+    await page.focus('.dock-bar select[aria-label="Pattern"]')
+    await page.select('.dock-bar select[aria-label="Pattern"]', 'main')
+    await wait(300)
+    await page.mouse.move(g.tickX(2900), g.pitchY(lead.pitch))
+    await wait(100)
+    await press('KeyV', ['Control'])
+    const pasted = await notesOf(0)
+    check('a note copied in one pattern pastes into another', pasted.length === 3 && pasted.some((n) => n.tick === 2880),
+      `${pasted.length} notes: ${pasted.map((n) => n.tick).join(', ')}`)
+    await press('KeyZ', ['Control'])
+    check('and undoes', (await notesOf(0)).length === 2)
+    await page.select('.dock-bar select[aria-label="Pattern"]', 'p1')
+    await wait(300)
+  }
+
+  const songButton = await page.evaluateHandle(() =>
+    [...document.querySelectorAll('.dock-views .dock-toggle')].find(
+      (b) => b.textContent.trim() === 'Song',
+    ),
+  )
+  await songButton.asElement().click()
+  await wait(300)
+  check('the playlist shows', (await page.$('.playlist-cell')) !== null)
+  check('with a row per pattern', (await page.$$('.playlist-row')).length === 2)
+
+  // Place the second pattern in bar three. Indexed among the rows rather than
+  // by nth-child, since the ruler and the playhead are children too.
+  const rows = await page.$$('.playlist-row')
+  const cells = await rows[1].$$('.playlist-cell')
+  check('the second row has cells', cells.length > 3, `got ${cells.length}`)
+  await cells[2].click()
+  await wait(600)
+  const placed = (await stored()).song.playlist
+  const second = (await stored()).song.patterns[1].id
+  check('a click places it', placed.length === 2, JSON.stringify(placed))
+  check(
+    'the second pattern, at the bar clicked',
+    placed.some((p) => p.pattern === second && p.tick === 960 * 4 * 2),
+    JSON.stringify(placed),
+  )
+
+  await cells[2].click()
+  await wait(600)
+  check('and clicking again takes it off', (await stored()).song.playlist.length === 1)
+  await cells[2].click()
+  await wait(400)
+}
+
+console.log('\nthe transport plays what is showing')
+{
+  const meterFill = () =>
+    page.evaluate(() => {
+      const bars = [...document.querySelectorAll('.strip-meter-fill')]
+      let best = 0
+      for (const el of bars) {
+        const m = /inset\(([\d.]+)%/.exec(el.style.clipPath || '')
+        best = Math.max(best, m ? 1 - Number(m[1]) / 100 : 0)
+      }
+      return best
+    })
+
+  check('there are meters to read', (await page.$('.strip-meter-fill')) !== null)
+  check('silent before play', (await meterFill()) < 0.02, `got ${await meterFill()}`)
+
+  // Still in Song view: this plays the arrangement, not one pattern.
+  await page.click('.dock-play')
+  await wait(400)
+  check('the button lights', (await page.$('.dock-play.on')) !== null)
+
+  let loudest = 0
+  for (let i = 0; i < 30; i++) {
+    await wait(100)
+    loudest = Math.max(loudest, await meterFill())
+  }
+  check('the arrangement makes a noise', loudest > 0.05, `peak ${(loudest * 100).toFixed(1)}%`)
+
+  await page.click('.dock-play')
+  await wait(400)
+  check('stopping puts it out', (await page.$('.dock-play.on')) === null)
+  // Long enough for a full-scale bar to fall all the way to the floor.
+  await wait(1500)
+  check('and nothing is left droning', (await meterFill()) < 0.02, `got ${await meterFill()}`)
+}
+
+console.log('\nbouncing it to a file')
+{
+  check('the Bounce action is there', await pickMenu('Project', 'Bounce song...'))
+  const wav = await waitForDownload('.wav')
+  check('a wav was written', !!wav, wav ? wav.split(/[\\/]/).pop() : 'nothing downloaded')
+
+  if (wav) {
+    const info = readWav(wav)
+    check('it is a readable wav', !!info)
+    if (info) {
+      check('stereo', info.channels === 2, `${info.channels} channels`)
+      check('at the rate the rack runs at', info.rate === 48000, `${info.rate} Hz`)
+      check('24-bit', info.bits === 24, `${info.bits} bits`)
+      // Two patterns, one in bar one and one in bar three: three bars at
+      // 120bpm is six seconds, and the file is never shorter than the
+      // arrangement whatever is or is not sounding in it.
+      check('as long as the arrangement', info.seconds >= 5.9, `${info.seconds.toFixed(2)}s`)
+      check('and not wildly longer', info.seconds < 12, `${info.seconds.toFixed(2)}s`)
+    }
+    // Silence would be a file of the right length and no use at all.
+    const bytes = readFileSync(wav)
+    let loudest = 0
+    for (let i = 44; i + 2 < bytes.length; i += 3) {
+      const v = (bytes[i + 2] << 8) | bytes[i + 1]
+      loudest = Math.max(loudest, Math.abs((v << 16) >> 16))
+    }
+    check('and it is not silence', loudest > 200, `peak ${loudest}`)
+  }
+
+  check('stems can be bounced too', await pickNested('Project', 'Bounce stems', 'Channel only (EQ, pan, fader)...'))
+  const zip = await waitForDownload('.zip')
+  check('a zip of stems was written', !!zip, zip ? zip.split(/[\\/]/).pop() : 'nothing downloaded')
+  if (zip) {
+    const bytes = readFileSync(zip)
+    // Two tracks, so two entries, each a wav of its own.
+    const entries = bytes.toString('latin1').split('PK\u0003\u0004').length - 1
+    check('with one file per track', entries === 2, `${entries} entries`)
+    check(
+      'and both have audio in them',
+      statSync(zip).size > 200000,
+      `${Math.round(statSync(zip).size / 1024)} kB`,
+    )
+  }
+}
+
+
+console.log('\nit all comes back')
+{
+  await page.reload({ waitUntil: 'networkidle0' })
+  await wait(600)
+  const project = await stored()
+  check('the tracks survive a reload', project.song.tracks.length === 2)
+  check('the patterns survive', project.song.patterns.length === 2)
+  check('the playlist survives', project.song.playlist.length === 2)
+  check('and every rack with them', Object.keys(project.racks).length === 2)
+  check('the dock reopens as it was', (await page.$('.roll-canvas')) !== null || (await page.$('.playlist')) !== null)
+}
+
+console.log('\nthe rack survives it')
+{
+  check('no page errors', problems.length === 0, problems.slice(0, 3).join(' | '))
+}
+
+await browser.close()
+console.log(failures === 0 ? '\nall good\n' : `\n${failures} failed\n`)
+process.exit(failures === 0 ? 0 : 1)

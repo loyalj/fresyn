@@ -1,7 +1,13 @@
-import { DspModule, EdgeDetector } from './types'
+import { DspModule, EdgeDetector, Retrigger, type Playable } from './types'
 
 const P_MODE = 0
 const P_LENGTH = 1
+
+const IN_TRIG = 0
+
+const OUT_GATE = 0
+/** Appended: the DSP reads its ports by position. */
+const OUT_VEL = 1
 
 /** Held: the gate is open for exactly as long as the key or button is. */
 export const MODE_GATE = 0
@@ -39,23 +45,79 @@ export const MODE_LATCH = 2
  * changes what the *key* does, not what the gate means, and a render has no
  * second press for it to answer.
  */
-export class GateModule extends DspModule {
+export class GateModule extends DspModule implements Playable {
   readonly hasTrigger = true
   /** A key is bound to this; everything else in a rack hears it by cable. */
   readonly isPlayed = true
+  /**
+   * A roll plays this module too, on a patch that has no Keyboard in it -- a
+   * coin, a laser, a footstep. The pitch means nothing and is discarded; what
+   * a drum lane has to get right is the rhythm, and that is exactly what goes
+   * wrong without a `Playable` here: two hits on the same sixteenth boundary
+   * would close and reopen the gate between samples, `once` would never see a
+   * rising edge, and the second hit would be silent.
+   */
+  readonly playable: Playable = this
 
   private edge = new EdgeDetector()
+  private retrig = new Retrigger()
   /** Samples the one-shot has left to stay open. */
   private left = 0
+  /**
+   * How hard the last press was, standing between presses as the Keyboard's
+   * does, so a tail fades at the level it was struck at.
+   */
+  private vel = 1
+  /**
+   * A note from the roll is on its way to the next rising edge. Anything else
+   * that raises the gate -- the key, the button, a cable -- is a press with no
+   * velocity, and plays at full.
+   */
+  private fromNote = false
+  private wasPressed = false
+
+  /**
+   * The pitch is discarded: this module has none, and a drum lane needs none.
+   * The velocity is kept, so a drum can be played softly.
+   */
+  noteOn(_pitch: number, velocity: number) {
+    this.retrig.notify()
+    this.gateOpen = true
+    this.vel = velocity
+    this.fromNote = true
+  }
+
+  noteOff() {
+    this.gateOpen = false
+  }
 
   process(slots: Float32Array) {
-    const fired = this.edge.rose(this.gateOpen ? 1 : 0)
+    // Either the key or a cable into Trig will press it, whichever arrives
+    // first, and the last to leave lets go -- the same rule the Keyboard and
+    // the oscillator use for their gate jacks.
+    //
+    // A cable is what makes Mode worth having twice over: a clock into here
+    // with Mode on `once` is a fixed length at the clock's rate, which the
+    // Clock cannot do on its own. Its Width is a fraction of the period, so
+    // the pulses get longer as the rate falls.
+    // The gap goes in before the edge detector rather than on the way out, so
+    // that it reaches both modes: `held` puts this straight out, and `once`
+    // needs the fall so the rise after it can start a fresh shot.
+    const pressed = this.retrig.gate(this.gateOpen || slots[this.ins[IN_TRIG]] > 0.5)
+    const fired = this.edge.rose(pressed ? 1 : 0)
+
+    if (pressed && !this.wasPressed) {
+      if (!this.fromNote) this.vel = 1
+      this.fromNote = false
+    }
+    this.wasPressed = pressed
+    slots[this.outs[OUT_VEL]] = this.vel
 
     if (Math.round(this.params[P_MODE]) !== MODE_ONCE) {
       // Dropped rather than left to run down, so switching away mid-shot stops
       // the sound now instead of at the end of a length nobody is waiting for.
       this.left = 0
-      slots[this.outs[0]] = this.gateOpen ? 1 : 0
+      slots[this.outs[OUT_GATE]] = pressed ? 1 : 0
       return
     }
 
@@ -69,6 +131,6 @@ export class GateModule extends DspModule {
     // Length minus one.
     const open = this.left > 0
     if (this.left > 0) this.left--
-    slots[this.outs[0]] = open ? 1 : 0
+    slots[this.outs[OUT_GATE]] = open ? 1 : 0
   }
 }

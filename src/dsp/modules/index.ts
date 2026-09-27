@@ -6,6 +6,8 @@ import { CompressorModule } from './Compressor'
 import { CvUtilModule } from './CvUtil'
 import { DelayModule } from './Delay'
 import { DriveModule } from './Drive'
+import { EqModule } from './Eq'
+import { FormantModule } from './Formant'
 import { GateModule } from './Gate'
 import { GranularModule } from './Granular'
 import { KeysModule } from './Keys'
@@ -14,16 +16,19 @@ import { LfoModule } from './Lfo'
 import { MixerModule } from './Mixer'
 import { NoiseModule } from './Noise'
 import { OscModule } from './Osc'
+import { QuantizerModule } from './Quantizer'
 import { RecorderModule } from './Recorder'
 import { ResonatorModule } from './Resonator'
 import { RingModModule } from './RingMod'
 import { ReverbModule } from './Reverb'
 import { SampleHoldModule } from './SampleHold'
+import { SamplerModule } from './Sampler'
 import { ScopeModule } from './Scope'
 import { SeqModule } from './Seq'
 import { SlewModule } from './Slew'
 import type { DspModule, ModuleContext } from './types'
 import { VcaModule } from './Vca'
+import { VoiceModule } from './Voice'
 import { WavefoldModule } from './Wavefold'
 
 type Factory = (ctx: ModuleContext) => DspModule
@@ -32,6 +37,8 @@ type Factory = (ctx: ModuleContext) => DspModule
 export const MODULE_FACTORIES: Record<string, Factory> = {
   gate: (c) => new GateModule(c),
   osc: (c) => new OscModule(c),
+  sampler: (c) => new SamplerModule(c),
+  voice: (c) => new VoiceModule(c),
   keys: (c) => new KeysModule(c),
   noise: (c) => new NoiseModule(c),
   lfo: (c) => new LfoModule(c),
@@ -41,9 +48,12 @@ export const MODULE_FACTORIES: Record<string, Factory> = {
   burst: (c) => new BurstModule(c),
   seq: (c) => new SeqModule(c),
   slew: (c) => new SlewModule(c),
+  quant: (c) => new QuantizerModule(c),
   cv: (c) => new CvUtilModule(c),
   ladder: (c) => new LadderModule(c),
+  formant: (c) => new FormantModule(c),
   vca: (c) => new VcaModule(c),
+  eq: (c) => new EqModule(c),
   drive: (c) => new DriveModule(c),
   fold: (c) => new WavefoldModule(c),
   ring: (c) => new RingModModule(c),

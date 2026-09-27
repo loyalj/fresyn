@@ -1,3 +1,5 @@
+import { parseSong } from '../song/serialize'
+import type { Song } from '../song/types'
 import { MODULE_DEFS, defOf } from './defs'
 import type { Cable, Patch, PatchModule } from './types'
 
@@ -31,11 +33,22 @@ export interface StoredPatch {
   version: number
   name: string
   patch: Patch
+  /**
+   * A pattern, in files written before there were projects.
+   *
+   * Read, never written. A patch is one rack and the music is a project, and
+   * a patch file that also carried an arrangement could not say which track's
+   * arrangement it was. `project.ts` reads such a file as a project of a
+   * single track, which is what it always was.
+   */
+  song?: Song
 }
 
 export interface LoadResult {
   name: string
   patch: Patch
+  /** Absent in a file saved before the roll existed, or one with no notes. */
+  song?: Song
   /** Anything dropped or repaired on the way in. */
   warnings: string[]
 }
@@ -59,6 +72,10 @@ export function toStored(name: string, patch: Patch, values: Record<string, numb
     // Omitted rather than written as null when there is none, so a patch that
     // binds nothing reads the same as one saved before keys existed.
     if (m.key) out.key = m.key
+    // The hash and the name, never the audio: a patch stays a small file, and
+    // what it names is either in this browser's store or arrives in a bundle.
+    if (m.sample) out.sample = { id: m.sample.id, name: m.sample.name }
+    if (m.bypass) out.bypass = true
     return out
   })
 
@@ -135,7 +152,25 @@ export function fromStored(input: unknown): LoadResult | { error: string } {
     // is what a patch from another keyboard layout should do rather than
     // refuse to open.
     const key = typeof m.key === 'string' && m.key ? m.key : undefined
-    modules.push(key ? { id, type, params, key } : { id, type, params })
+
+    // Taken on trust the same way, and for the same reason: a sample this
+    // browser has never seen is a module that comes up silent and says which
+    // file it wants, not a patch that refuses to open.
+    const raw = (typeof m.sample === 'object' && m.sample !== null ? m.sample : null) as
+      | Record<string, unknown>
+      | null
+    const sample =
+      raw && typeof raw.id === 'string' && raw.id
+        ? { id: raw.id, name: typeof raw.name === 'string' ? raw.name : raw.id }
+        : undefined
+
+    const built: PatchModule = { id, type, params }
+    if (key) built.key = key
+    if (sample) built.sample = sample
+    // Only where the module can be bypassed at all: a flag on anything else
+    // would be a switch the panel has no way to turn back off.
+    if (m.bypass === true && defOf(type).bypass) built.bypass = true
+    modules.push(built)
   }
 
   const cables: Cable[] = []
@@ -152,16 +187,24 @@ export function fromStored(input: unknown): LoadResult | { error: string } {
     // jacks it actually lands on.
     const from = rename(stored.from)
     const to = rename(stored.to)
+    const color = typeof c.color === 'number' && Number.isFinite(c.color) ? ((c.color % 360) + 360) % 360 : undefined
     cables.push({
       id: typeof c.id === 'string' ? c.id : `${from.module}.${from.port}->${to.module}.${to.port}`,
       from,
       to,
+      ...(color !== undefined ? { color } : {}),
     })
   }
+
+  // Read through the same defensive parser the rest of the file uses: a song
+  // that arrives half-legible costs its notes, not the patch it came with.
+  const song = parseSong(data.song) ?? undefined
+  if (data.song && !song) warnings.push('the pattern in this file could not be read')
 
   return {
     name: typeof data.name === 'string' && data.name ? data.name : 'Untitled',
     patch: { modules, cables },
+    ...(song ? { song } : {}),
     warnings,
   }
 

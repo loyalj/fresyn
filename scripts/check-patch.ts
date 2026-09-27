@@ -7,9 +7,17 @@
  *
  * Run with: npm run check:patch
  */
-import { compile } from '../src/patch/compile'
+import { compile, withBypass } from '../src/patch/compile'
+import {
+  connect as wireUp,
+  copyModules,
+  pasteModules,
+  setCableColor,
+  toggleBypass,
+} from '../src/patch/edit'
+import { signalOf } from '../src/patch/defs'
 import { defOf } from '../src/patch/defs'
-import { defaultPatch } from '../src/patch/defaultPatch'
+import { triggerPatch } from '../src/patch/defaultPatch'
 import {
   addModule,
   initialValues,
@@ -26,7 +34,9 @@ import {
   redo,
   undo,
 } from '../src/patch/history'
+import { isZip, makeBundle, readBundle } from '../src/patch/bundle'
 import { fromStored, toStored, PATCH_FORMAT } from '../src/patch/serialize'
+import type { Patch } from '../src/patch/types'
 
 let failures = 0
 
@@ -38,7 +48,7 @@ function check(name: string, ok: boolean, detail = '') {
 // --- editing ---------------------------------------------------------
 console.log('\nediting the rack')
 {
-  const base = defaultPatch()
+  const base = triggerPatch()
 
   check('a new id does not collide', nextModuleId(base, 'osc') === 'osc2', nextModuleId(base, 'osc'))
   check('an unused type starts at 1', nextModuleId(base, 'vca') === 'vca1', nextModuleId(base, 'vca'))
@@ -57,7 +67,7 @@ console.log('\nediting the rack')
 
   const added = addModule(base, { id: nextModuleId(base, 'lfo'), type: 'lfo', params: {} })
   check('adding a module grows the rack', added.modules.length === base.modules.length + 1)
-  check('the original patch is untouched', base.modules.length === defaultPatch().modules.length)
+  check('the original patch is untouched', base.modules.length === triggerPatch().modules.length)
   check('a new module compiles', compile(added).warnings.length === 0)
 
   const removed = removeModule(base, 'lpf1')
@@ -68,7 +78,7 @@ console.log('\nediting the rack')
   )
   check('what is left still compiles', compile(removed).warnings.length === 0)
 
-  const order = (p: ReturnType<typeof defaultPatch>) => p.modules.map((m) => m.id).join(',')
+  const order = (p: ReturnType<typeof triggerPatch>) => p.modules.map((m) => m.id).join(',')
   const first = base.modules[0].id
   const moved = moveModule(base, first, 1)
   check('moving down reorders', moved.modules[1].id === first, order(moved))
@@ -121,7 +131,7 @@ console.log('\nundo history')
 // --- round trip ------------------------------------------------------
 console.log('\nsaving and loading')
 {
-  const patch = defaultPatch()
+  const patch = triggerPatch()
   const values = initialValues(patch)
   values['lpf1.cutoff'] = 812.5
   values['mix1.pan3'] = -0.75
@@ -143,6 +153,104 @@ console.log('\nsaving and loading')
     check('bipolar knobs come back', back['mix1.pan3'] === -0.75, String(back['mix1.pan3']))
     check('the reloaded patch compiles clean', compile(reloaded.patch).warnings.length === 0)
   }
+}
+
+// --- a patch that names audio ----------------------------------------
+/**
+ * A Sampler's file reference has to survive a save, and a file this browser
+ * has never seen has to survive a load.
+ *
+ * The second half is the one that matters: a patch shared with somebody else
+ * names audio they do not have, and the right answer is a module that comes
+ * up silent and says which file it wants -- not a patch that refuses to open.
+ */
+console.log('\nsaving a patch that names audio')
+{
+  const patch: Patch = {
+    modules: [
+      { id: 'smp1', type: 'sampler', params: {}, sample: { id: 'abc123', name: 'kick.wav' } },
+      { id: 'mix1', type: 'mixer', params: {} },
+    ],
+    cables: [],
+  }
+  const stored = toStored('With audio', patch, initialValues(patch))
+  const text = JSON.stringify(stored)
+  const reloaded = fromStored(JSON.parse(text))
+
+  check('the patch stays small', text.length < 2000, `${text.length} bytes`)
+  if ('error' in reloaded) {
+    check('a patch naming audio round trips', false, reloaded.error)
+  } else {
+    const smp = reloaded.patch.modules.find((m) => m.id === 'smp1')
+    check('a patch naming audio round trips', !!smp?.sample)
+    check('the hash comes back', smp?.sample?.id === 'abc123', String(smp?.sample?.id))
+    check('and the name with it, for when the file is missing', smp?.sample?.name === 'kick.wav')
+    check('no warnings on our own file', reloaded.warnings.length === 0, reloaded.warnings.join('; '))
+  }
+
+  // Hand-edited nonsense in that field must not take the patch down with it.
+  const mangled = JSON.parse(text)
+  mangled.patch.modules[0].sample = { name: 'no id here' }
+  const survived = fromStored(mangled)
+  check(
+    'a reference with no hash is dropped, not fatal',
+    !('error' in survived) && !survived.patch.modules[0].sample,
+  )
+}
+
+// --- a bundle, for a rack that carries audio -------------------------
+/**
+ * A patch with a Sampler in it names files the other machine has never had,
+ * so it travels as a zip holding both.
+ *
+ * Read back through the central directory rather than by walking the local
+ * headers, which is what lets a bundle survive being unzipped, looked at and
+ * zipped again by a file manager -- so the round trip here is the cheap half
+ * of the check, and the layout being legible to whoever opens it is the point
+ * of the other half.
+ */
+console.log('\nbundling a rack with its audio')
+{
+  const patch: Patch = {
+    modules: [
+      { id: 'smp1', type: 'sampler', params: {}, sample: { id: 'ab12-34', name: 'kick.wav' } },
+      { id: 'mix1', type: 'mixer', params: {} },
+    ],
+    cables: [],
+  }
+  const stored = toStored('Kick rack', patch, initialValues(patch))
+  const audio = new Uint8Array(512)
+  for (let i = 0; i < audio.length; i++) audio[i] = (i * 7) & 0xff
+
+  const zip = makeBundle(stored, [
+    { id: 'ab12-34', name: 'kick.wav', type: 'audio/wav', bytes: audio.buffer as ArrayBuffer },
+  ])
+
+  check('the bundle is a zip', zip[0] === 0x50 && zip[1] === 0x4b)
+  check('and is recognised as one', isZip(zip.slice().buffer as ArrayBuffer))
+  check('while a plain patch is not', !isZip(new TextEncoder().encode(JSON.stringify(stored)).buffer as ArrayBuffer))
+
+  const back = await readBundle(zip.slice().buffer as ArrayBuffer)
+  const reloaded = fromStored(back.stored)
+  check('the patch comes back out', !('error' in reloaded))
+  check('with one sample beside it', back.samples.length === 1, `${back.samples.length}`)
+
+  const sample = back.samples[0]
+  check('under its own hash', sample?.id === 'ab12-34', String(sample?.id))
+  check('and its own name', sample?.name === 'kick.wav', String(sample?.name))
+
+  // Byte for byte: the file that went in is the file that comes out, which is
+  // the whole reason the original bytes are what gets stored.
+  const out = new Uint8Array(sample.bytes)
+  let same = out.length === audio.length
+  for (let i = 0; same && i < out.length; i++) same = out[i] === audio[i]
+  check('with its bytes untouched', same, `${out.length} of ${audio.length} bytes`)
+
+  // A bundle whose audio was taken out still opens; the module lands in the
+  // state a shared patch already lands in.
+  const stripped = makeBundle(stored, [])
+  const thin = await readBundle(stripped.slice().buffer as ArrayBuffer)
+  check('a bundle with no audio in it still opens', thin.samples.length === 0)
 }
 
 // --- patches saved before a module was renamed -----------------------
@@ -269,6 +377,79 @@ console.log('\nfiles that are not quite right')
     check('a value under minimum is clamped', v['lpf1.resonance'] === 0, String(v['lpf1.resonance']))
     check('a non-numeric value falls back to the default', v['lpf1.drive'] === 1.5, String(v['lpf1.drive']))
   }
+}
+
+// --- bypass, module clipboard, cable colours ----------------------------
+console.log('\nbypass')
+{
+  const mod = (id: string, type: string) => ({ id, type, params: {} })
+  let p: Patch = {
+    modules: [mod('osc1', 'osc'), mod('lpf1', 'ladder'), mod('dly1', 'delay'), mod('mix1', 'mixer')],
+    cables: [],
+  }
+  p = wireUp(p, { module: 'osc1', port: 'out' }, { module: 'lpf1', port: 'in' })
+  p = wireUp(p, { module: 'lpf1', port: 'out' }, { module: 'dly1', port: 'in' })
+  p = wireUp(p, { module: 'dly1', port: 'out' }, { module: 'mix1', port: 'in1' })
+  p = wireUp(p, { module: 'dly1', port: 'wet' }, { module: 'mix1', port: 'in2' })
+
+  const from = (q: Patch, to: string) => {
+    const c = q.cables.find((x) => `${x.to.module}.${x.to.port}` === to)
+    return c ? `${c.from.module}.${c.from.port}` : 'nothing'
+  }
+  const one = withBypass(toggleBypass(p, 'lpf1'))
+  check('a bypassed filter passes what fed it on to what it fed', from(one, 'dly1.in') === 'osc1.out', from(one, 'dly1.in'))
+  const both = withBypass(toggleBypass(toggleBypass(p, 'lpf1'), 'dly1'))
+  check('and two in a row pass it straight through', from(both, 'mix1.in1') === 'osc1.out', from(both, 'mix1.in1'))
+  check("a bypassed delay's Wet goes quiet rather than passing the dry", from(both, 'mix1.in2') === 'nothing')
+  check('the module is still there, still fed', from(both, 'lpf1.in') === 'osc1.out')
+  check('the patch itself is not rewired, only what is compiled', from(toggleBypass(p, 'lpf1'), 'dly1.in') === 'lpf1.out')
+  check('switching it back in is the patch it was', JSON.stringify(toggleBypass(toggleBypass(p, 'lpf1'), 'lpf1')) === JSON.stringify(p))
+  check('a module that cannot be bypassed is left alone', toggleBypass(p, 'osc1') .modules[0].bypass === undefined)
+  check('it compiles clean', compile(toggleBypass(p, 'dly1')).warnings.length === 0, compile(toggleBypass(p, 'dly1')).warnings.join('; '))
+
+  const saved = fromStored(JSON.parse(JSON.stringify(toStored('b', toggleBypass(setCableColor(p, p.cables[0].id, 200), 'lpf1'), {}))))
+  const back = 'error' in saved ? null : saved.patch
+  check('bypass is saved with the patch', back?.modules.find((m) => m.id === 'lpf1')?.bypass === true)
+  check('and so is a cable colour', back?.cables[0].color === 200, String(back?.cables[0].color))
+}
+
+console.log('\ncopying modules')
+{
+  let p: Patch = {
+    modules: [
+      { id: 'osc1', type: 'osc', params: {} },
+      { id: 'lpf1', type: 'ladder', params: {} },
+      { id: 'mix1', type: 'mixer', params: {} },
+    ],
+    cables: [],
+  }
+  p = wireUp(p, { module: 'osc1', port: 'out' }, { module: 'lpf1', port: 'in' })
+  p = wireUp(p, { module: 'lpf1', port: 'out' }, { module: 'mix1', port: 'in1' })
+  const values = { 'osc1.pitch': 330, 'lpf1.cutoff': 900 }
+  const clip = copyModules(p, values, ['osc1', 'lpf1'])
+  check('a copy holds the modules and the cable between them', clip.modules.length === 2 && clip.cables.length === 1)
+  check('but not the cable to what was left behind', !clip.cables.some((c) => c.to.module === 'mix1'))
+  check('and the knobs where they were standing', clip.modules[0].params.pitch === 330)
+
+  const out = pasteModules(p, values, clip)
+  check('pasting gives them fresh ids', out.ids.join() === 'osc2,lpf2', out.ids.join())
+  check('wired to each other', out.patch.cables.some((c) => c.from.module === 'osc2' && c.to.module === 'lpf2'))
+  check('with their knobs', out.values['osc2.pitch'] === 330 && out.values['lpf2.cutoff'] === 900)
+  check('and the originals untouched', out.values['osc1.pitch'] === 330 && out.patch.cables.length === 3)
+
+  const other: Patch = { modules: [{ id: 'mix1', type: 'mixer', params: {} }], cables: [] }
+  const there = pasteModules(other, {}, clip)
+  check('into another rack as well', there.ids.join() === 'osc1,lpf1' && compile(there.patch).warnings.length === 0, there.ids.join())
+}
+
+console.log('\nwhat a cable carries')
+{
+  check('an oscillator makes sound', signalOf('osc', 'out') === 'audio')
+  check('its envelope is control', signalOf('osc', 'env') === 'cv')
+  check('an LFO is control', signalOf('lfo', 'out') === 'cv')
+  check('a clock is gates', signalOf('clock', 'd4') === 'gate' && signalOf('sh', 'clk3') === 'gate')
+  check('a keyboard sends a pitch and a gate', signalOf('keys', 'pitch') === 'cv' && signalOf('keys', 'gate') === 'gate')
+  check('a stereo effect sends sound', signalOf('reverb', 'l') === 'audio')
 }
 
 console.log(failures === 0 ? '\nall clear' : `\n${failures} check(s) failed`)

@@ -3,6 +3,7 @@ import { MIXER_CHANNELS } from '../patch/defs'
 import type { ModuleDef } from '../patch/types'
 import { useEngine } from './EngineContext'
 import { Knob } from './Knob'
+import { FALL, scale } from './meter'
 
 interface Props {
   def: ModuleDef
@@ -13,14 +14,6 @@ interface Props {
 
 /** One bar per channel, with the stereo bus last -- the order the DSP reports. */
 const BARS = MIXER_CHANNELS.length + 1
-/** Quieter than this reads as silence, as it does on the scope. */
-const FLOOR_DB = -48
-/**
- * How far a bar falls per frame at 60 Hz: full scale to silence in about
- * three quarters of a second. A meter that tracked a 30 Hz peak exactly
- * would be a strobe -- the fall is what the eye actually reads a level off.
- */
-const FALL = 1 / 45
 
 /**
  * A mixer reads as channel strips, not as a row of seventeen loose knobs.
@@ -44,11 +37,31 @@ export function MixerFace({ def, moduleId, valueOf, onChange }: Props) {
   /** What each bar is currently showing, which is what falls. */
   const shown = useRef(new Float32Array(BARS))
 
+  /** The loudness readout, written to directly like the bars are. */
+  const lufsRef = useRef<HTMLSpanElement>(null)
+  const lastLufs = useRef('')
+
   useEffect(() => {
     if (!engine) return
     return engine.onLevels((levels) => {
       const next = levels[moduleId]
-      if (next) incoming.current.set(next.subarray(0, BARS))
+      if (!next) return
+      incoming.current.set(next.subarray(0, BARS))
+      // Short-term, the three-second reading, because it is the one steady
+      // enough to read while a sound plays and the one a target is set in.
+      // Only written when the figure it shows changes.
+      const el = lufsRef.current
+      if (el && next.length > BARS + 1) {
+        const st = next[BARS + 1]
+        const text = st <= -70 ? '— LUFS' : `${st.toFixed(1).replace('-', '−')} LUFS`
+        if (text !== lastLufs.current) {
+          lastLufs.current = text
+          el.textContent = text
+          el.title = `Loudness over the last 3 s, as BS.1770 measures it. The last 400 ms: ${
+            next[BARS] <= -70 ? 'silent' : `${next[BARS].toFixed(1)} LUFS`
+          }`
+        }
+      }
     })
   }, [engine, moduleId])
 
@@ -134,6 +147,11 @@ export function MixerFace({ def, moduleId, valueOf, onChange }: Props) {
           </div>
           <Meter index={BARS - 1} bars={bars} />
         </div>
+        {/* How loud the mix is, which a peak meter cannot say: two sounds
+            with the same peak can be far apart to the ear. */}
+        <span className="strip-lufs" ref={lufsRef}>
+          — LUFS
+        </span>
         <span className="strip-number">MAIN</span>
       </div>
     </div>
@@ -152,9 +170,9 @@ interface MeterProps {
  */
 function Meter({ index, bars }: MeterProps) {
   return (
-    <div className="strip-meter" aria-hidden="true">
+    <div className="strip-meter level-meter" aria-hidden="true">
       <div
-        className="strip-meter-fill"
+        className="strip-meter-fill level-meter-fill"
         ref={(el) => {
           bars.current[index] = el
         }}
@@ -163,14 +181,3 @@ function Meter({ index, bars }: MeterProps) {
   )
 }
 
-/**
- * Amplitude to a fraction of the bar, on a decibel scale. A linear meter
- * spends almost all of its travel in the loudest few decibels, so everything
- * below a shout sits flat on the floor and tells you nothing.
- */
-function scale(amplitude: number) {
-  if (amplitude <= 0) return 0
-  const db = 20 * Math.log10(amplitude)
-  if (db <= FLOOR_DB) return 0
-  return db >= 0 ? 1 : 1 - db / FLOOR_DB
-}
