@@ -171,8 +171,14 @@ in dark and light -- Standard, the original studio grey and amber; Fall Cafe in
 oat milk, kraft paper and dried leaves, going to espresso and plum after
 closing; Neon Vice,
 whose pink and blue tubes keep their jobs in both modes; Mesa in sun-struck
-adobe, clay and sage; and Terminal 80s, a green phosphor tube that becomes
-electric orange on sepia with the lights on. The two are separate choices, so picking light does not drop you back into
+adobe, clay and sage; Terminal 80s, a green phosphor tube that becomes
+electric orange on sepia with the lights on; Halloween, pumpkin and witch
+purple, candy corn by day; True North, snow white between maple-red rack
+ears; Deep Sea, bioluminescence in the abyss and a reef by day; Arcade, a
+black cabinet and its side art; Blueprint, white lines on drafting blue or
+pencil on graph paper; Winter Holiday, pine, cranberry and gold; Vaporwave,
+aqua over a pink-to-purple sunset; and Tube Amp, Tolex, chicken-head knobs
+and valve glow. The two are separate choices, so picking light does not drop you back into
 the standard palette. The change cross-fades and is remembered.
 
 ```

@@ -12,7 +12,20 @@
  * have to be rebuilt to add one.
  */
 
-export type ThemeId = 'standard' | 'fall-cafe' | 'neon-vice' | 'mesa' | 'terminal-80s'
+export type ThemeId =
+  | 'standard'
+  | 'fall-cafe'
+  | 'neon-vice'
+  | 'mesa'
+  | 'terminal-80s'
+  | 'halloween'
+  | 'true-north'
+  | 'deep-sea'
+  | 'arcade'
+  | 'blueprint'
+  | 'winter-holiday'
+  | 'vaporwave'
+  | 'tube-amp'
 export type Mode = 'dark' | 'light'
 
 export interface Appearance {
@@ -33,6 +46,14 @@ export const THEMES: ThemeInfo[] = [
   { id: 'neon-vice', name: 'Neon Vice' },
   { id: 'mesa', name: 'Mesa' },
   { id: 'terminal-80s', name: 'Terminal 80s' },
+  { id: 'halloween', name: 'Halloween' },
+  { id: 'true-north', name: 'True North' },
+  { id: 'deep-sea', name: 'Deep Sea' },
+  { id: 'arcade', name: 'Arcade' },
+  { id: 'blueprint', name: 'Blueprint' },
+  { id: 'winter-holiday', name: 'Winter Holiday' },
+  { id: 'vaporwave', name: 'Vaporwave' },
+  { id: 'tube-amp', name: 'Tube Amp' },
 ]
 
 /** The rack as it has always looked, so an upgrade changes nothing. */

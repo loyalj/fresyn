@@ -1051,3 +1051,1593 @@
   --scope-axis-c: #bfa268;
   --env-mark: #dcc79a;
 }
+
+/* --- halloween, dark: the haunted house ------------------------------
+   Pumpkin on a house with the lights off. Bone for the ink, witch purple
+   for the rack ears, and the one green on the whole rack is the slime in
+   the meters -- which is where "safe" has always lived anyway.
+-------------------------------------------------------------------- */
+:root[data-theme="halloween"][data-mode="dark"] {
+  color-scheme: dark;
+
+  --bg: #120d16;
+  --panel: #1f1726;
+  --panel-edge: #0a070c;
+  --hairline: #2e2338;
+  --hairline-dash: #3a2c46;
+  --rule: #433352;
+
+  --ink: #eee2cc;
+  --ink-dim: #cbbca6;
+  --ink-faint: #aa9c86;
+
+  --accent: #ff7518;
+  --accent-line: #ff9a3c;
+  --accent-rgb: 255 154 60;
+  --on-accent: #1a0c02;
+  --danger: #c1121f;
+  --on-danger: #fff0f0;
+
+  --unit-top: #2a1f33;
+  --unit-bottom: #1f1726;
+  --unit-bevel: #45355a;
+  --unit-shadow: rgb(0 0 0 / 0.55);
+  --spine-top: #150f1a;
+  --spine-bottom: #3f2257;
+  --rear-top: #251c2d;
+  --rear-bottom: #1a131f;
+
+  --well: #1b1421;
+  --recess: rgb(0 0 0 / 0.28);
+  --recess-soft: rgb(0 0 0 / 0.2);
+  --recess-edge: #120d16;
+  --screen-top: #150f19;
+  --screen-bottom: #0d0910;
+  --screen-edge: #2b2135;
+  --legend-bg: rgb(18 13 22 / 0.85);
+
+  --control: #1c1522;
+  --control-hover: #2a2032;
+  --control-top: #3a2d47;
+  --control-bottom: #241b2c;
+  --control-bevel: #4d3c60;
+  --control-pressed-top: #17111c;
+  --control-pressed-bottom: #221a29;
+  --shadow-raised: rgb(0 0 0 / 0.45);
+  --shadow-pressed: rgb(0 0 0 / 0.65);
+  --shadow-jack: rgb(0 0 0 / 0.6);
+  --shadow-hole: rgb(0 0 0 / 0.9);
+
+  --field: #18121d;
+  --kbd: #120d16;
+  --kbd-edge: #2e2338;
+  --sunken: #000;
+
+  --knob-track: #120d16;
+  --knob-cap: #33273e;
+  --knob-cap-edge: #0a070c;
+  --knob-pointer: #eee2cc;
+  /* Keyboard: old ivory and a coffin lid. */
+  --key-white: #e6dac2;
+  --key-black: #140e18;
+
+  --jack-hi: #4e3d5e;
+  --jack-lo: #211929;
+  --jack-out-hi: #5a4035;
+  --jack-out-lo: #2a1c18;
+  --jack-ring: #08060a;
+  --jack-hole: #030204;
+
+  --led-off: #3d1f08;
+  --meter-track: #000;
+  --meter-low: #7ed957;
+  --meter-high: #e0301e;
+
+  --wave: #4a3a58;
+  --wave-kept: #9d86b5;
+  --wave-axis: #221a29;
+
+  --cable-s: 70%;
+  --cable-l: 56%;
+  --cable-end-s: 60%;
+  --cable-end-l: 38%;
+  --cable-drag-s: 75%;
+  --cable-drag-l: 64%;
+  --cable-grip: #eee2cc;
+  --cable-shadow: rgb(0 0 0 / 0.6);
+  --cable-hover: brightness(1.3);
+
+  --scope-grid-c: #221a29;
+  --scope-axis-c: #3a2d47;
+  --env-mark: #2b2135;
+}
+
+/* --- halloween, light: candy corn ------------------------------------
+   The same party with the lights on: cream, pumpkin and costume purple.
+   The ears go purple, so the labels on them take their own pale ink.
+-------------------------------------------------------------------- */
+:root[data-theme="halloween"][data-mode="light"] {
+  color-scheme: light;
+
+  --bg: #f1dcc0;
+  --panel: #fff5e6;
+  --panel-edge: #c9a98a;
+  --hairline: #e6ceb0;
+  --hairline-dash: #dcc2a1;
+  --rule: #d4b894;
+
+  --ink: #2b1a3a;
+  --ink-dim: #4e3a62;
+  --ink-faint: #6a5680;
+
+  /* The pumpkin fills, the burnt orange draws. */
+  --accent: #ff7a1c;
+  --accent-line: #b34806;
+  --accent-rgb: 255 122 28;
+  --on-accent: #2a1204;
+  --danger: #8c0c16;
+  --on-danger: #fff0ee;
+
+  --unit-top: #fffaf2;
+  --unit-bottom: #fcefdc;
+  --unit-bevel: #fff;
+  --unit-shadow: rgb(60 30 70 / 0.16);
+  --spine-top: #5a3a7e;
+  --spine-bottom: #452a63;
+  --spine-ink: #f6e8ff;
+  --spine-ink-faint: #cdb6e3;
+  --rear-top: #f7e9d4;
+  --rear-bottom: #efdcc2;
+
+  --well: #faeedb;
+  --recess: rgb(60 30 70 / 0.07);
+  --recess-soft: rgb(60 30 70 / 0.05);
+  --recess-edge: rgb(60 30 70 / 0.13);
+  --screen-top: #fdf5e8;
+  --screen-bottom: #f5e9d5;
+  --screen-edge: #d6bf9f;
+  --legend-bg: rgb(253 245 232 / 0.86);
+
+  --control: #f5e6cf;
+  --control-hover: #ecd8bb;
+  --control-top: #fffaf2;
+  --control-bottom: #f8ead6;
+  --control-bevel: #fff;
+  --control-pressed-top: #efdec5;
+  --control-pressed-bottom: #f6e7d1;
+  --shadow-raised: rgb(60 30 70 / 0.16);
+  --shadow-pressed: rgb(60 30 70 / 0.28);
+  --shadow-jack: rgb(60 30 70 / 0.32);
+  --shadow-hole: rgb(0 0 0 / 0.5);
+
+  --field: #fffbf4;
+  --kbd: #fffbf4;
+  --kbd-edge: #e0c7a6;
+  --sunken: rgb(60 30 70 / 0.3);
+
+  --knob-track: #ead7ba;
+  --knob-cap: #fffaf2;
+  --knob-cap-edge: #cdb492;
+  --knob-pointer: #2b1a3a;
+  --key-white: #fff8ec;
+  --key-black: #2b1a3a;
+
+  --jack-hi: #e8d6bb;
+  --jack-lo: #bfa47f;
+  --jack-out-hi: #f0cfae;
+  --jack-out-lo: #c99a6c;
+  --jack-ring: #6e5a7e;
+  --jack-hole: #1e1228;
+
+  --led-off: #f6cfad;
+  --meter-track: #ead7ba;
+  --meter-low: #5a9e3a;
+  --meter-high: #8c0c16;
+
+  --wave: #d6c3a4;
+  --wave-kept: #8f76ad;
+  --wave-axis: #ecdcc2;
+
+  --cable-s: 58%;
+  --cable-l: 40%;
+  --cable-end-s: 60%;
+  --cable-end-l: 28%;
+  --cable-drag-s: 64%;
+  --cable-drag-l: 34%;
+  --cable-grip: #2b1a3a;
+  --cable-shadow: rgb(60 30 70 / 0.2);
+  --cable-hover: brightness(0.84) saturate(1.25);
+
+  --scope-grid-c: #ecdcc2;
+  --scope-axis-c: #cdb492;
+  --env-mark: #e6d4b7;
+}
+
+/* --- true north, light: snow and the maple leaf ----------------------
+   White panels between red ears, so every unit in the rack is the flag
+   laid on its side. Pine green is what "safe" looks like up here.
+-------------------------------------------------------------------- */
+:root[data-theme="true-north"][data-mode="light"] {
+  color-scheme: light;
+
+  --bg: #e4e9ee;
+  --panel: #ffffff;
+  --panel-edge: #b9c3cc;
+  --hairline: #d8dfe5;
+  --hairline-dash: #ccd4db;
+  --rule: #c4ccd4;
+
+  --ink: #1e2328;
+  --ink-dim: #454e57;
+  --ink-faint: #5f6a74;
+
+  --accent: #d52b1e;
+  --accent-line: #a3180d;
+  --accent-rgb: 213 43 30;
+  --on-accent: #fff;
+  /* Oxblood, a long way darker than the maple, so stop does not read as
+     one more thing in the national colour. */
+  --danger: #5c0a07;
+  --on-danger: #fff0ee;
+
+  --unit-top: #ffffff;
+  --unit-bottom: #f4f7f9;
+  --unit-bevel: #fff;
+  --unit-shadow: rgb(30 40 50 / 0.14);
+  --spine-top: #d52b1e;
+  --spine-bottom: #b3200f;
+  --spine-ink: #fff5f3;
+  --spine-ink-faint: #ffd0c8;
+  --rear-top: #f2f5f8;
+  --rear-bottom: #e7ecf0;
+
+  --well: #f3f6f8;
+  --recess: rgb(30 40 50 / 0.06);
+  --recess-soft: rgb(30 40 50 / 0.045);
+  --recess-edge: rgb(30 40 50 / 0.12);
+  --screen-top: #fbfcfd;
+  --screen-bottom: #eef2f5;
+  --screen-edge: #c9d2da;
+  --legend-bg: rgb(251 252 253 / 0.86);
+
+  --control: #eef2f5;
+  --control-hover: #e2e8ed;
+  --control-top: #ffffff;
+  --control-bottom: #f0f3f6;
+  --control-bevel: #fff;
+  --control-pressed-top: #e3e8ec;
+  --control-pressed-bottom: #edf1f4;
+  --shadow-raised: rgb(30 40 50 / 0.16);
+  --shadow-pressed: rgb(30 40 50 / 0.28);
+  --shadow-jack: rgb(30 40 50 / 0.32);
+  --shadow-hole: rgb(0 0 0 / 0.5);
+
+  --field: #ffffff;
+  --kbd: #ffffff;
+  --kbd-edge: #d0d8df;
+  --sunken: rgb(30 40 50 / 0.3);
+
+  --knob-track: #dde3e8;
+  --knob-cap: #ffffff;
+  --knob-cap-edge: #bcc6cf;
+  --knob-pointer: #1e2328;
+  --key-white: #ffffff;
+  --key-black: #22282e;
+
+  --jack-hi: #dfe5ea;
+  --jack-lo: #b3bec8;
+  --jack-out-hi: #eed6d2;
+  --jack-out-lo: #c8a29c;
+  --jack-ring: #6b7680;
+  --jack-hole: #1a1f24;
+
+  --led-off: #f3c9c4;
+  --meter-track: #dde3e8;
+  --meter-low: #2f7d5b;
+  --meter-high: #a3180d;
+
+  --wave: #c3ccd4;
+  --wave-kept: #7d93a6;
+  --wave-axis: #e1e7ec;
+
+  --cable-s: 55%;
+  --cable-l: 42%;
+  --cable-end-s: 58%;
+  --cable-end-l: 30%;
+  --cable-drag-s: 60%;
+  --cable-drag-l: 36%;
+  --cable-grip: #1e2328;
+  --cable-shadow: rgb(30 40 50 / 0.2);
+  --cable-hover: brightness(0.84) saturate(1.25);
+
+  --scope-grid-c: #e1e7ec;
+  --scope-axis-c: #bcc6cf;
+  --env-mark: #dce3e9;
+}
+
+/* --- true north, dark: a northern night ------------------------------
+   Slate and snow under the aurora, with the maple still on the ears.
+-------------------------------------------------------------------- */
+:root[data-theme="true-north"][data-mode="dark"] {
+  color-scheme: dark;
+
+  --bg: #0e1316;
+  --panel: #182026;
+  --panel-edge: #080b0d;
+  --hairline: #253038;
+  --hairline-dash: #2f3b44;
+  --rule: #36444e;
+
+  --ink: #e6edf1;
+  --ink-dim: #bfcad2;
+  --ink-faint: #9aa8b3;
+
+  --accent: #d8352a;
+  --accent-line: #ff6a5a;
+  --accent-rgb: 255 106 90;
+  --on-accent: #fff;
+  --danger: #8a1810;
+  --on-danger: #ffeeea;
+
+  --unit-top: #202a31;
+  --unit-bottom: #182026;
+  --unit-bevel: #34424c;
+  --unit-shadow: rgb(0 0 0 / 0.5);
+  --spine-top: #5e140f;
+  --spine-bottom: #9c2319;
+  --spine-ink: #ffe6e2;
+  --spine-ink-faint: #f0a89f;
+  --rear-top: #1c252b;
+  --rear-bottom: #141b20;
+
+  --well: #151c21;
+  --recess: rgb(0 0 0 / 0.25);
+  --recess-soft: rgb(0 0 0 / 0.18);
+  --recess-edge: #0e1316;
+  --screen-top: #121a1f;
+  --screen-bottom: #0b1013;
+  --screen-edge: #25313a;
+  --legend-bg: rgb(14 19 22 / 0.85);
+
+  --control: #151c21;
+  --control-hover: #1f2830;
+  --control-top: #2c3942;
+  --control-bottom: #1b242a;
+  --control-bevel: #3a4954;
+  --control-pressed-top: #11171b;
+  --control-pressed-bottom: #182026;
+  --shadow-raised: rgb(0 0 0 / 0.45);
+  --shadow-pressed: rgb(0 0 0 / 0.65);
+  --shadow-jack: rgb(0 0 0 / 0.6);
+  --shadow-hole: rgb(0 0 0 / 0.9);
+
+  --field: #121a1f;
+  --kbd: #0e1316;
+  --kbd-edge: #253038;
+  --sunken: #000;
+
+  --knob-track: #0e1316;
+  --knob-cap: #2a363f;
+  --knob-cap-edge: #080b0d;
+  --knob-pointer: #e6edf1;
+  --key-white: #e9eef1;
+  --key-black: #10161a;
+
+  --jack-hi: #43525d;
+  --jack-lo: #1a2228;
+  --jack-out-hi: #5a3a37;
+  --jack-out-lo: #2a1b1a;
+  --jack-ring: #06090b;
+  --jack-hole: #020304;
+
+  --led-off: #3a1512;
+  --meter-track: #000;
+  /* The aurora. */
+  --meter-low: #4fd197;
+  --meter-high: #ff4d3d;
+
+  --wave: #3a4852;
+  --wave-kept: #7fb3c9;
+  --wave-axis: #1a2228;
+
+  --cable-s: 62%;
+  --cable-l: 56%;
+  --cable-end-s: 55%;
+  --cable-end-l: 38%;
+  --cable-drag-s: 70%;
+  --cable-drag-l: 64%;
+  --cable-grip: #e6edf1;
+  --cable-shadow: rgb(0 0 0 / 0.55);
+  --cable-hover: brightness(1.3);
+
+  --scope-grid-c: #1a2228;
+  --scope-axis-c: #2c3942;
+  --env-mark: #25313a;
+}
+
+/* --- deep sea, dark: the abyss ------------------------------------
+   Navy with the lights out, and everything that shines is alive: cyan for
+   the controls, jellyfish pink for what a wave keeps, a green-blue glow in
+   the meters.
+-------------------------------------------------------------------- */
+:root[data-theme="deep-sea"][data-mode="dark"] {
+  color-scheme: dark;
+
+  --bg: #050d18;
+  --panel: #0b1a2b;
+  --panel-edge: #02060b;
+  --hairline: #14283d;
+  --hairline-dash: #1b3350;
+  --rule: #203b5a;
+
+  --ink: #d6f1ff;
+  --ink-dim: #a8cfe3;
+  --ink-faint: #83aec4;
+
+  --accent: #16d9e3;
+  --accent-line: #5ff0f5;
+  --accent-rgb: 95 240 245;
+  --on-accent: #02161a;
+  --danger: #d62a6a;
+  --on-danger: #fff0f5;
+
+  --unit-top: #10233a;
+  --unit-bottom: #0b1a2b;
+  --unit-bevel: #1f3b5a;
+  --unit-shadow: rgb(0 0 0 / 0.55);
+  --spine-top: #061222;
+  --spine-bottom: #0f3550;
+  --rear-top: #0d1e31;
+  --rear-bottom: #081523;
+
+  --well: #091727;
+  --recess: rgb(0 0 0 / 0.26);
+  --recess-soft: rgb(0 0 0 / 0.19);
+  --recess-edge: #050d18;
+  --screen-top: #071424;
+  --screen-bottom: #030a13;
+  --screen-edge: #17304a;
+  --legend-bg: rgb(5 13 24 / 0.85);
+
+  --control: #0a1828;
+  --control-hover: #12243a;
+  --control-top: #1a3350;
+  --control-bottom: #0f2136;
+  --control-bevel: #25456a;
+  --control-pressed-top: #07121f;
+  --control-pressed-bottom: #0c1a2b;
+  --shadow-raised: rgb(0 0 0 / 0.45);
+  --shadow-pressed: rgb(0 0 0 / 0.65);
+  --shadow-jack: rgb(0 0 0 / 0.6);
+  --shadow-hole: rgb(0 0 0 / 0.9);
+
+  --field: #081524;
+  --kbd: #050d18;
+  --kbd-edge: #14283d;
+  --sunken: #000;
+
+  --knob-track: #050d18;
+  --knob-cap: #16304b;
+  --knob-cap-edge: #02060b;
+  --knob-pointer: #d6f1ff;
+  --key-white: #d4ecf5;
+  --key-black: #06101c;
+
+  --jack-hi: #274866;
+  --jack-lo: #0c1a2b;
+  --jack-out-hi: #3b2c55;
+  --jack-out-lo: #150f24;
+  --jack-ring: #01040a;
+  --jack-hole: #000205;
+
+  --led-off: #0a3036;
+  --meter-track: #000;
+  --meter-low: #3ef0b0;
+  --meter-high: #ff3d7f;
+
+  --wave: #1f3b5a;
+  --wave-kept: #ff7ac0;
+  --wave-axis: #0c1a2b;
+
+  --cable-s: 70%;
+  --cable-l: 58%;
+  --cable-end-s: 60%;
+  --cable-end-l: 40%;
+  --cable-drag-s: 75%;
+  --cable-drag-l: 66%;
+  --cable-grip: #d6f1ff;
+  --cable-shadow: rgb(0 0 0 / 0.58);
+  --cable-hover: brightness(1.3);
+
+  --scope-grid-c: #0c1a2b;
+  --scope-axis-c: #1a3350;
+  --env-mark: #17304a;
+}
+
+/* --- deep sea, light: the sunlit reef -----------------------------
+   Lagoon water over white sand, with coral for the controls.
+-------------------------------------------------------------------- */
+:root[data-theme="deep-sea"][data-mode="light"] {
+  color-scheme: light;
+
+  --bg: #bfe6ea;
+  --panel: #f2fcfb;
+  --panel-edge: #8cc2c8;
+  --hairline: #cfe9ea;
+  --hairline-dash: #bfe0e2;
+  --rule: #b3d8db;
+
+  --ink: #0b2a3a;
+  --ink-dim: #2d5163;
+  --ink-faint: #4a6d7e;
+
+  --accent: #ff7a6b;
+  --accent-line: #c2412f;
+  --accent-rgb: 255 122 107;
+  --on-accent: #2a0c06;
+  --danger: #a3122b;
+  --on-danger: #fff0f2;
+
+  --unit-top: #fbfffe;
+  --unit-bottom: #eef9f8;
+  --unit-bevel: #fff;
+  --unit-shadow: rgb(10 50 70 / 0.14);
+  --spine-top: #7fd0d6;
+  --spine-bottom: #a9e2e4;
+  --rear-top: #eaf6f6;
+  --rear-bottom: #dcefef;
+
+  --well: #eef8f8;
+  --recess: rgb(10 50 70 / 0.06);
+  --recess-soft: rgb(10 50 70 / 0.045);
+  --recess-edge: rgb(10 50 70 / 0.12);
+  --screen-top: #f8fefe;
+  --screen-bottom: #eaf6f6;
+  --screen-edge: #b3d6da;
+  --legend-bg: rgb(248 254 254 / 0.86);
+
+  --control: #e6f4f4;
+  --control-hover: #d6ecec;
+  --control-top: #fbffff;
+  --control-bottom: #ecf7f7;
+  --control-bevel: #fff;
+  --control-pressed-top: #dbeeee;
+  --control-pressed-bottom: #e8f5f5;
+  --shadow-raised: rgb(10 50 70 / 0.16);
+  --shadow-pressed: rgb(10 50 70 / 0.28);
+  --shadow-jack: rgb(10 50 70 / 0.32);
+  --shadow-hole: rgb(0 0 0 / 0.5);
+
+  --field: #fbffff;
+  --kbd: #fbffff;
+  --kbd-edge: #bfe0e2;
+  --sunken: rgb(10 50 70 / 0.3);
+
+  --knob-track: #d2eaeb;
+  --knob-cap: #fbffff;
+  --knob-cap-edge: #9fcbd0;
+  --knob-pointer: #0b2a3a;
+  --key-white: #fbffff;
+  --key-black: #0e3345;
+
+  --jack-hi: #d6ecec;
+  --jack-lo: #9fc7cc;
+  --jack-out-hi: #ffd9d2;
+  --jack-out-lo: #d99c90;
+  --jack-ring: #4d7584;
+  --jack-hole: #0b1f28;
+
+  --led-off: #ffd3cc;
+  --meter-track: #d2eaeb;
+  --meter-low: #1f9e8f;
+  --meter-high: #a3122b;
+
+  --wave: #b3d6da;
+  --wave-kept: #3d8fa3;
+  --wave-axis: #dcefef;
+
+  --cable-s: 58%;
+  --cable-l: 42%;
+  --cable-end-s: 60%;
+  --cable-end-l: 30%;
+  --cable-drag-s: 62%;
+  --cable-drag-l: 36%;
+  --cable-grip: #0b2a3a;
+  --cable-shadow: rgb(10 50 70 / 0.2);
+  --cable-hover: brightness(0.84) saturate(1.25);
+
+  --scope-grid-c: #dcefef;
+  --scope-axis-c: #9fcbd0;
+  --env-mark: #d2eaeb;
+}
+
+/* --- arcade, dark: the cabinet ------------------------------------
+   Black laminate and blue T-molding, with the neon kept for the things you
+   press: yellow buttons, a green score bar, cyan on the screen.
+-------------------------------------------------------------------- */
+:root[data-theme="arcade"][data-mode="dark"] {
+  color-scheme: dark;
+
+  --bg: #050507;
+  --panel: #111116;
+  --panel-edge: #000;
+  --hairline: #1f1f28;
+  --hairline-dash: #2a2a36;
+  --rule: #33333f;
+
+  --ink: #f2f2ff;
+  --ink-dim: #c4c4dc;
+  --ink-faint: #9a9ab8;
+
+  --accent: #ffe600;
+  --accent-line: #fff04d;
+  --accent-rgb: 255 240 77;
+  --on-accent: #1a1500;
+  --danger: #ff2a2a;
+  --on-danger: #fff;
+
+  --unit-top: #18181f;
+  --unit-bottom: #111116;
+  --unit-bevel: #2c2c3a;
+  --unit-shadow: rgb(0 0 0 / 0.6);
+  --spine-top: #0a0a10;
+  --spine-bottom: #1c1c8a;
+  --rear-top: #15151b;
+  --rear-bottom: #0c0c10;
+
+  --well: #0e0e13;
+  --recess: rgb(0 0 0 / 0.26);
+  --recess-soft: rgb(0 0 0 / 0.19);
+  --recess-edge: #050507;
+  --screen-top: #0a0a0f;
+  --screen-bottom: #020203;
+  --screen-edge: #25253a;
+  --legend-bg: rgb(5 5 7 / 0.85);
+
+  --control: #101015;
+  --control-hover: #1c1c24;
+  --control-top: #2a2a36;
+  --control-bottom: #17171e;
+  --control-bevel: #3a3a4a;
+  --control-pressed-top: #0b0b10;
+  --control-pressed-bottom: #141419;
+  --shadow-raised: rgb(0 0 0 / 0.45);
+  --shadow-pressed: rgb(0 0 0 / 0.65);
+  --shadow-jack: rgb(0 0 0 / 0.6);
+  --shadow-hole: rgb(0 0 0 / 0.9);
+
+  --field: #0c0c11;
+  --kbd: #050507;
+  --kbd-edge: #1f1f28;
+  --sunken: #000;
+
+  --knob-track: #050507;
+  --knob-cap: #24242f;
+  --knob-cap-edge: #000;
+  --knob-pointer: #f2f2ff;
+  --key-white: #ececf5;
+  --key-black: #0a0a0f;
+
+  --jack-hi: #34344a;
+  --jack-lo: #121218;
+  --jack-out-hi: #4a2340;
+  --jack-out-lo: #1a0c17;
+  --jack-ring: #000;
+  --jack-hole: #000;
+
+  --led-off: #3a3300;
+  --meter-track: #000;
+  --meter-low: #39ff14;
+  --meter-high: #ff2a2a;
+
+  --wave: #2c2c3a;
+  --wave-kept: #00e5ff;
+  --wave-axis: #121218;
+
+  --cable-s: 90%;
+  --cable-l: 60%;
+  --cable-end-s: 80%;
+  --cable-end-l: 42%;
+  --cable-drag-s: 95%;
+  --cable-drag-l: 68%;
+  --cable-grip: #f2f2ff;
+  --cable-shadow: rgb(0 0 0 / 0.58);
+  --cable-hover: brightness(1.3);
+
+  --scope-grid-c: #121218;
+  --scope-axis-c: #2a2a36;
+  --env-mark: #25253a;
+}
+
+/* --- arcade, light: the side art ----------------------------------
+   White cabinet vinyl in hard outlines, blue ears like a stripe of side art,
+   and hot magenta for the buttons.
+-------------------------------------------------------------------- */
+:root[data-theme="arcade"][data-mode="light"] {
+  color-scheme: light;
+
+  --bg: #e8e4f7;
+  --panel: #ffffff;
+  --panel-edge: #2a2a48;
+  --hairline: #d9d4ee;
+  --hairline-dash: #cbc4e6;
+  --rule: #c0b8e0;
+
+  --ink: #14142b;
+  --ink-dim: #3b3b5c;
+  --ink-faint: #57577a;
+
+  --accent: #ff2e88;
+  --accent-line: #c4005c;
+  --accent-rgb: 255 46 136;
+  --on-accent: #fff;
+  --danger: #b30000;
+  --on-danger: #fff;
+
+  --unit-top: #ffffff;
+  --unit-bottom: #f6f4fd;
+  --unit-bevel: #fff;
+  --unit-shadow: rgb(20 20 43 / 0.14);
+  --spine-top: #2e6bff;
+  --spine-bottom: #1f4fd6;
+  --spine-ink: #ffffff;
+  --spine-ink-faint: #c9d8ff;
+  --rear-top: #f3f1fb;
+  --rear-bottom: #e8e5f5;
+
+  --well: #f5f3fc;
+  --recess: rgb(20 20 43 / 0.06);
+  --recess-soft: rgb(20 20 43 / 0.045);
+  --recess-edge: rgb(20 20 43 / 0.12);
+  --screen-top: #fcfbff;
+  --screen-bottom: #efedf9;
+  --screen-edge: #c9c3e6;
+  --legend-bg: rgb(252 251 255 / 0.86);
+
+  --control: #efedf9;
+  --control-hover: #e2def3;
+  --control-top: #ffffff;
+  --control-bottom: #f2f0fa;
+  --control-bevel: #fff;
+  --control-pressed-top: #e4e0f4;
+  --control-pressed-bottom: #eeebf8;
+  --shadow-raised: rgb(20 20 43 / 0.16);
+  --shadow-pressed: rgb(20 20 43 / 0.28);
+  --shadow-jack: rgb(20 20 43 / 0.32);
+  --shadow-hole: rgb(0 0 0 / 0.5);
+
+  --field: #ffffff;
+  --kbd: #ffffff;
+  --kbd-edge: #d0cae8;
+  --sunken: rgb(20 20 43 / 0.3);
+
+  --knob-track: #e0dcf1;
+  --knob-cap: #ffffff;
+  --knob-cap-edge: #b7b0d8;
+  --knob-pointer: #14142b;
+  --key-white: #ffffff;
+  --key-black: #14142b;
+
+  --jack-hi: #e2def3;
+  --jack-lo: #b0a9d2;
+  --jack-out-hi: #ffd1e6;
+  --jack-out-lo: #d98fb2;
+  --jack-ring: #55507a;
+  --jack-hole: #0e0e1c;
+
+  --led-off: #ffd0e4;
+  --meter-track: #e0dcf1;
+  --meter-low: #12b84a;
+  --meter-high: #b30000;
+
+  --wave: #cfc9e8;
+  --wave-kept: #2e6bff;
+  --wave-axis: #e8e5f5;
+
+  --cable-s: 70%;
+  --cable-l: 46%;
+  --cable-end-s: 72%;
+  --cable-end-l: 32%;
+  --cable-drag-s: 75%;
+  --cable-drag-l: 40%;
+  --cable-grip: #14142b;
+  --cable-shadow: rgb(20 20 43 / 0.2);
+  --cable-hover: brightness(0.84) saturate(1.25);
+
+  --scope-grid-c: #e8e5f5;
+  --scope-axis-c: #b7b0d8;
+  --env-mark: #e0dcf1;
+}
+
+/* --- blueprint, dark: the drafting blue ---------------------------
+   White lines on cyanotype. The accent is the draughtsman's white, so a
+   lit control reads as a line drawn over the sheet rather than a colour
+   added to it.
+-------------------------------------------------------------------- */
+:root[data-theme="blueprint"][data-mode="dark"] {
+  color-scheme: dark;
+
+  --bg: #0a2a5c;
+  --panel: #0f3470;
+  --panel-edge: #061d42;
+  --hairline: #2a5494;
+  --hairline-dash: #3a64a4;
+  --rule: #4a74b4;
+
+  --ink: #eef5ff;
+  --ink-dim: #c3d7f5;
+  --ink-faint: #9db9e3;
+
+  --accent: #e8f1ff;
+  --accent-line: #ffffff;
+  --accent-rgb: 255 255 255;
+  --on-accent: #0a2a5c;
+  --danger: #d9412f;
+  --on-danger: #fff;
+
+  --unit-top: #123b7c;
+  --unit-bottom: #0f3470;
+  --unit-bevel: #2c5aa0;
+  --unit-shadow: rgb(0 10 30 / 0.45);
+  --spine-top: #0b2a5e;
+  --spine-bottom: #16448a;
+  --rear-top: #103672;
+  --rear-bottom: #0c2d63;
+
+  --well: #0d3068;
+  --recess: rgb(0 10 30 / 0.25);
+  --recess-soft: rgb(0 10 30 / 0.18);
+  --recess-edge: #0a2a5c;
+  --screen-top: #0c2d63;
+  --screen-bottom: #082453;
+  --screen-edge: #2a5494;
+  --legend-bg: rgb(10 42 92 / 0.85);
+
+  --control: #0d3068;
+  --control-hover: #15407e;
+  --control-top: #1d4d91;
+  --control-bottom: #12397a;
+  --control-bevel: #3462a6;
+  --control-pressed-top: #0a2a5c;
+  --control-pressed-bottom: #0e326c;
+  --shadow-raised: rgb(0 10 30 / 0.4);
+  --shadow-pressed: rgb(0 10 30 / 0.6);
+  --shadow-jack: rgb(0 10 30 / 0.55);
+  --shadow-hole: rgb(0 10 30 / 0.85);
+
+  --field: #0b2c60;
+  --kbd: #0a2a5c;
+  --kbd-edge: #2a5494;
+  --sunken: #031433;
+
+  --knob-track: #082453;
+  --knob-cap: #1b4a8e;
+  --knob-cap-edge: #061d42;
+  --knob-pointer: #eef5ff;
+  --key-white: #e6effc;
+  --key-black: #0a2a5c;
+
+  --jack-hi: #3462a6;
+  --jack-lo: #0f3470;
+  --jack-out-hi: #4a6fae;
+  --jack-out-lo: #173a74;
+  --jack-ring: #04173a;
+  --jack-hole: #020c20;
+
+  --led-off: #1b4079;
+  --meter-track: #061d42;
+  --meter-low: #9fe7ff;
+  --meter-high: #ff6b5a;
+
+  --wave: #2c5aa0;
+  --wave-kept: #eef5ff;
+  --wave-axis: #0f3470;
+
+  --cable-s: 60%;
+  --cable-l: 64%;
+  --cable-end-s: 50%;
+  --cable-end-l: 46%;
+  --cable-drag-s: 70%;
+  --cable-drag-l: 72%;
+  --cable-grip: #eef5ff;
+  --cable-shadow: rgb(0 10 30 / 0.5);
+  --cable-hover: brightness(1.25);
+
+  --scope-grid-c: #1b4079;
+  --scope-axis-c: #3462a6;
+  --env-mark: #2a5494;
+}
+
+/* --- blueprint, light: pencil on graph paper ----------------------
+   Graphite on sage-tinted paper, with the blue pencil for anything that is
+   switched on.
+-------------------------------------------------------------------- */
+:root[data-theme="blueprint"][data-mode="light"] {
+  color-scheme: light;
+
+  --bg: #e9ede6;
+  --panel: #fbfcf8;
+  --panel-edge: #a9b3a5;
+  --hairline: #d7ddd2;
+  --hairline-dash: #c9d1c3;
+  --rule: #c0c9ba;
+
+  --ink: #2b2f33;
+  --ink-dim: #4d5358;
+  --ink-faint: #6a7076;
+
+  --accent: #2f6fd6;
+  --accent-line: #1d4f9e;
+  --accent-rgb: 47 111 214;
+  --on-accent: #fff;
+  --danger: #c0392b;
+  --on-danger: #fff;
+
+  --unit-top: #fdfefb;
+  --unit-bottom: #f3f6ef;
+  --unit-bevel: #fff;
+  --unit-shadow: rgb(40 45 40 / 0.14);
+  --spine-top: #dfe6d8;
+  --spine-bottom: #ccd6c4;
+  --rear-top: #eef2ea;
+  --rear-bottom: #e3e9de;
+
+  --well: #f2f5ee;
+  --recess: rgb(40 45 40 / 0.06);
+  --recess-soft: rgb(40 45 40 / 0.045);
+  --recess-edge: rgb(40 45 40 / 0.12);
+  --screen-top: #fcfdf9;
+  --screen-bottom: #f0f3ec;
+  --screen-edge: #c3ccbd;
+  --legend-bg: rgb(252 253 249 / 0.86);
+
+  --control: #edf1e9;
+  --control-hover: #e0e6da;
+  --control-top: #ffffff;
+  --control-bottom: #eff2eb;
+  --control-bevel: #fff;
+  --control-pressed-top: #e2e7dc;
+  --control-pressed-bottom: #ecf0e7;
+  --shadow-raised: rgb(40 45 40 / 0.16);
+  --shadow-pressed: rgb(40 45 40 / 0.28);
+  --shadow-jack: rgb(40 45 40 / 0.32);
+  --shadow-hole: rgb(0 0 0 / 0.5);
+
+  --field: #ffffff;
+  --kbd: #ffffff;
+  --kbd-edge: #cfd6c9;
+  --sunken: rgb(40 45 40 / 0.3);
+
+  --knob-track: #dde3d7;
+  --knob-cap: #ffffff;
+  --knob-cap-edge: #b5beaf;
+  --knob-pointer: #2b2f33;
+  --key-white: #fdfefb;
+  --key-black: #2b2f33;
+
+  --jack-hi: #dde3d7;
+  --jack-lo: #aeb8a8;
+  --jack-out-hi: #d6e2f6;
+  --jack-out-lo: #98afd6;
+  --jack-ring: #5f675c;
+  --jack-hole: #1a1d1a;
+
+  --led-off: #d3def3;
+  --meter-track: #dde3d7;
+  --meter-low: #5b9a5b;
+  --meter-high: #c0392b;
+
+  --wave: #c7cfc1;
+  --wave-kept: #2f6fd6;
+  --wave-axis: #e3e9de;
+
+  --cable-s: 52%;
+  --cable-l: 42%;
+  --cable-end-s: 56%;
+  --cable-end-l: 30%;
+  --cable-drag-s: 58%;
+  --cable-drag-l: 36%;
+  --cable-grip: #2b2f33;
+  --cable-shadow: rgb(40 45 40 / 0.2);
+  --cable-hover: brightness(0.84) saturate(1.25);
+
+  --scope-grid-c: #e3e9de;
+  --scope-axis-c: #b5beaf;
+  --env-mark: #dde3d7;
+}
+
+/* --- winter holiday, dark: by the fire ----------------------------
+   Pine in the dark, cranberry on the ears, and gold for anything lit --
+   the tree after everyone has gone to bed.
+-------------------------------------------------------------------- */
+:root[data-theme="winter-holiday"][data-mode="dark"] {
+  color-scheme: dark;
+
+  --bg: #0b1a14;
+  --panel: #13271e;
+  --panel-edge: #050d09;
+  --hairline: #1e3a2d;
+  --hairline-dash: #274836;
+  --rule: #2f523f;
+
+  --ink: #f5ecd7;
+  --ink-dim: #d9cdb2;
+  --ink-faint: #b8ab8e;
+
+  --accent: #e3b341;
+  --accent-line: #f5cc5a;
+  --accent-rgb: 245 204 90;
+  --on-accent: #1c1300;
+  --danger: #c8102e;
+  --on-danger: #fff;
+
+  --unit-top: #1a3226;
+  --unit-bottom: #13271e;
+  --unit-bevel: #2c4d3b;
+  --unit-shadow: rgb(0 0 0 / 0.5);
+  --spine-top: #4a0a14;
+  --spine-bottom: #8e1426;
+  --spine-ink: #ffe9ec;
+  --spine-ink-faint: #f0a8b2;
+  --rear-top: #16291f;
+  --rear-bottom: #0f2018;
+
+  --well: #10231a;
+  --recess: rgb(0 0 0 / 0.26);
+  --recess-soft: rgb(0 0 0 / 0.19);
+  --recess-edge: #0b1a14;
+  --screen-top: #0e2018;
+  --screen-bottom: #081510;
+  --screen-edge: #22402f;
+  --legend-bg: rgb(11 26 20 / 0.85);
+
+  --control: #0f2118;
+  --control-hover: #183025;
+  --control-top: #244233;
+  --control-bottom: #162c21;
+  --control-bevel: #335a45;
+  --control-pressed-top: #0c1c14;
+  --control-pressed-bottom: #12261c;
+  --shadow-raised: rgb(0 0 0 / 0.45);
+  --shadow-pressed: rgb(0 0 0 / 0.65);
+  --shadow-jack: rgb(0 0 0 / 0.6);
+  --shadow-hole: rgb(0 0 0 / 0.9);
+
+  --field: #0e1f17;
+  --kbd: #0b1a14;
+  --kbd-edge: #1e3a2d;
+  --sunken: #000;
+
+  --knob-track: #0b1a14;
+  --knob-cap: #213d2f;
+  --knob-cap-edge: #050d09;
+  --knob-pointer: #f5ecd7;
+  --key-white: #f3ead4;
+  --key-black: #0b1a14;
+
+  --jack-hi: #365a47;
+  --jack-lo: #13271e;
+  --jack-out-hi: #5a2a32;
+  --jack-out-lo: #26121a;
+  --jack-ring: #030805;
+  --jack-hole: #010302;
+
+  --led-off: #3a2e0c;
+  --meter-track: #000;
+  --meter-low: #7fc27f;
+  --meter-high: #e8374f;
+
+  --wave: #2c4d3b;
+  --wave-kept: #e3b341;
+  --wave-axis: #13271e;
+
+  --cable-s: 66%;
+  --cable-l: 54%;
+  --cable-end-s: 58%;
+  --cable-end-l: 38%;
+  --cable-drag-s: 72%;
+  --cable-drag-l: 62%;
+  --cable-grip: #f5ecd7;
+  --cable-shadow: rgb(0 0 0 / 0.58);
+  --cable-hover: brightness(1.3);
+
+  --scope-grid-c: #13271e;
+  --scope-axis-c: #244233;
+  --env-mark: #22402f;
+}
+
+/* --- winter holiday, light: a snowy morning -----------------------
+   Snow white between evergreen ears, cranberry for the controls, and a
+   little gold where a wave is kept.
+-------------------------------------------------------------------- */
+:root[data-theme="winter-holiday"][data-mode="light"] {
+  color-scheme: light;
+
+  --bg: #e6ecea;
+  --panel: #ffffff;
+  --panel-edge: #b7c4be;
+  --hairline: #d9e2de;
+  --hairline-dash: #cbd6d1;
+  --rule: #c1cdc7;
+
+  --ink: #13271e;
+  --ink-dim: #36503f;
+  --ink-faint: #526b5b;
+
+  --accent: #c8102e;
+  --accent-line: #9a0c23;
+  --accent-rgb: 200 16 46;
+  --on-accent: #fff;
+  --danger: #6b0615;
+  --on-danger: #fff0f0;
+
+  --unit-top: #ffffff;
+  --unit-bottom: #f4f7f5;
+  --unit-bevel: #fff;
+  --unit-shadow: rgb(20 40 30 / 0.14);
+  --spine-top: #1f5a3c;
+  --spine-bottom: #17472f;
+  --spine-ink: #f3f8f4;
+  --spine-ink-faint: #b9d6c4;
+  --rear-top: #f1f5f3;
+  --rear-bottom: #e5ece8;
+
+  --well: #f3f7f5;
+  --recess: rgb(20 40 30 / 0.06);
+  --recess-soft: rgb(20 40 30 / 0.045);
+  --recess-edge: rgb(20 40 30 / 0.12);
+  --screen-top: #fcfdfd;
+  --screen-bottom: #eef3f0;
+  --screen-edge: #c6d2cc;
+  --legend-bg: rgb(252 253 253 / 0.86);
+
+  --control: #edf2ef;
+  --control-hover: #e0e8e3;
+  --control-top: #ffffff;
+  --control-bottom: #eff4f1;
+  --control-bevel: #fff;
+  --control-pressed-top: #e2e9e5;
+  --control-pressed-bottom: #ecf1ee;
+  --shadow-raised: rgb(20 40 30 / 0.16);
+  --shadow-pressed: rgb(20 40 30 / 0.28);
+  --shadow-jack: rgb(20 40 30 / 0.32);
+  --shadow-hole: rgb(0 0 0 / 0.5);
+
+  --field: #ffffff;
+  --kbd: #ffffff;
+  --kbd-edge: #cfd9d4;
+  --sunken: rgb(20 40 30 / 0.3);
+
+  --knob-track: #dde5e1;
+  --knob-cap: #ffffff;
+  --knob-cap-edge: #b3c1ba;
+  --knob-pointer: #13271e;
+  --key-white: #ffffff;
+  --key-black: #13271e;
+
+  --jack-hi: #dde5e1;
+  --jack-lo: #aebcb5;
+  --jack-out-hi: #f3d3d8;
+  --jack-out-lo: #cf9aa3;
+  --jack-ring: #5b6e64;
+  --jack-hole: #0f1a15;
+
+  --led-off: #f2cfd4;
+  --meter-track: #dde5e1;
+  --meter-low: #2f7d4f;
+  --meter-high: #9a0c23;
+
+  --wave: #c3cfc9;
+  --wave-kept: #c9a227;
+  --wave-axis: #e5ece8;
+
+  --cable-s: 58%;
+  --cable-l: 40%;
+  --cable-end-s: 60%;
+  --cable-end-l: 28%;
+  --cable-drag-s: 62%;
+  --cable-drag-l: 34%;
+  --cable-grip: #13271e;
+  --cable-shadow: rgb(20 40 30 / 0.2);
+  --cable-hover: brightness(0.84) saturate(1.25);
+
+  --scope-grid-c: #e5ece8;
+  --scope-axis-c: #b3c1ba;
+  --env-mark: #dde5e1;
+}
+
+/* --- vaporwave, dark: the mall at midnight ------------------------
+   Lilac dusk with aqua for the controls and the pink-to-purple sunset
+   down every rack ear. Neon Vice's quieter cousin: pastel where it is
+   electric.
+-------------------------------------------------------------------- */
+:root[data-theme="vaporwave"][data-mode="dark"] {
+  color-scheme: dark;
+
+  --bg: #1b1433;
+  --panel: #2a2050;
+  --panel-edge: #0d0920;
+  --hairline: #3b2f66;
+  --hairline-dash: #473a78;
+  --rule: #524487;
+
+  --ink: #f8e9ff;
+  --ink-dim: #d9c5f0;
+  --ink-faint: #b8a3d6;
+
+  --accent: #5ff5e6;
+  --accent-line: #8dfff3;
+  --accent-rgb: 141 255 243;
+  --on-accent: #07201d;
+  --danger: #ff4b6e;
+  --on-danger: #fff;
+
+  --unit-top: #30255a;
+  --unit-bottom: #2a2050;
+  --unit-bevel: #4a3d80;
+  --unit-shadow: rgb(0 0 0 / 0.5);
+  --spine-top: #ff71ce;
+  --spine-bottom: #b967ff;
+  --spine-ink: #1b1433;
+  --spine-ink-faint: #3b2566;
+  --rear-top: #281e4b;
+  --rear-bottom: #20183e;
+
+  --well: #241b45;
+  --recess: rgb(0 0 0 / 0.26);
+  --recess-soft: rgb(0 0 0 / 0.19);
+  --recess-edge: #1b1433;
+  --screen-top: #1f173d;
+  --screen-bottom: #140e2b;
+  --screen-edge: #3b2f66;
+  --legend-bg: rgb(27 20 51 / 0.85);
+
+  --control: #221a44;
+  --control-hover: #2f2458;
+  --control-top: #3c3070;
+  --control-bottom: #291f4f;
+  --control-bevel: #54478f;
+  --control-pressed-top: #1c1538;
+  --control-pressed-bottom: #251c48;
+  --shadow-raised: rgb(0 0 0 / 0.45);
+  --shadow-pressed: rgb(0 0 0 / 0.65);
+  --shadow-jack: rgb(0 0 0 / 0.6);
+  --shadow-hole: rgb(0 0 0 / 0.9);
+
+  --field: #1f173e;
+  --kbd: #1b1433;
+  --kbd-edge: #3b2f66;
+  --sunken: #000;
+
+  --knob-track: #140e2b;
+  --knob-cap: #3a2e6b;
+  --knob-cap-edge: #0d0920;
+  --knob-pointer: #f8e9ff;
+  --key-white: #fbeaff;
+  --key-black: #1b1433;
+
+  --jack-hi: #54478f;
+  --jack-lo: #241b45;
+  --jack-out-hi: #7a3b6e;
+  --jack-out-lo: #331832;
+  --jack-ring: #07051a;
+  --jack-hole: #03020c;
+
+  --led-off: #1c3b3a;
+  --meter-track: #000;
+  --meter-low: #5ff5e6;
+  --meter-high: #ff4b6e;
+
+  --wave: #4a3d80;
+  --wave-kept: #ff71ce;
+  --wave-axis: #241b45;
+
+  --cable-s: 85%;
+  --cable-l: 66%;
+  --cable-end-s: 70%;
+  --cable-end-l: 48%;
+  --cable-drag-s: 90%;
+  --cable-drag-l: 72%;
+  --cable-grip: #f8e9ff;
+  --cable-shadow: rgb(0 0 0 / 0.58);
+  --cable-hover: brightness(1.3);
+
+  --scope-grid-c: #241b45;
+  --scope-axis-c: #3c3070;
+  --env-mark: #3b2f66;
+}
+
+/* --- vaporwave, light: the pastel sunset --------------------------
+   Pink pastel with aqua controls and teal-to-lilac ears.
+-------------------------------------------------------------------- */
+:root[data-theme="vaporwave"][data-mode="light"] {
+  color-scheme: light;
+
+  --bg: #f7d4ea;
+  --panel: #fff5fb;
+  --panel-edge: #d9a9cc;
+  --hairline: #f2d6e8;
+  --hairline-dash: #ebc6de;
+  --rule: #e3b8d4;
+
+  --ink: #2a1650;
+  --ink-dim: #4a3478;
+  --ink-faint: #664f93;
+
+  --accent: #1fc7b6;
+  --accent-line: #0b7f74;
+  --accent-rgb: 31 199 182;
+  --on-accent: #042421;
+  --danger: #c2185b;
+  --on-danger: #fff;
+
+  --unit-top: #fffafd;
+  --unit-bottom: #fdeef7;
+  --unit-bevel: #fff;
+  --unit-shadow: rgb(90 40 110 / 0.14);
+  --spine-top: #7ce8dc;
+  --spine-bottom: #b9a3f5;
+  --rear-top: #fbeaf4;
+  --rear-bottom: #f4dcea;
+
+  --well: #fcf0f7;
+  --recess: rgb(90 40 110 / 0.06);
+  --recess-soft: rgb(90 40 110 / 0.045);
+  --recess-edge: rgb(90 40 110 / 0.12);
+  --screen-top: #fffafd;
+  --screen-bottom: #f8eaf3;
+  --screen-edge: #e3c1d8;
+  --legend-bg: rgb(255 250 253 / 0.86);
+
+  --control: #f9e8f2;
+  --control-hover: #f1d8e8;
+  --control-top: #ffffff;
+  --control-bottom: #fbedf5;
+  --control-bevel: #fff;
+  --control-pressed-top: #f2dcea;
+  --control-pressed-bottom: #f9e8f2;
+  --shadow-raised: rgb(90 40 110 / 0.16);
+  --shadow-pressed: rgb(90 40 110 / 0.28);
+  --shadow-jack: rgb(90 40 110 / 0.32);
+  --shadow-hole: rgb(0 0 0 / 0.5);
+
+  --field: #fffbfe;
+  --kbd: #fffbfe;
+  --kbd-edge: #ebc6de;
+  --sunken: rgb(90 40 110 / 0.3);
+
+  --knob-track: #f0d6e6;
+  --knob-cap: #fffafd;
+  --knob-cap-edge: #d6adc9;
+  --knob-pointer: #2a1650;
+  --key-white: #fffafd;
+  --key-black: #2a1650;
+
+  --jack-hi: #f1d8e8;
+  --jack-lo: #cfa3c1;
+  --jack-out-hi: #c9f3ee;
+  --jack-out-lo: #7fcfc6;
+  --jack-ring: #6a4f86;
+  --jack-hole: #1a0d30;
+
+  --led-off: #c9f3ee;
+  --meter-track: #f0d6e6;
+  --meter-low: #1fa99a;
+  --meter-high: #c2185b;
+
+  --wave: #e3c1d8;
+  --wave-kept: #8a63e0;
+  --wave-axis: #f4dcea;
+
+  --cable-s: 65%;
+  --cable-l: 48%;
+  --cable-end-s: 65%;
+  --cable-end-l: 34%;
+  --cable-drag-s: 70%;
+  --cable-drag-l: 40%;
+  --cable-grip: #2a1650;
+  --cable-shadow: rgb(90 40 110 / 0.2);
+  --cable-hover: brightness(0.86) saturate(1.2);
+
+  --scope-grid-c: #f4dcea;
+  --scope-axis-c: #d6adc9;
+  --env-mark: #f0d6e6;
+}
+
+/* --- tube amp, dark: black Tolex ----------------------------------
+   A vintage amp: black covering, cream chicken-head knobs, tan grille
+   cloth down the ears, and valve glow wherever something is lit.
+-------------------------------------------------------------------- */
+:root[data-theme="tube-amp"][data-mode="dark"] {
+  color-scheme: dark;
+
+  --bg: #0d0c0b;
+  --panel: #1a1817;
+  --panel-edge: #050404;
+  --hairline: #2a2725;
+  --hairline-dash: #34302d;
+  --rule: #3d3935;
+
+  --ink: #efe6d2;
+  --ink-dim: #cfc4ad;
+  --ink-faint: #aa9f89;
+
+  --accent: #ffb347;
+  --accent-line: #ffc76b;
+  --accent-rgb: 255 199 107;
+  --on-accent: #1f1300;
+  --danger: #c62d1f;
+  --on-danger: #fff;
+
+  --unit-top: #221f1d;
+  --unit-bottom: #1a1817;
+  --unit-bevel: #3a3531;
+  --unit-shadow: rgb(0 0 0 / 0.55);
+  --spine-top: #2a241d;
+  --spine-bottom: #5a4a36;
+  --rear-top: #1d1b19;
+  --rear-bottom: #141312;
+
+  --well: #171514;
+  --recess: rgb(0 0 0 / 0.26);
+  --recess-soft: rgb(0 0 0 / 0.19);
+  --recess-edge: #0d0c0b;
+  --screen-top: #141210;
+  --screen-bottom: #0a0908;
+  --screen-edge: #2f2a26;
+  --legend-bg: rgb(13 12 11 / 0.85);
+
+  --control: #161413;
+  --control-hover: #221f1d;
+  --control-top: #312d2a;
+  --control-bottom: #1f1c1a;
+  --control-bevel: #45403b;
+  --control-pressed-top: #121110;
+  --control-pressed-bottom: #1a1817;
+  --shadow-raised: rgb(0 0 0 / 0.45);
+  --shadow-pressed: rgb(0 0 0 / 0.65);
+  --shadow-jack: rgb(0 0 0 / 0.6);
+  --shadow-hole: rgb(0 0 0 / 0.9);
+
+  --field: #141211;
+  --kbd: #0d0c0b;
+  --kbd-edge: #2a2725;
+  --sunken: #000;
+
+  --knob-track: #0d0c0b;
+  --knob-cap: #e8dcc2;
+  --knob-cap-edge: #8a7d63;
+  --knob-pointer: #1a1817;
+  --key-white: #ece2cb;
+  --key-black: #100f0e;
+
+  --jack-hi: #5a544d;
+  --jack-lo: #1f1c1a;
+  --jack-out-hi: #6b5a3e;
+  --jack-out-lo: #2a2217;
+  --jack-ring: #050404;
+  --jack-hole: #000;
+
+  --led-off: #3d2605;
+  --meter-track: #000;
+  --meter-low: #e6a23c;
+  --meter-high: #ff4a2a;
+
+  --wave: #3a3531;
+  --wave-kept: #ffb347;
+  --wave-axis: #1a1817;
+
+  --cable-s: 55%;
+  --cable-l: 54%;
+  --cable-end-s: 50%;
+  --cable-end-l: 36%;
+  --cable-drag-s: 60%;
+  --cable-drag-l: 62%;
+  --cable-grip: #efe6d2;
+  --cable-shadow: rgb(0 0 0 / 0.58);
+  --cable-hover: brightness(1.3);
+
+  --scope-grid-c: #1a1817;
+  --scope-axis-c: #312d2a;
+  --env-mark: #2f2a26;
+}
+
+/* --- tube amp, light: blonde Tolex --------------------------------
+   The cream amp: blonde covering, oxblood grille cloth down the ears, and
+   black chicken-head knobs.
+-------------------------------------------------------------------- */
+:root[data-theme="tube-amp"][data-mode="light"] {
+  color-scheme: light;
+
+  --bg: #d8cdb6;
+  --panel: #f6efe0;
+  --panel-edge: #a89a7e;
+  --hairline: #e3d8c3;
+  --hairline-dash: #d8cbb2;
+  --rule: #cfc1a6;
+
+  --ink: #2a2320;
+  --ink-dim: #4d433c;
+  --ink-faint: #6b6056;
+
+  --accent: #e0892a;
+  --accent-line: #9a4e0c;
+  --accent-rgb: 224 137 42;
+  --on-accent: #2a1602;
+  --danger: #8c1c13;
+  --on-danger: #fff0ec;
+
+  --unit-top: #fbf6ea;
+  --unit-bottom: #f3ebda;
+  --unit-bevel: #fff;
+  --unit-shadow: rgb(50 35 25 / 0.14);
+  --spine-top: #6e2a22;
+  --spine-bottom: #56201a;
+  --spine-ink: #f6e6d6;
+  --spine-ink-faint: #d8b4a2;
+  --rear-top: #efe6d3;
+  --rear-bottom: #e5dac3;
+
+  --well: #f4ecdc;
+  --recess: rgb(50 35 25 / 0.06);
+  --recess-soft: rgb(50 35 25 / 0.045);
+  --recess-edge: rgb(50 35 25 / 0.12);
+  --screen-top: #faf5ea;
+  --screen-bottom: #f0e7d6;
+  --screen-edge: #cdbfa3;
+  --legend-bg: rgb(250 245 234 / 0.86);
+
+  --control: #efe6d3;
+  --control-hover: #e4d9c2;
+  --control-top: #fdf9f0;
+  --control-bottom: #f2eadb;
+  --control-bevel: #fff;
+  --control-pressed-top: #e6dcc6;
+  --control-pressed-bottom: #efe6d3;
+  --shadow-raised: rgb(50 35 25 / 0.16);
+  --shadow-pressed: rgb(50 35 25 / 0.28);
+  --shadow-jack: rgb(50 35 25 / 0.32);
+  --shadow-hole: rgb(0 0 0 / 0.5);
+
+  --field: #fdfaf2;
+  --kbd: #fdfaf2;
+  --kbd-edge: #d8cbb2;
+  --sunken: rgb(50 35 25 / 0.3);
+
+  --knob-track: #e2d6bf;
+  --knob-cap: #1f1c1a;
+  --knob-cap-edge: #000;
+  --knob-pointer: #f6efe0;
+  --key-white: #fbf6ea;
+  --key-black: #2a2320;
+
+  --jack-hi: #d9d3c8;
+  --jack-lo: #a39a8b;
+  --jack-out-hi: #ecd3b3;
+  --jack-out-lo: #c49b6b;
+  --jack-ring: #5d544a;
+  --jack-hole: #16120f;
+
+  --led-off: #f0d3b0;
+  --meter-track: #e2d6bf;
+  --meter-low: #7d8a4a;
+  --meter-high: #8c1c13;
+
+  --wave: #d3c6ab;
+  --wave-kept: #9a4e0c;
+  --wave-axis: #e5dac3;
+
+  --cable-s: 55%;
+  --cable-l: 40%;
+  --cable-end-s: 58%;
+  --cable-end-l: 28%;
+  --cable-drag-s: 60%;
+  --cable-drag-l: 34%;
+  --cable-grip: #2a2320;
+  --cable-shadow: rgb(50 35 25 / 0.2);
+  --cable-hover: brightness(0.84) saturate(1.25);
+
+  --scope-grid-c: #e5dac3;
+  --scope-axis-c: #cdbfa3;
+  --env-mark: #e2d6bf;
+}

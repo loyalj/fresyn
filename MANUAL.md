@@ -213,6 +213,14 @@ the button next to it swings that theme between **dark and light**:
 | **Neon Vice** | purple and hot pink | pink and blue tubes in daylight |
 | **Mesa** | red rock after sundown | sun-struck adobe, clay and sage |
 | **Terminal 80s** | a green phosphor tube | electric orange on sepia |
+| **Halloween** | a haunted house: pumpkin, bone and witch purple | candy corn |
+| **True North** | a northern night under the aurora | snow white between maple-red rack ears |
+| **Deep Sea** | the abyss: bioluminescent cyan and jellyfish pink | a sunlit reef in lagoon and coral |
+| **Arcade** | a black cabinet with neon on the buttons | white side art in hard outlines |
+| **Blueprint** | white lines on drafting blue | pencil on graph paper |
+| **Winter Holiday** | pine, cranberry and gold by the fire | a snowy morning between evergreen ears |
+| **Vaporwave** | a lilac mall at midnight, aqua and a pink sunset | pastel pink with aqua controls |
+| **Tube Amp** | black Tolex, cream chicken-head knobs, valve glow | blonde Tolex and oxblood grille cloth |
 
 Every theme has both modes, so the two choices never fight each other. The rack
 cross-fades rather than cutting, and your choice is remembered.

@@ -311,7 +311,9 @@ body {
   transform: rotate(180deg);
   font-size: 9px;
   letter-spacing: 0.1em;
-  color: var(--ink-faint);
+  /* A theme whose ears are a different weight from its panels -- dark ears
+     on a light rack -- gives them their own ink; the rest use the panel's. */
+  color: var(--spine-ink-faint, var(--ink-faint));
   font-variant-numeric: tabular-nums;
 }
 
@@ -322,7 +324,7 @@ body {
   font-weight: 600;
   letter-spacing: 0.22em;
   white-space: nowrap;
-  color: var(--ink-dim);
+  color: var(--spine-ink, var(--ink-dim));
 }
 
 .unit-face {
@@ -822,14 +824,14 @@ body {
   font: inherit;
   font-size: 11px;
   line-height: 1;
-  color: var(--ink-faint);
+  color: var(--spine-ink-faint, var(--ink-faint));
   background: transparent;
   border: 1px solid transparent;
   border-radius: 2px;
   cursor: pointer;
 }
 .unit-presets:hover,
-.unit-presets.on { color: var(--ink); border-color: var(--rule); }
+.unit-presets.on { color: var(--spine-ink, var(--ink)); border-color: var(--rule); }
 
 .preset-sheet {
   position: fixed;
