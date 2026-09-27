@@ -226,10 +226,10 @@ export function PianoRoll({
    * The gesture in progress, if any: the whole pattern as it would be if the
    * pointer were let go now.
    *
-   * A ref and not state. The canvas already redraws every frame off refs for
-   * the playhead's sake, so a drag needs no re-render at all to be visible --
-   * and committing through state would mean calling the parent's setter from
-   * inside an updater, which React runs during render.
+   * A ref and not state. The canvas already redraws off refs, on the frame
+   * after any of them changes, so a drag needs no re-render at all to be
+   * visible -- and committing through state would mean calling the parent's
+   * setter from inside an updater, which React runs during render.
    */
   const draftRef = useRef<Note[] | null>(null)
   const gesture = useRef<Gesture | null>(null)
@@ -348,18 +348,38 @@ export function PianoRoll({
   const ghostsRef = useRef(ghosts)
   ghostsRef.current = ghosts
 
+  // Drawn only when something it draws has changed. Everything the picture is
+  // made of is replaced rather than edited in place -- a new draft, a new
+  // overlay, a new view -- so comparing what was drawn last against what is
+  // there now is the dirty flag, and nobody can forget to set it. A roll that
+  // is sitting still, which is most of the time, costs a handful of
+  // comparisons a frame instead of a full repaint.
   useEffect(() => {
     let raf = 0
+    let drawn: unknown[] = []
     const tick = () => {
       const canvas = canvasRef.current
       if (canvas) {
-        drawRoll(
-          canvas,
+        const inputs = [
           draftRef.current ?? notesRef.current,
           ghostsRef.current,
-          { ...viewRef.current, playTick: playTick.current, colors: colors.current },
+          viewRef.current,
+          playTick.current,
+          colors.current,
           overlay.current,
-        )
+          // The canvas is sized in device pixels, so a zoom is a change too.
+          window.devicePixelRatio,
+        ]
+        if (inputs.some((v, i) => v !== drawn[i])) {
+          drawn = inputs
+          drawRoll(
+            canvas,
+            draftRef.current ?? notesRef.current,
+            ghostsRef.current,
+            { ...viewRef.current, playTick: playTick.current, colors: colors.current },
+            overlay.current,
+          )
+        }
       }
       raf = requestAnimationFrame(tick)
     }

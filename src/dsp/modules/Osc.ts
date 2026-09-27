@@ -1,9 +1,7 @@
 import { Envelope } from '../Envelope'
-import { PolyBlepOsc, type Waveform } from '../PolyBlepOsc'
+import { PolyBlepOsc, WAVEFORMS } from '../PolyBlepOsc'
 import { Smoothed } from '../Smoothed'
 import { DspModule, EdgeDetector, type Metering } from './types'
-
-const WAVES: Waveform[] = ['saw', 'pulse', 'tri', 'sine']
 
 const P_PITCH = 0
 const P_WAVE = 1
@@ -212,7 +210,7 @@ export class OscModule extends DspModule implements Metering {
       this.width.next() +
       slots[this.ins[IN_PWM]] * WIDTH_SWING +
       e * this.envWidth.next() * WIDTH_SWING
-    const wave = WAVES[Math.round(this.params[P_WAVE])] ?? 'saw'
+    const wave = WAVEFORMS[Math.round(this.params[P_WAVE])] ?? 'saw'
 
     const out = this.osc.process(freq, wave, pw) * gain
     const size = out < 0 ? -out : out

@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { memo, useMemo } from 'react'
 
 const WIDTH = 240
 const HEIGHT = 100
@@ -31,7 +31,7 @@ interface Props {
  * Built around a function rather than a filter, so any module whose response
  * has a closed form can draw one; which modules those are is up to them.
  */
-export function ResponseGraph({ gain, corner, nyquist = HIGH_HZ }: Props) {
+export const ResponseGraph = memo(function ResponseGraph({ gain, corner, nyquist = HIGH_HZ }: Props) {
   const top = Math.min(HIGH_HZ, nyquist)
   const logLow = Math.log(LOW_HZ)
   const span = Math.log(top) - logLow
@@ -88,4 +88,4 @@ export function ResponseGraph({ gain, corner, nyquist = HIGH_HZ }: Props) {
       <path d={line} className="wave-line" vectorEffect="non-scaling-stroke" />
     </svg>
   )
-}
+})

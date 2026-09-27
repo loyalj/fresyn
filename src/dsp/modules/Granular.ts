@@ -1,4 +1,5 @@
 import { Smoothed } from '../Smoothed'
+import { panLeft, panRight } from '../util'
 import { DspModule } from './types'
 
 const P_SIZE = 0
@@ -239,14 +240,13 @@ export class GranularModule extends DspModule {
     // Constant power, so a grain thrown to one side is no quieter than one
     // left in the middle -- the same law the mixer pans by.
     const pan = (this.random() * 2 - 1) * this.params[P_SPREAD]
-    const angle = ((pan + 1) / 2) * (Math.PI / 2)
 
     this.gPos[slot] = start
     this.gRate[slot] = Math.pow(2, octaves)
     this.gAge[slot] = 0
     this.gLife[slot] = life
-    this.gL[slot] = Math.cos(angle)
-    this.gR[slot] = Math.sin(angle)
+    this.gL[slot] = panLeft(pan)
+    this.gR[slot] = panRight(pan)
     this.gOn[slot] = 1
   }
 }

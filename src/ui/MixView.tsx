@@ -4,7 +4,8 @@ import type { ParamSpec } from '../patch/param'
 import { consoleOf, stripOf, updateConsole, updateStrip } from '../song/edit'
 import type { Song, Track } from '../song/types'
 import { Knob } from './Knob'
-import { FALL, scale } from './meter'
+import { FALL, fillBar, scale } from './meter'
+import { useFallingMeter } from './useFallingMeter'
 
 interface Props {
   song: Song
@@ -64,40 +65,21 @@ export function MixView({ song, onEdit, onTrack, onSolo, engine }: Props) {
   const desk = consoleOf(song)
   const soloed = song.tracks.some((t) => t.solo)
   const bars = useRef(new Map<string, HTMLDivElement>())
-  const incoming = useRef(new Map<string, number>())
-  const shown = useRef(new Map<string, number>())
+  const feed = useFallingMeter(FALL, (id: string, v) => fillBar(bars.current.get(id), v))
   const lufs = useRef<HTMLSpanElement>(null)
 
   useEffect(
     () =>
       engine.onMixLevels((levels) => {
-        for (const [id, peak] of Object.entries(levels.tracks)) {
-          incoming.current.set(id, Math.max(incoming.current.get(id) ?? 0, peak))
-        }
-        incoming.current.set('master', Math.max(incoming.current.get('master') ?? 0, levels.master))
+        // Kept at the louder of two reports that land in one frame: a track
+        // can report more than once before the bar is drawn.
+        for (const [id, peak] of Object.entries(levels.tracks)) feed(id, scale(peak), true)
+        feed('master', scale(levels.master), true)
         const el = lufs.current
         if (el) el.textContent = levels.shortTerm <= -70 ? '— LUFS' : `${levels.shortTerm.toFixed(1).replace('-', '−')} LUFS`
       }),
-    [engine],
+    [engine, feed],
   )
-
-  useEffect(() => {
-    let raf = 0
-    const tick = () => {
-      for (const [id, el] of bars.current) {
-        const target = scale(incoming.current.get(id) ?? 0)
-        incoming.current.set(id, 0)
-        const was = shown.current.get(id) ?? 0
-        const v = Math.max(target, was - FALL, 0)
-        if (v === was) continue
-        shown.current.set(id, v)
-        el.style.clipPath = `inset(${(1 - v) * 100}% 0 0 0)`
-      }
-      raf = requestAnimationFrame(tick)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-  }, [])
 
   const meter = (id: string) => (
     <div className="strip-meter level-meter mix-meter" aria-hidden="true">

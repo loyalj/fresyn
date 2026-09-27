@@ -2,38 +2,15 @@
  * Drives the cable UI in a real browser: flips the rack, drags a cable between
  * two jacks, and pulls it back out.
  *
- * Needs `npm run dev -- --port 5199` in another terminal.
- * Point CHROME_PATH at a Chromium build if the default is wrong.
+ * Starts its own dev server (see harness.mjs); set DEV_URL to use a running
+ * one, and CHROME_PATH if Chrome is not where the harness looks.
  */
-import puppeteer from 'puppeteer-core'
+import { check, finish, flipRack, open, settle, waitUntil } from './harness.mjs'
 
-const CHROME =
-  process.env.CHROME_PATH ||
-  'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'
-const URL = process.env.DEV_URL || 'http://localhost:5199/'
-const FLIP_SETTLE = 700
-
-const browser = await puppeteer.launch({
-  executablePath: CHROME,
-  headless: 'new',
-  args: ['--autoplay-policy=no-user-gesture-required', '--no-sandbox'],
-})
-const page = await browser.newPage()
 // Tall enough for the whole rack: a drag can only hit jacks that are on
 // screen, and both ends of a cable have to be visible at once.
-await page.setViewport({ width: 1200, height: 1900 })
-
-const problems = []
-page.on('console', (m) => {
-  if (m.type() === 'error' && !m.text().includes('favicon')) problems.push('console: ' + m.text())
-})
-page.on('pageerror', (e) => problems.push('pageerror: ' + e.message))
-
-let failures = 0
-const check = (name, ok, detail = '') => {
-  if (!ok) failures++
-  console.log(`  ${ok ? 'ok  ' : 'FAIL'}  ${name}${detail ? '  ' + detail : ''}`)
-}
+const { page, url } = await open({ viewport: { width: 1200, height: 1900 } })
+const flip = (toBack) => flipRack(page, toBack)
 
 const centreOf = (moduleId, portId) =>
   page.evaluate(
@@ -49,6 +26,12 @@ const centreOf = (moduleId, portId) =>
 
 const cableCount = () =>
   page.evaluate(() => document.querySelectorAll('.cables g.cable:not(.cable-dragging)').length)
+/** Until the rack draws n cables. The check after it says whether it did. */
+const cablesBecome = (n) =>
+  waitUntil(page, (n) => document.querySelectorAll('.cables g.cable:not(.cable-dragging)').length === n, {
+    args: [n],
+    timeout: 2000,
+  })
 
 const isOccupied = (moduleId, portId) =>
   page.evaluate(
@@ -58,12 +41,11 @@ const isOccupied = (moduleId, portId) =>
     portId,
   )
 
-await page.goto(URL, { waitUntil: 'networkidle0' })
+await page.goto(url, { waitUntil: 'networkidle0' })
 
 // --- flip ------------------------------------------------------------
 console.log('\nflip')
-await page.keyboard.press('KeyF')
-await new Promise((r) => setTimeout(r, FLIP_SETTLE))
+await flip(true)
 
 check('rack is flipped', await page.evaluate(() => !!document.querySelector('.rack-flipped')))
 check('jacks are on screen', (await page.evaluate(() => document.querySelectorAll('.jack').length)) > 0)
@@ -92,7 +74,7 @@ if (from && to) {
 
   await page.mouse.move(to.x, to.y, { steps: 6 })
   await page.mouse.up()
-  await new Promise((r) => setTimeout(r, 150))
+  await cablesBecome(initial + 1)
 
   const after = await cableCount()
   check('the cable is patched', after === initial + 1, `${initial} -> ${after}`)
@@ -126,7 +108,7 @@ if (from && to) {
   await page.mouse.down()
   await page.mouse.move(to.x + 40, to.y + 220, { steps: 6 })
   await page.mouse.up()
-  await new Promise((r) => setTimeout(r, 150))
+  await cablesBecome(initial)
 
   const after = await cableCount()
   check('dragging out of a jack unplugs it', after === initial, `back to ${after}`)
@@ -147,7 +129,7 @@ console.log('\nclick to unplug')
 
   if (mid) {
     await page.mouse.move(mid.x, mid.y)
-    await new Promise((r) => setTimeout(r, 80))
+    await settle(80)
     check(
       'hovering a cable highlights it',
       await page.evaluate(() => !!document.querySelector('.cable.hovered')),
@@ -156,7 +138,7 @@ console.log('\nclick to unplug')
     const before = await cableCount()
     await page.mouse.down()
     await page.mouse.up()
-    await new Promise((r) => setTimeout(r, 150))
+    await cablesBecome(before - 1)
     const after = await cableCount()
     check('clicking a cable unplugs it', after === before - 1, `${before} -> ${after}`)
   }
@@ -207,7 +189,7 @@ console.log('\ngrabbing along a long cable')
         continue
       }
       await page.mouse.move(p.x, p.y)
-      await new Promise((r) => setTimeout(r, 40))
+      await settle(40)
       if (!(await page.evaluate(() => !!document.querySelector('.cable.hovered')))) misses++
     }
     check(
@@ -250,7 +232,7 @@ console.log('\npatching from the keyboard')
     const before = await cableCount()
     await focusJack(free.out)
     await page.keyboard.press('Enter')
-    await new Promise((r) => setTimeout(r, 150))
+    await settle(150)
     check('Enter on an output picks a cable up', await page.evaluate(() => !!document.querySelector('.cable-dragging')))
     check(
       'and the inputs light up',
@@ -258,7 +240,7 @@ console.log('\npatching from the keyboard')
     )
     await focusJack(free.inp)
     await page.keyboard.press('Enter')
-    await new Promise((r) => setTimeout(r, 200))
+    await cablesBecome(before + 1)
     check('Enter on an input plugs it in', (await cableCount()) === before + 1, `${before} -> ${await cableCount()}`)
     check('the input reads as occupied', await isOccupied(free.inp.m, free.inp.p))
     check('and nothing is left in hand', await page.evaluate(() => !document.querySelector('.cable-dragging')))
@@ -273,10 +255,10 @@ console.log('\npatching from the keyboard')
     // Space works as Enter does, and Escape puts the cable down again.
     await focusJack(free.out)
     await page.keyboard.press('Space')
-    await new Promise((r) => setTimeout(r, 150))
+    await settle(150)
     check('Space picks one up too', await page.evaluate(() => !!document.querySelector('.cable-dragging')))
     await page.keyboard.press('Escape')
-    await new Promise((r) => setTimeout(r, 150))
+    await settle(150)
     check('Escape puts it down', await page.evaluate(() => !document.querySelector('.cable-dragging')))
     check('without patching anything', (await cableCount()) === before + 1)
     check('and without offering modules for it', await page.evaluate(() => !document.querySelector('.search')))
@@ -285,15 +267,9 @@ console.log('\npatching from the keyboard')
 
 // --- flip back -------------------------------------------------------
 console.log('\nflip back')
-await page.keyboard.press('KeyF')
-await new Promise((r) => setTimeout(r, FLIP_SETTLE))
+await flip(false)
 check('rack returns to the front', await page.evaluate(() => !document.querySelector('.rack-flipped')))
 check('cables are hidden on the front', (await cableCount()) === 0)
 check('knobs are back', (await page.evaluate(() => document.querySelectorAll('.knob').length)) > 0)
 
-console.log('\nproblems    :', problems.length ? problems : 'none')
-await browser.close()
-
-const ok = failures === 0 && problems.length === 0
-console.log(ok ? '\nPASS' : `\nFAIL (${failures} check(s))`)
-process.exit(ok ? 0 : 1)
+await finish()

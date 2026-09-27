@@ -1,6 +1,11 @@
+import { WAVEFORMS } from '../dsp/PolyBlepOsc'
 import type { ModuleDef, ModuleGroup } from './types'
 
-const WAVES = ['saw', 'pulse', 'tri', 'sine']
+// The Wave and Shape switches are labelled from the list the oscillator and
+// LFO play from, so the two cannot drift. It is imported from the DSP rather
+// than the other way round: the worklet bundles the DSP, and a list kept here
+// would drag the definitions -- and what they import -- onto the audio thread.
+const WAVES = WAVEFORMS
 const CHANNELS = [1, 2, 3, 4, 5, 6, 7, 8]
 const SH_CHANNELS = [1, 2, 3, 4]
 const SEQ_STEPS = [1, 2, 3, 4, 5, 6, 7, 8]
@@ -717,8 +722,10 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     ],
     outputs: [{ id: 'out', label: 'Out' }],
     params: [
-      // No CV jack: folding depends on how hard the wave is driven into the
-      // rails, so a VCA in front of this module already is a Fold modulator.
+      // The Fold jack moves this, in octaves scaled by Fold Amt, and leaves
+      // the level alone. A VCA in front still modulates it too -- folding
+      // depends on how hard the wave is driven into the rails -- but takes
+      // the level with it.
       { id: 'fold', label: 'Fold', min: 1, max: 16, default: 2, unit: 'x', curve: 'exp' },
       { id: 'symmetry', label: 'Sym', min: -1, max: 1, default: 0, unit: '', curve: 'lin' },
       // Exponential, like every other CV in the rack: a fixed amount moves

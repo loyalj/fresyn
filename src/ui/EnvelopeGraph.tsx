@@ -1,4 +1,4 @@
-import { useId, useMemo } from 'react'
+import { memo, useId, useMemo } from 'react'
 import { envelopeShape, type EnvelopeParams } from './envelopeShape'
 
 const HEIGHT = 100
@@ -8,9 +8,15 @@ interface Props {
 }
 
 /** The envelope's shape, drawn from the envelope itself. */
-export function EnvelopeGraph({ params }: Props) {
+export const EnvelopeGraph = memo(function EnvelopeGraph({ params }: Props) {
   const gradientId = useId()
-  const shape = useMemo(() => envelopeShape(params), [params])
+  // Keyed on the six numbers rather than on the object, so a caller that
+  // builds a fresh one each render does not cost a fresh curve.
+  const { delay, attack, hold, decay, sustain, release } = params
+  const shape = useMemo(
+    () => envelopeShape({ delay, attack, hold, decay, sustain, release }),
+    [delay, attack, hold, decay, sustain, release],
+  )
   const n = shape.values.length
 
   const line = useMemo(() => {
@@ -53,4 +59,4 @@ export function EnvelopeGraph({ params }: Props) {
       <path d={line} className="env-line" vectorEffect="non-scaling-stroke" />
     </svg>
   )
-}
+})

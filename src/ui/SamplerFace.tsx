@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ModuleDef } from '../patch/types'
-import { Control } from './Control'
 import { useSamples } from './SampleContext'
+import { useFace } from './useFace'
 
 const CONTROLS = ['start', 'length', 'speed', 'cvAmount', 'fade', 'level', 'loop', 'direction']
 
@@ -40,7 +40,7 @@ export function SamplerFace({
   faceExtra,
 }: Props) {
   const samples = useSamples()
-  const byId = Object.fromEntries(def.params.map((p) => [p.id, p]))
+  const { read, control } = useFace(def, valueOf, onChange)
   const [over, setOver] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -55,8 +55,8 @@ export function SamplerFace({
 
   const peaks = useMemo(() => (loaded ? peaksOf(loaded.data.channels[0]) : null), [loaded])
 
-  const start = valueOf('start') ?? byId.start.default
-  const length = valueOf('length') ?? byId.length.default
+  const start = read('start')
+  const length = read('length')
   const regionEnd = start + (1 - start) * length
 
   const take = (files: FileList | null) => {
@@ -152,14 +152,7 @@ export function SamplerFace({
       </div>
 
       <div className="controls">
-        {CONTROLS.map((id) => (
-          <Control
-            key={id}
-            spec={byId[id]}
-            value={valueOf(id)}
-            onChange={(v) => onChange(id, v)}
-          />
-        ))}
+        {CONTROLS.map(control)}
         {faceExtra}
       </div>
     </div>

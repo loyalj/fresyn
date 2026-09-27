@@ -1,9 +1,12 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
-import manual from '../../MANUAL.md?raw'
-import { helpFor, parseKnobHelp } from '../patch/knobHelp'
+import tables from '../../MANUAL.md?knob-help'
+import { helpFor, type KnobHelp } from '../patch/knobHelp'
 
-/** Every knob's help, read out of the manual once when the app loads. */
-const HELP = parseKnobHelp(manual)
+/**
+ * Every knob's help, read out of the manual when the app is built rather
+ * than when it loads -- the page carries the tables and not the manual.
+ */
+const HELP: KnobHelp = new Map(tables.map(([module, knobs]) => [module, new Map(knobs)]))
 
 /** Whether help shows at all: the View menu's switch, for those who know the rack. */
 export const KnobHelpOn = createContext(true)

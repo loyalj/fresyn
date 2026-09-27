@@ -1,6 +1,7 @@
 import { DcBlocker } from '../DcBlocker'
 import { Smoothed } from '../Smoothed'
 import { LiveLoudness } from '../Loudness'
+import { panLeft, panRight } from '../util'
 import { DspModule, type Metering } from './types'
 
 const CHANNELS = 8
@@ -111,17 +112,18 @@ export class MixerModule extends DspModule implements Metering {
       this.lastPan[c] = pan
       this.lastOpen[c] = open
 
-      const angle = ((pan + 1) / 2) * (Math.PI / 2)
       // Folded into the fader gain rather than applied after it, so a mute
       // rides the same smoother a fader does. A gain that steps to zero is
       // heard as a click, and muting a channel is exactly when you do not
       // want a new noise.
       const gain = level * open
-      this.gainL[c].set(gain * Math.cos(angle))
-      this.gainR[c].set(gain * Math.sin(angle))
+      const l = gain * panLeft(pan)
+      const r = gain * panRight(pan)
+      this.gainL[c].set(l)
+      this.gainR[c].set(r)
       if (force) {
-        this.gainL[c].reset(gain * Math.cos(angle))
-        this.gainR[c].reset(gain * Math.sin(angle))
+        this.gainL[c].reset(l)
+        this.gainR[c].reset(r)
       }
     }
   }

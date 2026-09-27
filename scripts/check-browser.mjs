@@ -1,42 +1,23 @@
-import puppeteer from 'puppeteer-core'
-
 /**
- * End-to-end check against a running dev server. Verifies the AudioWorklet
- * actually registers in a browser, that the live UI boots it, that the
- * mixer's meters follow what the rack is doing, and that an offline render
- * produces the same samples the Node harness does.
+ * End-to-end check in a real browser. Verifies the AudioWorklet actually
+ * registers, that the live UI boots it, that the mixer's meters follow what
+ * the rack is doing, and that an offline render produces the same samples
+ * the Node harness does.
  *
- * Needs `npm run dev -- --port 5199` in another terminal.
- * Point CHROME_PATH at a Chromium build if the default is wrong.
+ * Starts its own dev server (see harness.mjs); set DEV_URL to use a running
+ * one, and CHROME_PATH if Chrome is not where the harness looks.
  */
-const CHROME =
-  process.env.CHROME_PATH ||
-  'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'
-const URL = process.env.DEV_URL || 'http://localhost:5199/'
+import { finish, open, problems, settle, waitUntil } from './harness.mjs'
 
-const browser = await puppeteer.launch({
-  executablePath: CHROME,
-  headless: 'new',
-  args: ['--autoplay-policy=no-user-gesture-required', '--no-sandbox'],
-})
-const page = await browser.newPage()
-const problems = []
-page.on('console', (m) => {
-  if (m.type() !== 'error') return
-  if (m.text().includes('favicon')) return
-  problems.push('console: ' + m.text())
-})
-page.on('response', (r) => {
-  if (r.status() >= 400 && !r.url().includes('favicon')) problems.push(`http ${r.status()} ${r.url()}`)
-})
-page.on('pageerror', (e) => problems.push('pageerror: ' + e.message))
+const { page, url } = await open({ httpErrors: true })
 
-await page.goto(URL, { waitUntil: 'networkidle0' })
+await page.goto(url, { waitUntil: 'networkidle0' })
 
 // Click the real Trigger button first: this exercises the actual app path
-// (AudioContext creation + addModule + node wiring).
+// (AudioContext creation + addModule + node wiring). The lamp lights once the
+// engine is up and has been told about the press.
 await page.click('.trigger')
-await new Promise((r) => setTimeout(r, 800))
+await waitUntil(page, () => !!document.querySelector('.led.on'))
 
 const live = await page.evaluate(() => ({
   ledOn: !!document.querySelector('.led.on'),
@@ -75,12 +56,34 @@ const oscFill = () => fillOf('.osc-meter-fill')
 const key = await (await page.$('.keys-key')).boundingBox()
 await page.mouse.move(key.x + key.width / 2, key.y + key.height * 0.8)
 await page.mouse.down()
-await new Promise((r) => setTimeout(r, 600))
+// The fullest bar of either kind, read the same way as fillOf, compared in
+// the page so the wait ends the frame it comes true.
+const meters = (above, below) =>
+  waitUntil(
+    page,
+    (above, below) => {
+      const fullest = (sel) =>
+        Math.max(
+          0,
+          ...[...document.querySelectorAll(sel)].map((e) => {
+            const m = /inset\(([\d.]+)%/.exec(e.style.clipPath || '')
+            return m ? 1 - Number(m[1]) / 100 : 0
+          }),
+        )
+      const levels = [fullest('.strip-meter-fill'), fullest('.osc-meter-fill')]
+      return above !== null ? levels.every((v) => v > above) : levels.every((v) => v < below)
+    },
+    { timeout: 5000, args: [above, below] },
+  )
+// Held until both kinds of meter show something.
+await meters(0.05, null)
 const sounding = await barFill()
 const oscSounding = await oscFill()
 await page.mouse.up()
-// Long enough for a full-scale bar to fall all the way to the floor.
-await new Promise((r) => setTimeout(r, 1500))
+// Until every bar has fallen to the floor. A full-scale bar takes over a
+// second; this waits for it rather than for a guess at it. Below the bar the
+// check sets, so a reading taken a frame later cannot land on the line.
+await meters(null, 0.01)
 const silent = await barFill()
 const oscSilent = await oscFill()
 
@@ -199,22 +202,24 @@ if (render.warnings.length) console.log('warnings    :', render.warnings)
     }
   })
   await nudge()
-  await new Promise((r) => setTimeout(r, 700))
+  await waitUntil(page, () => !!document.querySelector('.notice-warn .notice-text'), { timeout: 3000 })
   const said = await warning()
   if (!said || !/Autosave failed/.test(said)) problems.push(`a failed autosave was not reported (${said})`)
   await nudge()
-  await new Promise((r) => setTimeout(r, 700))
+  // A second failed save should add nothing, and there is no sign to wait
+  // for when nothing happens -- so this stays a plain pause past the debounce.
+  await settle(700)
   const stillOne = await page.evaluate(() => document.querySelectorAll('.notice-warn').length)
   if (stillOne !== 1) problems.push(`the autosave warning appeared ${stillOne} times`)
   // Stays until it is dismissed: the plain notices go after four seconds.
-  await new Promise((r) => setTimeout(r, 4300))
+  await settle(4300)
   if (!(await warning())) problems.push('the autosave warning did not stay up')
 
   await page.evaluate(() => {
     Storage.prototype.setItem = window.__realSetItem
   })
   await nudge()
-  await new Promise((r) => setTimeout(r, 700))
+  await waitUntil(page, () => !document.querySelector('.notice-warn .notice-text'), { timeout: 3000 })
   if (await warning()) problems.push('the autosave warning did not clear once a save succeeded')
 
   // Flushed on pagehide, well inside the 400 ms debounce.
@@ -228,15 +233,6 @@ if (render.warnings.length) console.log('warnings    :', render.warnings)
   console.log('autosave    :', said, '| flushed on pagehide:', flushed !== savedBefore)
 }
 
-console.log('problems    :', problems.length ? problems : 'none')
-
-await browser.close()
-
-const ok =
-  render.peak > 0.01 &&
-  render.nan === 0 &&
-  render.warnings.length === 0 &&
-  problems.length === 0 &&
-  live.ledOn
-console.log(ok ? '\nPASS' : '\nFAIL')
-process.exit(ok ? 0 : 1)
+await finish({
+  ok: render.peak > 0.01 && render.nan === 0 && render.warnings.length === 0 && live.ledOn,
+})

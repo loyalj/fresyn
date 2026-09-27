@@ -1,4 +1,4 @@
-import puppeteer from 'puppeteer-core'
+import { check, finish, flipRack, flushAutosave, frames, open, settle as wait, waitUntil } from './harness.mjs'
 
 /**
  * End-to-end check for the working tools around the rack and the dock: the
@@ -10,42 +10,28 @@ import puppeteer from 'puppeteer-core'
  * Every step goes through the real app, and what it did is read back out of
  * the autosave, which is the document itself.
  *
- * Needs `npm run dev -- --port 5199` in another terminal.
- * Point CHROME_PATH at a Chromium build if the default is wrong.
+ * Starts its own dev server (see harness.mjs); set DEV_URL to use a running
+ * one, and CHROME_PATH if Chrome is not where the harness looks.
+ *
+ * An edit used to be followed by a 700 ms sleep so the autosave's debounce
+ * had passed before the document was read. stored() flushes the autosave the
+ * way the app does on pagehide instead, and an edit gets two frames to land.
+ * The one exception is before a reload that checks the dock's own settings,
+ * which are saved on a debounce of their own that pagehide does not flush.
  */
-const CHROME =
-  process.env.CHROME_PATH || 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'
-const URL = process.env.DEV_URL || 'http://localhost:5199/'
-const FLIP_SETTLE = 700
-const SAVE = 700
-
-const browser = await puppeteer.launch({
-  executablePath: CHROME,
-  headless: 'new',
-  args: ['--autoplay-policy=no-user-gesture-required', '--no-sandbox'],
-})
-const page = await browser.newPage()
 // Tall, so the whole stock rack and the dock are on screen at once.
-await page.setViewport({ width: 1280, height: 1900 })
+const { page, url } = await open({ viewport: { width: 1280, height: 1900 } })
 
-const problems = []
-page.on('console', (m) => {
-  if (m.type() === 'error' && !m.text().includes('favicon')) problems.push('console: ' + m.text())
-})
-page.on('pageerror', (e) => problems.push('pageerror: ' + e.message))
+/** An edit has landed: React has committed it and scheduled the autosave. */
+const edited = () => frames(page)
 
-let failures = 0
-const check = (name, ok, detail = '') => {
-  if (!ok) failures++
-  console.log(`  ${ok ? 'ok  ' : 'FAIL'}  ${name}${detail ? '  ' + detail : ''}`)
-}
-const wait = (ms) => new Promise((r) => setTimeout(r, ms))
-
-const stored = () =>
-  page.evaluate(() => {
+const stored = async () => {
+  await flushAutosave(page)
+  return page.evaluate(() => {
     const raw = localStorage.getItem('fresyn.project.v1')
     return raw ? JSON.parse(raw) : null
   })
+}
 /** The rack on the bench, as the autosave has it. */
 const rack = async () => {
   const p = await stored()
@@ -101,7 +87,7 @@ const centreOf = (selector) =>
   }, selector)
 
 // A fresh session, so nothing left behind by the last run can pass for work.
-await page.goto(URL, { waitUntil: 'networkidle0' })
+await page.goto(url, { waitUntil: 'networkidle0' })
 await page.evaluate(() => localStorage.clear())
 await page.reload({ waitUntil: 'networkidle0' })
 
@@ -115,7 +101,7 @@ console.log('\nmodule search')
   const top = await page.evaluate(() => document.querySelector('.search-row.at .search-name')?.textContent)
   check('typing narrows it to what matches', top === 'Formant', String(top))
   await press('Enter')
-  await wait(SAVE)
+  await edited()
   const modules = (await rack()).modules
   check('Enter adds it', modules.some((m) => m.type === 'formant'), modules.map((m) => m.id).join())
   check('and the search closes', !(await page.$('.search-input')))
@@ -128,8 +114,7 @@ console.log('\nmodule search')
 
 console.log('\na cable let go of over nothing')
 {
-  await press('KeyF')
-  await wait(FLIP_SETTLE)
+  await flipRack(page, true)
   const from = await centreOf('.jack[data-module="osc1"][data-port="env"]')
   check('a free output to start from', !!from)
   if (from) {
@@ -146,7 +131,7 @@ console.log('\na cable let go of over nothing')
     const top = await page.evaluate(() => document.querySelector('.search-row.at .search-name')?.textContent)
     check('jack by jack', top === 'Ladder Filter › CV', String(top))
     await press('Enter')
-    await wait(SAVE)
+    await edited()
     const after = await rack()
     const added = after.modules.find((m) => m.type === 'ladder' && m.id !== 'lpf1')
     check('picking one adds it', after.modules.length === before + 1 && !!added, added?.id)
@@ -165,7 +150,7 @@ console.log('\na cable let go of over nothing')
       await page.mouse.down()
       await page.mouse.move(jack.x + 250, jack.y + 40, { steps: 6 })
       await page.mouse.up()
-      await wait(SAVE)
+      await edited()
       check('a cable pulled out and let go of is unplugged', !(await page.$('.search')) &&
         !(await rack()).cables.some((c) => c.to.module === added?.id && c.to.port === 'cv'))
     }
@@ -179,11 +164,11 @@ console.log('\nbypass')
   check('an oscillator does not', !(await page.$('.unit-flip[data-module="osc1"] .unit-bypass')))
   if (lamp) {
     await lamp.click()
-    await wait(SAVE)
+    await edited()
     check('it switches the module out', (await rack()).modules.find((m) => m.id === 'lpf1')?.bypass === true)
     check('and the panel says so', await page.evaluate(() => !!document.querySelector('.unit-flip[data-module="lpf1"].bypassed')))
     await lamp.click()
-    await wait(SAVE)
+    await edited()
     check('and back in', !(await rack()).modules.find((m) => m.id === 'lpf1')?.bypass)
   }
 }
@@ -206,7 +191,7 @@ console.log('\ncable colours')
     await page.keyboard.down('Alt')
     await page.mouse.click(mid.x, mid.y)
     await page.keyboard.up('Alt')
-    await wait(SAVE)
+    await edited()
     const cables = (await rack()).cables
     check('Alt+click gives a cable its own colour', cables.some((c) => typeof c.color === 'number'))
     check('rather than unplugging it', cables.length === before)
@@ -215,8 +200,7 @@ console.log('\ncable colours')
 
 console.log('\ncopying modules')
 {
-  await press('KeyF')
-  await wait(FLIP_SETTLE)
+  await flipRack(page, false)
   const spine = await page.$('.unit-flip[data-module="lpf1"] .unit-face-front .unit-spine')
   await spine.click()
   await wait(100)
@@ -225,7 +209,7 @@ console.log('\ncopying modules')
   await wait(100)
   const before = (await rack()).modules.length
   await press('KeyV', ['Control'])
-  await wait(SAVE)
+  await edited()
   const after = await rack()
   const copies = after.modules.filter((m) => m.type === 'ladder')
   check('Ctrl+C and Ctrl+V copy it', after.modules.length === before + 1, `${before} -> ${after.modules.length}`)
@@ -243,7 +227,7 @@ console.log('\ncopying modules')
   check('Shift+click picks several', picked.join() === 'key1,vca1', picked.join())
   const was = (await rack()).modules.map((m) => m.id)
   await (await ear('key1')).click()
-  await wait(SAVE)
+  await edited()
   check('a click on one of them moves nothing', (await rack()).modules.map((m) => m.id).join() === was.join())
   check('and keeps them both picked', await page.evaluate(() => document.querySelectorAll('.unit-flip.selected').length === 2))
 
@@ -253,7 +237,7 @@ console.log('\ncopying modules')
   await page.mouse.down()
   await page.mouse.move(grip.x + grip.width / 2, last.y + last.height + 60, { steps: 20 })
   await page.mouse.up()
-  await wait(SAVE)
+  await edited()
   const now = (await rack()).modules.map((m) => m.id)
   check('dragging one of them carries both, as one block', now.slice(-2).join() === 'key1,vca1' && now.length === was.length, now.join())
 }
@@ -303,13 +287,13 @@ console.log('\npatterns, kept house')
   await clickText('.dock-views .dock-toggle', 'Song')
   await wait(200)
   await clickText('.playlist-pane .track-add', '+ Pattern')
-  await wait(SAVE)
+  await edited()
   check('a pattern is added from the foot of the playlist', (await stored()).song.patterns.length === 2)
   const renameTo = async (text, key = 'Enter') => {
     await page.click('.playlist-row.on .playlist-name', { clickCount: 3 })
     await page.keyboard.type(text)
     await press(key)
-    await wait(SAVE)
+    await edited()
     return (await stored()).song
   }
   let song = await renameTo('Chorus')
@@ -319,19 +303,19 @@ console.log('\npatterns, kept house')
   await page.click('.playlist-row.on .playlist-name', { clickCount: 3 })
   await press('Backspace')
   await press('Enter')
-  await wait(SAVE)
+  await edited()
   song = (await stored()).song
   check('and a blank name is not kept', song.patterns[1]?.name === 'Chorus', song.patterns.map((p) => p.name).join())
   await page.click('.playlist-row.on .swatch')
-  await wait(SAVE)
+  await edited()
   song = (await stored()).song
   check('and given a colour', typeof song.patterns[1]?.color === 'number')
   await page.click('.playlist-row.on button[aria-label="Copy Chorus"]')
-  await wait(SAVE)
+  await edited()
   song = (await stored()).song
   check('a row copies its own pattern', song.patterns.length === 3, song.patterns.map((p) => p.name).join())
   await page.click('.playlist-row.on button[aria-label^="Delete"]')
-  await wait(SAVE)
+  await edited()
   check('and deletes its own', (await stored()).song.patterns.length === 2)
   // Undoable, so no confirm -- but it says so, since the placements went too.
   check(
@@ -340,7 +324,7 @@ console.log('\npatterns, kept house')
     await page.evaluate(() => document.querySelector('.notice-text')?.textContent ?? ''),
   )
   await press('KeyZ', ['Control'])
-  await wait(SAVE)
+  await edited()
   check('which undoes', (await stored()).song.patterns.length === 3)
 }
 
@@ -356,7 +340,7 @@ console.log('\nsliding a placement')
   await page.mouse.down()
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 6 })
   await page.mouse.up()
-  await wait(SAVE)
+  await edited()
   const playlist = (await stored()).song.playlist
   check('dragging a placement slides it to another bar', playlist.length === 1 && playlist[0].tick === 3 * 3840, JSON.stringify(playlist))
   await clickText('.dock-views .dock-toggle', 'Roll')
@@ -366,7 +350,7 @@ console.log('\nsliding a placement')
 console.log('\ntracks, kept house')
 {
   await page.click('.track-add')
-  await wait(SAVE)
+  await edited()
   const ids = (await stored()).song.tracks.map((t) => t.id)
   const grips = await page.$$('.track-grip')
   const top = await (await page.$$('.track'))[0].boundingBox()
@@ -375,11 +359,11 @@ console.log('\ntracks, kept house')
   await page.mouse.down()
   await page.mouse.move(g.x + g.width / 2, top.y + 4, { steps: 6 })
   await page.mouse.up()
-  await wait(SAVE)
+  await edited()
   const order = (await stored()).song.tracks.map((t) => t.id)
   check('dragging a track by its grip reorders the list', order.join() === [...ids].reverse().join(), order.join())
   await (await page.$$('.track .swatch'))[0].click()
-  await wait(SAVE)
+  await edited()
   check('a track can be given a colour', typeof (await stored()).song.tracks[0].color === 'number')
   const db = await page.evaluate(() => document.querySelector('.track-db')?.textContent)
   check('its level reads in decibels', /dB$/.test(db ?? ''), String(db))
@@ -389,7 +373,7 @@ console.log('\ntracks, kept house')
   // single Ctrl+Z took both back.
   await (await page.$$('.track .track-flag[aria-label^="Mute"]'))[0].click()
   await (await page.$$('.track .track-flag[aria-label^="Solo"]'))[1].click()
-  await wait(SAVE)
+  await edited()
   let t = (await stored()).song.tracks
   check('mute then solo, quickly', !!t[0].mute && !!t[1].solo, JSON.stringify(t.map((x) => [x.mute, x.solo])))
   check(
@@ -397,24 +381,24 @@ console.log('\ntracks, kept house')
     await page.evaluate(() => document.querySelectorAll('.track .track-flag[aria-pressed="true"]').length === 2),
   )
   await press('KeyZ', ['Control'])
-  await wait(SAVE)
+  await edited()
   t = (await stored()).song.tracks
   check('one undo takes back only the solo', !!t[0].mute && !t[1].solo, JSON.stringify(t.map((x) => [x.mute, x.solo])))
   await press('KeyZ', ['Control'])
-  await wait(SAVE)
+  await edited()
   t = (await stored()).song.tracks
   check('and the next, the mute', !t[0].mute && !t[1].solo, JSON.stringify(t.map((x) => [x.mute, x.solo])))
 
   // Removing a track is undoable, so it asks nothing -- and says so.
   await (await page.$$('.track .track-remove'))[1].click()
-  await wait(SAVE)
+  await edited()
   check('a track removes with one click', (await stored()).song.tracks.length === ids.length - 1)
   check(
     'and says how to get it back',
     await page.evaluate(() => /Removed .+ -- Ctrl\+Z to undo/.test(document.querySelector('.notice-text')?.textContent ?? '')),
   )
   await press('KeyZ', ['Control'])
-  await wait(SAVE)
+  await edited()
   check('which it does', (await stored()).song.tracks.length === ids.length)
 }
 
@@ -429,7 +413,8 @@ console.log('\nthe roll comes back as it was left')
   })
   await page.select('.roll-tools select[aria-label="Chord"]', 'min7')
   await clickText('.dock-views .dock-toggle', 'In song')
-  await wait(SAVE)
+  // The dock's settings debounce on their own, and pagehide does not flush them.
+  await wait(700)
   await page.reload({ waitUntil: 'networkidle0' })
   await wait(400)
   const state = await page.evaluate(() => ({
@@ -452,16 +437,20 @@ console.log('\npresets, the rack index and the compact rack')
     const name = await row.$eval('.track-name', (i) => i.value)
     if (name === 'Rack') await (await row.$('.track-db')).click()
   }
-  await wait(300)
+  // Until that track is the one on the bench and its rack has been drawn: a
+  // handle taken on the rack before then belongs to the old one, and comes
+  // loose from the page as soon as it is swapped out.
+  await waitUntil(page, () => document.querySelector('.track.on .track-name')?.value === 'Rack')
+  await edited()
   // A preset saved from one Ladder puts its knobs on another.
   const lpf = await page.$('.unit-flip[data-module="lpf1"] .unit-face-front .unit-presets')
   check('a module has a presets button on its ear', !!lpf)
   if (lpf) {
     await lpf.click()
-    await wait(150)
+    await waitUntil(page, () => !!document.querySelector('.preset-sheet input'))
     await page.type('.preset-sheet input', 'Dark')
     await press('Enter')
-    await wait(150)
+    await waitUntil(page, () => [...document.querySelectorAll('.preset-load')].some((b) => b.textContent === 'Dark'))
     const listed = await page.evaluate(() => [...document.querySelectorAll('.preset-load')].map((b) => b.textContent))
     check('its knobs can be saved under a name', listed.includes('Dark'), listed.join(','))
     await press('Escape')
@@ -474,7 +463,7 @@ console.log('\npresets, the rack index and the compact rack')
     await btn.click()
     await wait(150)
     await clickText('.preset-load', 'Dark')
-    await wait(SAVE)
+    await edited()
     const loaded = (await rack()).modules.find((m) => m.id === other.id).params.cutoff
     check('and put back on another of its kind', loaded === cutoff, `${loaded} vs ${cutoff}`)
     await press('Escape')
@@ -512,7 +501,11 @@ console.log('\npresets, the rack index and the compact rack')
   const options = await page.evaluate(() => [...document.querySelectorAll('.rack-index option')].map((o) => o.value).filter(Boolean))
   check('the rack index lists every unit', options.length === (await rack()).modules.length, options.join(','))
   await page.select('.rack-index', 'mix1')
-  await wait(600)
+  // Scrolled smoothly, so until it is in view rather than for a guess at it.
+  await waitUntil(page, () => {
+    const r = document.querySelector('.unit-flip[data-module="mix1"]').getBoundingClientRect()
+    return r.top >= 0 && r.bottom <= window.innerHeight + 1
+  })
   const seen = await page.evaluate(() => {
     const r = document.querySelector('.unit-flip[data-module="mix1"]').getBoundingClientRect()
     return r.top >= 0 && r.bottom <= window.innerHeight + 1
@@ -542,7 +535,7 @@ console.log('\nthe mix, measured and levelled')
   const roll = await (await page.$('.roll-canvas')).boundingBox()
   await page.mouse.move(roll.x + 12, roll.y + roll.height / 2)
   await page.mouse.down()
-  await wait(1800)
+  await waitUntil(page, () => /^[−-]?\d+\.\d LUFS$/.test(document.querySelector('.strip-lufs')?.textContent ?? ''))
   const reading = await page.evaluate(() => document.querySelector('.strip-lufs')?.textContent ?? '')
   await page.mouse.up()
   check('the mixer reads its loudness in LUFS while it plays', /^[−-]?\d+\.\d LUFS$/.test(reading), reading)
@@ -552,7 +545,7 @@ console.log('\nthe mix, measured and levelled')
   await wait(150)
   await page.keyboard.type('recorder')
   await press('Enter')
-  await wait(SAVE)
+  await edited()
   const levels = await page.evaluate(() => [...document.querySelectorAll('.export-format select')].map((s) => [...s.options].map((o) => o.textContent)))
   check('the recorder offers a level to render to', levels.some((o) => o.includes('−16 LUFS')), JSON.stringify(levels))
 }
@@ -563,13 +556,13 @@ console.log('\nsections and the time signature')
   await wait(200)
   const slots = await page.$$('button.playlist-marker-slot')
   await slots[0].click()
-  await wait(SAVE)
+  await edited()
   let song = (await stored()).song
   check('a click on the sections strip adds a marker', song.markers?.length === 1 && song.markers[0].tick === 0, JSON.stringify(song.markers))
   // A bar number adds one too, even inside a section the strip is covering.
   const numbers = await page.$$('button.playlist-bar')
   await numbers[3].click()
-  await wait(SAVE)
+  await edited()
   song = (await stored()).song
   check('and a click on a bar number adds another', song.markers?.length === 2 && song.markers[1].tick === 3 * 3840,
     JSON.stringify(song.markers))
@@ -585,7 +578,7 @@ console.log('\nsections and the time signature')
   await page.keyboard.up('Control')
   await page.keyboard.type('Intro')
   await press('Enter')
-  await wait(SAVE)
+  await edited()
   song = (await stored()).song
   check('a double-click renames it', song.markers?.some((m) => m.name === 'Intro'), JSON.stringify(song.markers))
 
@@ -594,7 +587,7 @@ console.log('\nsections and the time signature')
     s.value = '3/4'
     s.dispatchEvent(new Event('change', { bubbles: true }))
   })
-  await wait(SAVE)
+  await edited()
   song = (await stored()).song
   check('the time signature can be set', song.meter?.beats === 3 && song.meter?.unit === 4, JSON.stringify(song.meter))
   check('and the markers keep their bars', song.markers.some((m) => m.tick === 3 * 3 * 960), JSON.stringify(song.markers))
@@ -616,20 +609,20 @@ console.log('\nthe song console')
   const fader = await page.$('.mix-strips .mix-fader')
   await fader.focus()
   for (let i = 0; i < 60; i++) await page.keyboard.press('ArrowDown')
-  await wait(SAVE)
+  await edited()
   const gain = (await stored()).song.tracks[0].gain
   check('a fader sets the track level', gain < 0.6 && gain > 0, String(gain))
 
   // Sixty presses, one drag's worth, are one step back.
   await press('KeyZ', ['Control'])
-  await wait(SAVE)
+  await edited()
   check('and a whole fader move undoes in one step', (await stored()).song.tracks[0].gain === 1, String((await stored()).song.tracks[0].gain))
 
   await clickText('.mix-master .dock-toggle', 'Limit')
-  await wait(SAVE)
+  await edited()
   check('the limiter is on by default and can be switched off', (await stored()).song.console?.master.limiter === false)
   await clickText('.mix-master .dock-toggle', 'Limit')
-  await wait(SAVE)
+  await edited()
 
   // Roll, Song and Mix are chosen on the dock's bar, and only there.
   check('the View menu has no Mix of its own', !(await pickMenu('View', 'Mix')))
@@ -666,8 +659,4 @@ console.log('\nknob help')
   await pickMenu('View', 'Knob help')
 }
 
-console.log(`\nproblems    : ${problems.length ? problems.join('\n              ') : 'none'}`)
-if (problems.length) failures++
-console.log(failures === 0 ? '\nPASS' : `\nFAIL (${failures} check(s))`)
-await browser.close()
-process.exit(failures === 0 ? 0 : 1)
+await finish()

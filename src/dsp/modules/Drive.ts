@@ -1,6 +1,7 @@
 import { ADAA_EPS, clipIntegral, logCosh, saneInput } from '../Adaa'
 import { DcBlocker } from '../DcBlocker'
 import { Smoothed } from '../Smoothed'
+import { expCv } from '../util'
 import { DspModule } from './types'
 
 const P_DRIVE = 0
@@ -73,7 +74,7 @@ export class DriveModule extends DspModule {
     // An envelope into Drive is a transient: loud and dirty at the moment of
     // the hit and clean as it falls away, which is what a struck thing does
     // and what a fixed drive never does.
-    const drive = this.drive.next() * Math.pow(2, slots[this.ins[IN_CV]] * this.params[P_CV_AMOUNT])
+    const drive = expCv(this.drive.next(), slots[this.ins[IN_CV]], this.params[P_CV_AMOUNT])
     const driven = saneInput(x * drive)
 
     const curve = Math.round(this.params[P_CURVE])

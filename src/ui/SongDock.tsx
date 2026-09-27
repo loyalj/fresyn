@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AudioEngine } from '../audio/AudioEngine'
 import type { Transport } from '../audio/Transport'
 import { loadPrefs, savePrefs } from '../patch/storage'
@@ -19,9 +19,30 @@ import {
 } from '../song/edit'
 import { barTicks, beatTicks, PPQ, type Note, type Song, type Track } from '../song/types'
 import { MixView } from './MixView'
-import { PianoRoll } from './PianoRoll'
-import { Playlist } from './Playlist'
 import { TrackList } from './TrackList'
+
+/**
+ * The roll and the playlist are not in the page's own script: the dock
+ * starts folded, and nothing in them is needed to draw the rack. They are
+ * fetched as soon as the dock has first been drawn, behind the rack rather
+ * than ahead of it, so that by the time anybody opens the dock they are
+ * already here and it opens as quickly as it always did.
+ *
+ * Held in state rather than behind React.lazy and Suspense. A Suspense
+ * boundary that has shown its fallback holds the content back for a few
+ * hundred milliseconds when it resolves, so the first open of the dock would
+ * have lagged even with both files long since arrived.
+ */
+interface DockParts {
+  PianoRoll: typeof import('./PianoRoll').PianoRoll
+  Playlist: typeof import('./Playlist').Playlist
+}
+let dockParts: DockParts | null = null
+let dockLoading: Promise<DockParts> | undefined
+const loadDockParts = () =>
+  (dockLoading ??= Promise.all([import('./PianoRoll'), import('./Playlist')]).then(
+    ([roll, list]) => (dockParts = { PianoRoll: roll.PianoRoll, Playlist: list.Playlist }),
+  ))
 
 /** Pattern lengths offered, in bars of four. */
 const BARS = [1, 2, 4, 8]
@@ -98,6 +119,9 @@ interface Props {
   onHeight: (height: number) => void
 }
 
+/** The pattern menu's last row, which makes one rather than picking one. */
+const NEW_PATTERN = '__new'
+
 /**
  * The music, docked under the rack.
  *
@@ -111,10 +135,7 @@ interface Props {
  * and plays the arrangement. The transport does not know which: it is handed
  * a different song in each case, which is a thing it already knew how to do.
  */
-/** The pattern menu's last row, which makes one rather than picking one. */
-const NEW_PATTERN = '__new'
-
-export function SongDock({
+export const SongDock = memo(function SongDock({
   transport,
   projectName,
   onProjectName,
@@ -145,6 +166,14 @@ export function SongDock({
   height,
   onHeight,
 }: Props) {
+  const [parts, setParts] = useState(dockParts)
+  useEffect(() => {
+    let live = true
+    void loadDockParts().then((loaded) => live && setParts(loaded))
+    return () => {
+      live = false
+    }
+  }, [])
   const [playing, setPlaying] = useState(transport.state.playing)
   // The grid you last wrote in, if it is still one this dock offers.
   const [grid, setGridState] = useState(() => {
@@ -427,12 +456,12 @@ export function SongDock({
           </div>
         )}
 
-        {/* Said plainly rather than left for the user to work out from
-            silence: a rack with no way in is the ordinary state of one that
-            is still being built, and the fix is one module. */}
         {/* Said, rather than left to be worked out from the song playing
             without it. Placing it is the playlist's job. */}
         {inContext && placedAt === null && <span className="dock-hint">Not in the song yet</span>}
+        {/* Said plainly rather than left for the user to work out from
+            silence: a rack with no way in is the ordinary state of one that
+            is still being built, and the fix is one module. */}
         {view === 'roll' && !target && (
           <span className="dock-hint">Add a Keyboard or a Trigger to play this rack</span>
         )}
@@ -476,8 +505,8 @@ export function SongDock({
             onReorder={(ids) => onEdit((s) => reorderTracks(s, ids))}
           />
 
-          {view === 'roll' && pattern ? (
-            <PianoRoll
+          {parts && (view === 'roll' && pattern ? (
+            <parts.PianoRoll
               notes={mine}
               ghosts={ghosts}
               track={trackId}
@@ -499,7 +528,7 @@ export function SongDock({
               transport={transport}
             />
           ) : (
-            <Playlist
+            <parts.Playlist
               song={song}
               patternId={patternId}
               onSelectPattern={onSelectPattern}
@@ -520,14 +549,14 @@ export function SongDock({
               }}
               transport={transport}
             />
-          )}
+          ))}
           </>
           )}
         </div>
       )}
     </div>
   )
-}
+})
 
 const clamp = (n: number, lo: number, hi: number) => (n < lo ? lo : n > hi ? hi : n)
 

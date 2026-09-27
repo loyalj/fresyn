@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 
 export interface RackIndexEntry {
   id: string
@@ -31,7 +31,16 @@ interface Props {
  * Only where the window leaves a margin wide enough to hold it; below that
  * the stylesheet hides it and the Jump menu comes back.
  */
-export function RackIndex({ tracks, trackId, onSelectTrack, entries, picked, onJump, flipped, onFlip }: Props) {
+export const RackIndex = memo(function RackIndex({
+  tracks,
+  trackId,
+  onSelectTrack,
+  entries,
+  picked,
+  onJump,
+  flipped,
+  onFlip,
+}: Props) {
   const inView = useInView(entries.map((e) => e.id).join(' '))
 
   return (
@@ -91,7 +100,7 @@ export function RackIndex({ tracks, trackId, onSelectTrack, entries, picked, onJ
       </ul>
     </nav>
   )
-}
+})
 
 /**
  * Which units are on screen. Watched rather than worked out on scroll, so

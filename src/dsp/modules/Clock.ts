@@ -1,3 +1,4 @@
+import { expCv } from '../util'
 import { DspModule, EdgeDetector } from './types'
 
 const P_RATE = 0
@@ -56,8 +57,7 @@ export class ClockModule extends DspModule {
 
     // In octaves, like every other CV amount in the rack, so an envelope into
     // Rate CV doubles and halves the tempo rather than moving it by hertz.
-    const cv = slots[this.ins[IN_CV]] * this.params[P_CV_AMOUNT]
-    let rate = this.params[P_RATE] * Math.pow(2, cv)
+    let rate = expCv(this.params[P_RATE], slots[this.ins[IN_CV]], this.params[P_CV_AMOUNT])
     if (!(rate > 0)) rate = 0
     else if (rate > MAX_RATE) rate = MAX_RATE
 

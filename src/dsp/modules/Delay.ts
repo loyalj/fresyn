@@ -1,5 +1,6 @@
 import { DelayLine, OnePole } from '../DelayLine'
 import { Smoothed } from '../Smoothed'
+import { expCv } from '../util'
 import { DspModule } from './types'
 
 const P_TIME = 0
@@ -76,8 +77,7 @@ export class DelayModule extends DspModule {
     // In octaves, as every CV amount in the rack is, so a unit of CV halves
     // or doubles the distance rather than moving it by some number of
     // milliseconds that means nothing at the other end of the knob.
-    const cv = slots[this.ins[IN_CV]] * this.cvAmount.next()
-    let seconds = this.params[P_TIME] * Math.pow(2, cv)
+    let seconds = expCv(this.params[P_TIME], slots[this.ins[IN_CV]], this.cvAmount.next())
     if (!(seconds >= MIN_TIME)) seconds = MIN_TIME
     else if (seconds > MAX_TIME) seconds = MAX_TIME
 

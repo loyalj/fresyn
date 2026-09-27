@@ -8,13 +8,16 @@
  * contrast and the label is still there, still the right size, and still
  * unreadable.
  *
- * So: every palette must declare exactly the same tokens as the reference,
- * every registered theme must have both modes, and the pairs that end up on
- * top of each other have to clear a ratio.
+ * So: every palette must declare exactly the same tokens as the reference
+ * (give or take the few optional overrides below), every registered theme
+ * must have both modes, every token must be read by something, and the
+ * pairs that end up on top of each other have to clear a ratio -- measured
+ * with the colours the stylesheet will actually resolve, not the ones the
+ * token names suggest.
  *
  * Run with: npm run check:theme
  */
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
@@ -26,6 +29,19 @@ let failures = 0
 const check = (name, ok, detail = '') => {
   if (!ok) failures++
   console.log(`  ${ok ? 'ok  ' : 'FAIL'}  ${name}${detail ? '  ' + detail : ''}`)
+}
+
+/**
+ * Tokens a palette may leave out, and what app.css falls back to when it
+ * does -- `var(--spine-ink, var(--ink-dim))`. They exist for themes whose
+ * rack ears are a different weight from their panels (dark ears on a light
+ * rack), where the panel's ink would vanish into the ear. Every other
+ * palette is better off without them: one less pair of colours to keep in
+ * step. Keep this in step with the fallbacks written in app.css.
+ */
+const OPTIONAL = {
+  '--spine-ink': '--ink-dim',
+  '--spine-ink-faint': '--ink-faint',
 }
 
 // --- parse ------------------------------------------------------------
@@ -42,6 +58,9 @@ for (const m of css.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
 const palettes = blocks.filter((b) => b.theme)
 console.log(`\n${palettes.length} palettes in theme.css`)
 
+/** A token's value in this palette, following app.css's fallback if it is optional and absent. */
+const resolve = (p, token) => p.tokens.get(token) ?? (OPTIONAL[token] ? p.tokens.get(OPTIONAL[token]) : undefined)
+
 // --- every palette declares the same tokens ---------------------------
 console.log('\ntoken coverage')
 const reference = palettes.find((p) => p.theme === 'standard' && p.mode === 'dark')
@@ -49,21 +68,47 @@ if (!reference) {
   check('the reference palette (standard/dark) exists', false)
   process.exit(1)
 }
-const expected = [...reference.tokens.keys()].sort()
+const expected = [...reference.tokens.keys()].filter((t) => !(t in OPTIONAL)).sort()
 check('the reference declares a full set', expected.length > 50, `${expected.length} tokens`)
 
 for (const p of palettes) {
   const got = new Set(p.tokens.keys())
   const missing = expected.filter((t) => !got.has(t))
-  const extra = [...got].filter((t) => !expected.includes(t))
+  const extra = [...got].filter((t) => !expected.includes(t) && !(t in OPTIONAL))
+  const overrides = [...got].filter((t) => t in OPTIONAL)
   check(
     `${p.theme}/${p.mode} declares every token`,
     missing.length === 0 && extra.length === 0,
-    [missing.length ? `missing ${missing.join(', ')}` : '', extra.length ? `extra ${extra.join(', ')}` : '']
+    [
+      missing.length ? `missing ${missing.join(', ')}` : '',
+      extra.length ? `extra ${extra.join(', ')}` : '',
+      overrides.length ? `(overrides ${overrides.join(', ')})` : '',
+    ]
       .filter(Boolean)
       .join('; '),
   )
 }
+
+// --- every token is read by something ---------------------------------
+/*
+ * A token nothing reads is worse than useless: it is one more value every
+ * new theme has to invent, for no effect. --kbd and --hairline-dash sat in
+ * all 26 palettes for a while after the markup that used them had gone.
+ */
+console.log('\ntokens in use')
+const walk = (dir) =>
+  readdirSync(dir).flatMap((f) => {
+    const path = join(dir, f)
+    return statSync(path).isDirectory() ? walk(path) : [path]
+  })
+const readers = walk(join(root, 'src'))
+  .filter((path) => /\.(css|tsx?)$/.test(path) && !path.endsWith('theme.css'))
+  .map((path) => readFileSync(path, 'utf8'))
+  .join('\n')
+const unread = [...expected, ...Object.keys(OPTIONAL)].filter(
+  (t) => !new RegExp(`${t}(?![a-z0-9-])`).test(readers),
+)
+check('every palette token is read outside theme.css', unread.length === 0, unread.length ? `unread ${unread.join(', ')}` : '')
 
 // --- every registered theme is painted, and vice versa ----------------
 console.log('\nregistered themes')
@@ -81,7 +126,7 @@ for (const p of palettes) {
 
 // --- contrast ---------------------------------------------------------
 const hex = (v) => {
-  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(v.trim())
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec((v ?? '').trim())
   if (!m) return null
   const h = m[1].length === 3 ? [...m[1]].map((c) => c + c).join('') : m[1]
   return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16))
@@ -100,6 +145,25 @@ const contrast = (a, b) => {
   return x > y ? x / y : y / x
 }
 
+/** Two colours mixed the way a legacy-syntax CSS gradient does: straight sRGB. */
+const mix = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t)
+
+/**
+ * The rack ear is a sideways gradient from --spine-top to --spine-bottom,
+ * 30px wide, and its lettering runs down the middle: a glyph about 10px
+ * across, so it spans roughly the middle third. What the text has to hold
+ * up against is the ear's colour at the edges of that third -- not either
+ * end of the gradient, which the text never touches. Measuring against one
+ * end, as this check used to, could fail an ear whose lettering was fine
+ * and pass one whose lettering was not.
+ */
+const EAR = '(the rack ear)'
+const earBacks = (p) => {
+  const top = hex(p.tokens.get('--spine-top'))
+  const bottom = hex(p.tokens.get('--spine-bottom'))
+  return top && bottom ? [mix(top, bottom, 1 / 3), mix(top, bottom, 2 / 3)] : null
+}
+
 /**
  * What sits on what. The ratios are the ones the design already aimed at:
  * body text at 7, the dimmed labels near it, and the faint ones a step
@@ -112,8 +176,8 @@ const PAIRS = [
   ['--accent-line', '--panel', 4.2, 'accent text and strokes on a panel'],
   ['--on-accent', '--accent', 4.5, 'a label on a filled accent button'],
   ['--on-danger', '--danger', 4.5, 'a label on the remove button'],
-  ['--ink-dim', '--spine-top', 4, 'the module name on the darker end of the rack ear'],
-  ['--ink-faint', '--spine-bottom', 3.5, 'the module id on the rack ear'],
+  ['--spine-ink', EAR, 4, 'the module name on the rack ear'],
+  ['--spine-ink-faint', EAR, 3.5, 'the module id and presets glyph on the rack ear'],
   ['--knob-pointer', '--knob-cap', 3, 'the pointer line on a knob cap'],
   ['--key-black', '--key-white', 4.5, 'the sharps against the naturals'],
 ]
@@ -122,13 +186,13 @@ console.log('\ncontrast')
 for (const p of palettes) {
   const worst = []
   for (const [fg, bg, min, what] of PAIRS) {
-    const a = hex(p.tokens.get(fg) ?? '')
-    const b = hex(p.tokens.get(bg) ?? '')
-    if (!a || !b) {
+    const a = hex(resolve(p, fg))
+    const backs = bg === EAR ? earBacks(p) : [hex(resolve(p, bg))]
+    if (!a || !backs || backs.some((b) => !b)) {
       check(`${p.theme}/${p.mode}: ${fg} on ${bg} is a plain colour`, false, 'not a hex value')
       continue
     }
-    const ratio = contrast(a, b)
+    const ratio = Math.min(...backs.map((b) => contrast(a, b)))
     if (ratio < min) worst.push(`${what} ${ratio.toFixed(2)}:1 < ${min}`)
   }
   check(`${p.theme}/${p.mode} is readable`, worst.length === 0, worst.join('; '))

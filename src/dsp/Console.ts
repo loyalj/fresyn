@@ -3,6 +3,7 @@ import { LiveLoudness } from './Loudness'
 import { DelayModule } from './modules/Delay'
 import { ReverbModule } from './modules/Reverb'
 import type { DspModule } from './modules/types'
+import { tauStep } from './util'
 import type { Console, Eq3 } from '../song/types'
 
 /**
@@ -43,7 +44,7 @@ class Glide {
   }
 }
 
-const glideK = (sampleRate: number) => 1 - Math.exp(-1 / (GLIDE_S * sampleRate))
+const glideK = (sampleRate: number) => tauStep(GLIDE_S * sampleRate)
 
 /**
  * A console EQ: a low shelf at 200 Hz, a bell at 1 kHz and a high shelf at
@@ -185,7 +186,7 @@ export class Limiter {
     this.minAt = new Float64Array(this.window)
     this.box = new Float64Array(this.window).fill(1)
     this.boxSum = this.window
-    this.release = 1 - Math.exp(-1 / (RELEASE_S * sampleRate))
+    this.release = tauStep(RELEASE_S * sampleRate)
   }
 
   /** Working, as a gain: 1 when it is doing nothing. */

@@ -1,6 +1,7 @@
 import { DcBlocker } from '../DcBlocker'
 import { DelayLine, OnePole } from '../DelayLine'
 import { Smoothed } from '../Smoothed'
+import { clamp, expCv } from '../util'
 import { DspModule } from './types'
 
 const P_PITCH = 0
@@ -68,8 +69,7 @@ export class ResonatorModule extends DspModule {
   process(slots: Float32Array) {
     const input = slots[this.ins[IN_SIGNAL]]
 
-    const cv = slots[this.ins[IN_CV]] * this.params[P_CV_AMOUNT]
-    const pitch = clampPitch(this.params[P_PITCH] * Math.pow(2, cv))
+    const pitch = clampPitch(expCv(this.params[P_PITCH], slots[this.ins[IN_CV]], this.params[P_CV_AMOUNT]))
 
     this.length.set(this.loopFor(pitch, this.params[P_DAMPING]))
     const samples = this.length.next()
@@ -116,7 +116,7 @@ export class ResonatorModule extends DspModule {
  * angle of its response there: positive lags, negative leads.
  */
 function onePoleDelay(w: number, damping: number) {
-  const d = damping < 0 ? 0 : damping > 0.98 ? 0.98 : damping
+  const d = clamp(damping, 0, 0.98)
   return Math.atan2(d * Math.sin(w), 1 - d * Math.cos(w)) / w
 }
 
@@ -127,6 +127,11 @@ function dcBlockerDelay(w: number, r: number) {
   return -lead / w
 }
 
+/**
+ * Not `clamp`: a NaN here comes out as the lowest pitch rather than passing
+ * through, because a NaN pitch would become a NaN delay length and the line
+ * would read from nowhere.
+ */
 function clampPitch(pitch: number) {
   if (!(pitch >= MIN_PITCH)) return MIN_PITCH
   return pitch > MAX_PITCH ? MAX_PITCH : pitch

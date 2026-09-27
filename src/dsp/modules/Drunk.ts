@@ -1,3 +1,4 @@
+import { expCv, pulseSamples } from '../util'
 import { DspModule, EdgeDetector } from './types'
 
 const P_RATE = 0
@@ -12,8 +13,6 @@ const IN_RATE = 1
 const OUT_BI = 0
 const OUT_UNI = 1
 const OUT_TRIG = 2
-
-const TRIG_SECONDS = 0.002
 
 /**
  * A drunk walk: a value that wanders.
@@ -54,7 +53,7 @@ export class DrunkModule extends DspModule {
 
   prepare() {
     const sr = this.ctx.sampleRate
-    this.trigLength = Math.max(1, Math.round(TRIG_SECONDS * sr))
+    this.trigLength = pulseSamples(sr)
     this.period = sr / Math.max(1e-3, this.params[P_RATE])
   }
 
@@ -70,7 +69,7 @@ export class DrunkModule extends DspModule {
         this.period = Math.max(1, this.since)
       }
     } else {
-      const rate = this.params[P_RATE] * Math.pow(2, slots[this.ins[IN_RATE]] * this.params[P_RATE_AMOUNT])
+      const rate = expCv(this.params[P_RATE], slots[this.ins[IN_RATE]], this.params[P_RATE_AMOUNT])
       this.phase += rate / sr
       if (this.phase >= 1) {
         this.phase -= Math.floor(this.phase)

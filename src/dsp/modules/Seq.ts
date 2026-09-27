@@ -1,3 +1,4 @@
+import { pulseSamples } from '../util'
 import { DspModule, EdgeDetector, type Metering } from './types'
 
 const STEPS = 8
@@ -19,9 +20,6 @@ const OUT_GATE = 1
 const OUT_VEL = 2
 const OUT_CLK = 3
 const OUT_END = 4
-
-/** The End pulse, matching the burst generator's. */
-const END_SECONDS = 0.002
 
 /**
  * Eight steps of control voltage, with a level for each.
@@ -70,7 +68,7 @@ export class SeqModule extends DspModule implements Metering {
   private endPulse = 1
 
   prepare() {
-    this.endPulse = Math.max(1, Math.round(END_SECONDS * this.ctx.sampleRate))
+    this.endPulse = pulseSamples(this.ctx.sampleRate)
     this.interval = this.nominal()
     this.step(0)
   }

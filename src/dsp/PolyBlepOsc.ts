@@ -1,4 +1,18 @@
+import { clamp } from './util'
+
 export type Waveform = 'saw' | 'pulse' | 'tri' | 'sine'
+
+/**
+ * The waveforms in the order the Wave and Shape switches step through them.
+ *
+ * The one list both sides read: the oscillator and the LFO turn a switch
+ * position into a waveform with it, and `defs.ts` labels the switch from it,
+ * so the panel can never name a wave the DSP does not play at that position.
+ * It lives here rather than in `defs.ts` because the worklet bundles the DSP
+ * and nothing else -- the definitions reach into this file, never the other
+ * way, and the audio thread stays free of anything the UI brings with it.
+ */
+export const WAVEFORMS: Waveform[] = ['saw', 'pulse', 'tri', 'sine']
 
 /**
  * Band-limited oscillator. The BLEP correction is not optional: a naive
@@ -279,8 +293,4 @@ function blampBefore(u: number): number {
 function blampAfter(u: number): number {
   const x = u - 1
   return (-x * x * x) / 3
-}
-
-function clamp(v: number, lo: number, hi: number) {
-  return v < lo ? lo : v > hi ? hi : v
 }

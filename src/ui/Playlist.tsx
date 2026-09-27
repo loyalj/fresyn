@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Transport } from '../audio/Transport'
 import { markersOf, placementAt, playlistBars } from '../song/edit'
 import { barTicks, type Song } from '../song/types'
@@ -112,30 +112,63 @@ export function Playlist({
   // from the width of the grid, because the grid also holds the column of
   // pattern names down its left -- scaling across the whole of it put the
   // playhead most of a bar early, and on top of the labels at the start.
+  //
+  // Measured once per layout rather than once per frame: after every render,
+  // which is when cells come and go, and whenever the grid changes size.
+  // Both are offsets within the grid, so scrolling it does not change them.
+  const cellGeometry = useRef<{ left: number; perBar: number } | null>(null)
+  const measureCells = useCallback(() => {
+    const grid = gridRef.current
+    const cells = grid?.querySelectorAll('.playlist-cell')
+    if (!grid || !cells || cells.length < 2) {
+      cellGeometry.current = null
+      return
+    }
+    const origin = grid.getBoundingClientRect().left
+    const first = cells[0].getBoundingClientRect()
+    // The gap between cells is a stylesheet's business, so it is read
+    // rather than repeated here.
+    cellGeometry.current = {
+      left: first.left - origin,
+      perBar: cells[1].getBoundingClientRect().left - first.left,
+    }
+  }, [])
+  useLayoutEffect(measureCells)
+  useEffect(() => {
+    const grid = gridRef.current
+    if (!grid) return
+    const watch = new ResizeObserver(measureCells)
+    watch.observe(grid)
+    return () => watch.disconnect()
+  }, [measureCells])
+
+  // The loop runs only while the transport plays. Stopped, the head is hidden
+  // once and nothing is drawn until the next Play.
   useEffect(() => {
     let raf = 0
     const draw = () => {
+      raf = 0
       const head = headRef.current
-      const grid = gridRef.current
       const state = transport.state
-      if (head && grid) {
-        const cells = grid.querySelectorAll('.playlist-cell')
-        if (!state.playing || cells.length < 2) {
+      const at = cellGeometry.current
+      if (head) {
+        if (!state.playing || !at) {
           head.style.display = 'none'
         } else {
-          const origin = grid.getBoundingClientRect().left
-          const first = cells[0].getBoundingClientRect()
-          // The gap between cells is a stylesheet's business, so it is read
-          // rather than repeated here.
-          const perBar = cells[1].getBoundingClientRect().left - first.left
           head.style.display = 'block'
-          head.style.transform = `translateX(${first.left - origin + (state.tick / barRef.current) * perBar}px)`
+          head.style.transform = `translateX(${at.left + (state.tick / barRef.current) * at.perBar}px)`
         }
       }
-      raf = requestAnimationFrame(draw)
+      if (state.playing) raf = requestAnimationFrame(draw)
     }
-    raf = requestAnimationFrame(draw)
-    return () => cancelAnimationFrame(raf)
+    draw()
+    const unsubscribe = transport.subscribe(() => {
+      if (!raf) raf = requestAnimationFrame(draw)
+    })
+    return () => {
+      unsubscribe()
+      cancelAnimationFrame(raf)
+    }
   }, [transport])
 
   /** The bar under a point on the page, read off the cell there. */

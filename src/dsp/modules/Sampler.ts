@@ -1,4 +1,5 @@
 import { Smoothed } from '../Smoothed'
+import { clamp, pulseSamples } from '../util'
 import { DspModule, EdgeDetector } from './types'
 
 const P_START = 0
@@ -16,9 +17,6 @@ const IN_PITCH = 1
 const OUT_L = 0
 const OUT_R = 1
 const OUT_END = 2
-
-/** How long the End pulse stays up, matching the Burst's and the Envelope's. */
-const END_SECONDS = 0.002
 
 /**
  * Plays a piece of audio the rack did not make.
@@ -49,10 +47,7 @@ export class SamplerModule extends DspModule {
   /** Read position, in source frames, fractional. */
   private pos = 0
   private ending = 0
-  private readonly endPulse = Math.max(
-    1,
-    Math.round(END_SECONDS * this.ctx.sampleRate),
-  )
+  private readonly endPulse = pulseSamples(this.ctx.sampleRate)
   private readonly invSampleRate = 1 / this.ctx.sampleRate
   private level!: Smoothed
 
@@ -111,7 +106,9 @@ export class SamplerModule extends DspModule {
 
     // Source frames per output sample. The rate ratio is what keeps a 44.1 kHz
     // file at its own pitch on a 48 kHz rack; Speed and the Pitch jack are the
-    // musical part on top of it.
+    // musical part on top of it. Written out rather than as `expCv`, which
+    // would multiply Speed by the CV before the rate ratio instead of after:
+    // the same number, but not to the last bit, and renders are held to that.
     const step =
       sample.rate *
       this.invSampleRate *
@@ -132,7 +129,7 @@ export class SamplerModule extends DspModule {
 
     const i = Math.floor(this.pos)
     const frac = this.pos - i
-    const a = i < 0 ? 0 : i > last ? last : i
+    const a = clamp(i, 0, last)
     const b = a < last ? a + 1 : a
     const left = sample.channels[0]
     // A mono file answers both jacks with the same signal, so a patch wired
@@ -155,8 +152,4 @@ export class SamplerModule extends DspModule {
 
     slots[this.outs[OUT_END]] = this.ending > 0 ? 1 : 0
   }
-}
-
-function clamp(v: number, lo: number, hi: number) {
-  return v < lo ? lo : v > hi ? hi : v
 }

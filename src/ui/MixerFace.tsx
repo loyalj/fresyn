@@ -2,8 +2,9 @@ import { useEffect, useRef } from 'react'
 import { MIXER_CHANNELS } from '../patch/defs'
 import type { ModuleDef } from '../patch/types'
 import { useEngine } from './EngineContext'
-import { Knob } from './Knob'
-import { FALL, scale } from './meter'
+import { FALL, fillBar, scale } from './meter'
+import { useFace } from './useFace'
+import { useFallingMeter } from './useFallingMeter'
 
 interface Props {
   def: ModuleDef
@@ -26,16 +27,13 @@ const BARS = MIXER_CHANNELS.length + 1
  */
 export function MixerFace({ def, moduleId, valueOf, onChange }: Props) {
   const engine = useEngine()
-  const byId = Object.fromEntries(def.params.map((p) => [p.id, p]))
+  const { read, control } = useFace(def, valueOf, onChange)
   /** A mute or solo, which is stored as a number and read as a state. */
-  const isOn = (id: string) => (valueOf(id) ?? byId[id].default) >= 0.5
+  const isOn = (id: string) => read(id) >= 0.5
   const toggle = (id: string) => onChange(id, isOn(id) ? 0 : 1)
 
   const bars = useRef<(HTMLDivElement | null)[]>([])
-  /** The newest peak per bar, consumed and cleared by the draw loop. */
-  const incoming = useRef(new Float32Array(BARS))
-  /** What each bar is currently showing, which is what falls. */
-  const shown = useRef(new Float32Array(BARS))
+  const feed = useFallingMeter(FALL, (i: number, v) => fillBar(bars.current[i], v))
 
   /** The loudness readout, written to directly like the bars are. */
   const lufsRef = useRef<HTMLSpanElement>(null)
@@ -46,7 +44,7 @@ export function MixerFace({ def, moduleId, valueOf, onChange }: Props) {
     return engine.onLevels((levels) => {
       const next = levels[moduleId]
       if (!next) return
-      incoming.current.set(next.subarray(0, BARS))
+      for (let i = 0; i < BARS; i++) feed(i, scale(next[i] ?? 0))
       // Short-term, the three-second reading, because it is the one steady
       // enough to read while a sound plays and the one a target is set in.
       // Only written when the figure it shows changes.
@@ -63,33 +61,7 @@ export function MixerFace({ def, moduleId, valueOf, onChange }: Props) {
         }
       }
     })
-  }, [engine, moduleId])
-
-  useEffect(() => {
-    let raf = 0
-    const tick = () => {
-      for (let i = 0; i < BARS; i++) {
-        // Each reported peak is taken once. Left in place it would hold the
-        // bar up for good once the rack went quiet.
-        const target = scale(incoming.current[i])
-        incoming.current[i] = 0
-
-        const fallen = shown.current[i] - FALL
-        const v = target > fallen ? target : fallen > 0 ? fallen : 0
-        if (v === shown.current[i]) continue
-        shown.current[i] = v
-
-        // Clipped rather than scaled: scaling the fill would squash its
-        // gradient, so a bar at a tenth would be painted in the colour the
-        // top of the scale is meant to be reserved for.
-        const el = bars.current[i]
-        if (el) el.style.clipPath = `inset(${(1 - v) * 100}% 0 0 0)`
-      }
-      raf = requestAnimationFrame(tick)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-  }, [])
+  }, [engine, moduleId, feed])
 
   return (
     <div className="mixer">
@@ -97,16 +69,8 @@ export function MixerFace({ def, moduleId, valueOf, onChange }: Props) {
         <div className="strip" key={n}>
           <div className="strip-body">
             <div className="strip-knobs">
-              <Knob
-                spec={byId[`pan${n}`]}
-                value={valueOf(`pan${n}`) ?? byId[`pan${n}`].default}
-                onChange={(v) => onChange(`pan${n}`, v)}
-              />
-              <Knob
-                spec={byId[`level${n}`]}
-                value={valueOf(`level${n}`) ?? byId[`level${n}`].default}
-                onChange={(v) => onChange(`level${n}`, v)}
-              />
+              {control(`pan${n}`)}
+              {control(`level${n}`)}
             </div>
             <Meter index={i} bars={bars} />
           </div>
@@ -139,11 +103,7 @@ export function MixerFace({ def, moduleId, valueOf, onChange }: Props) {
       <div className="strip strip-master">
         <div className="strip-body">
           <div className="strip-knobs">
-            <Knob
-              spec={byId.master}
-              value={valueOf('master') ?? byId.master.default}
-              onChange={(v) => onChange('master', v)}
-            />
+            {control('master')}
           </div>
           <Meter index={BARS - 1} bars={bars} />
         </div>

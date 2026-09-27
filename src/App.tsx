@@ -9,30 +9,27 @@ import {
 } from 'react'
 import { AudioEngine, type EngineStatus } from './audio/AudioEngine'
 import { Transport } from './audio/Transport'
-import { renderVariation } from './audio/render'
-import { normalize } from './audio/normalize'
-import { renderSong, renderStems, type StemMix } from './audio/renderSong'
 import { SampleLibrary } from './audio/SampleLibrary'
 import { askToPersist, pruneSamples } from './audio/sampleStore'
-import { encodeWav } from './audio/wav'
-import { peakEnvelope } from './audio/waveform'
-import { makeZip, type ZipEntry } from './audio/zip'
-import { MODE_LATCH } from './dsp/modules/Gate'
+import { useBounce } from './hooks/useBounce'
+import { useCableDrag } from './hooks/useCableDrag'
+import { loadInitialDoc, useDocument } from './hooks/useDocument'
+import { useProjectFiles } from './hooks/useProjectFiles'
+import { useStableActions } from './hooks/useStableActions'
+import { useTakes } from './hooks/useTakes'
+import { useTriggers } from './hooks/useTriggers'
 import { useInput } from './input/useInput'
-import { canUseFileHandles, pickFileToOpen, pickFileToSave, writeFile } from './patch/fileAccess'
-import { defOf, MODULE_GROUPS, modulesByGroup } from './patch/defs'
+import { defOf } from './patch/defs'
 import { defaultPatch } from './patch/defaultPatch'
 import { sampleIdsIn, sampleIdsInLocalStorage } from './patch/sampleRefs'
-import { type Template } from './patch/library'
+import type { Template } from './patch/library'
 import {
   addModule,
   addModuleAfter,
   addModuleBefore,
-  cableInto,
   connect,
   copyModules,
   disconnect,
-  disconnectAt,
   initialValues,
   moveModule,
   nextModuleId,
@@ -47,26 +44,8 @@ import {
   type ModuleClip,
   type PortRef,
 } from './patch/edit'
-import { canRedo, canUndo, commit, initHistory, redo, undo, type History } from './patch/history'
-import { toStored } from './patch/serialize'
-import { getSample, type StoredSample } from './audio/sampleStore'
-import {
-  downloadBytes,
-  downloadProject,
-  PROJECT_FILE_KINDS,
-  projectFile,
-  projectKindOf,
-  downloadRack,
-  loadDock,
-  loadLocalProject,
-  readPatchFile,
-  readProjectFile,
-  saveDock,
-  saveLocalProject,
-  slug,
-  loadPrefs,
-  savePrefs,
-} from './patch/storage'
+import { canRedo, canUndo } from './patch/history'
+import { loadDock, saveDock, saveLocalProject, loadPrefs, savePrefs } from './patch/storage'
 import { noteTarget, type NoteTarget } from './song/bind'
 import { songEnd } from './song/schedule'
 import {
@@ -80,36 +59,44 @@ import {
   patternOnly,
   removePattern,
   removeTrack,
-  setPatternNotes,
   updateTrack,
   consoleOf,
   trackMix,
 } from './song/edit'
 import { toStoredProject, type Rack } from './song/project'
-import { BENCH_TRACK, benchSong, type Song } from './song/types'
+import { BENCH_TRACK, benchSong } from './song/types'
 import type { Patch, PatchModule } from './patch/types'
 import { Cables, type DragState } from './ui/Cables'
 import { nearestCable, type JackGeometry } from './ui/cableGeometry'
 import { EngineContext } from './ui/EngineContext'
 import { SampleContext } from './ui/SampleContext'
-import { DEFAULT_EXPORT, ExportPanel, type ExportSettings } from './ui/ExportPanel'
 import { UnitBoundary } from './ui/ErrorBoundary'
-import { jackKey, type JackKind } from './ui/Jack'
-import { LibraryDialog } from './ui/LibraryDialog'
+import { jackKey } from './ui/Jack'
 import { ModuleSearch, type SearchPick } from './ui/ModuleSearch'
 import { KnobHelpCard, KnobHelpOn } from './ui/KnobHelp'
 import { saveMyPatch } from './patch/myLibrary'
-import { MenuBar, type MenuDef } from './ui/Menu'
+import { MenuBar } from './ui/Menu'
+import { buildMenus } from './ui/menus'
 import { RackIndex } from './ui/RackIndex'
 import { rackShares } from './ui/rackLayout'
-import { RackUnit } from './ui/RackUnit'
+import { RackUnit, type RackActions } from './ui/RackUnit'
 import { SongDock } from './ui/SongDock'
-import { TakeList, type Take } from './ui/TakeList'
-import { THEMES } from './ui/theme'
 import { ThemeContext, useAppearanceState } from './ui/ThemeContext'
-import { TriggerButton } from './ui/TriggerButton'
 import { UnitSpine } from './ui/UnitSpine'
 import { useRackDrag } from './ui/useRackDrag'
+
+/**
+ * The library, fetched when it is first opened. It carries every template
+ * and instrument the app ships -- the largest thing in it, and something a
+ * session that never opens the library has no use for.
+ *
+ * Kept in state once it arrives rather than put behind Suspense, which holds
+ * a resolved boundary back for a few hundred milliseconds before it shows.
+ */
+type LibraryDialogType = typeof import('./ui/LibraryDialog').LibraryDialog
+let libraryLoading: Promise<LibraryDialogType> | undefined
+const loadLibrary = () =>
+  (libraryLoading ??= import('./ui/LibraryDialog').then((m) => m.LibraryDialog))
 
 /** Must match the flip transition in app.css. */
 const FLIP_MS = 420
@@ -139,83 +126,32 @@ const CABLE_HUES = [0, 45, 90, 160, 200, 250, 290, 330]
  */
 let moduleClip: ModuleClip | null = null
 const AUTOSAVE_MS = 400
-/** Edits to the same control inside this window fold into one undo step. */
-const COALESCE_MS = 600
-const WAVE_COLUMNS = 200
-
-/** Everything undo and save are concerned with. */
-interface Doc {
-  name: string
-  /**
-   * The arrangement: tracks, patterns and where they are placed.
-   *
-   * In the document rather than beside it so that drawing a note is an
-   * ordinary edit: it undoes, it redoes, and it autosaves through exactly the
-   * machinery every other edit already goes through.
-   */
-  song: Song
-  /** One rack per track id. Every track in the song has one. */
-  racks: Record<string, Rack>
-}
-
-/** `3 tracks`, `1 sample`: for notices that say what went into a file. */
-function countOf(n: number, noun: string) {
-  return `${n} ${noun}${n === 1 ? '' : 's'}`
-}
-
-/**
- * A rack for every track, whatever the file said.
- *
- * A project whose rack for some track could not be read still opens, with an
- * empty rack on that track -- losing one sound is survivable, and losing the
- * whole arrangement because one module was renamed is not.
- */
-function fillRacks(song: Song, racks: Record<string, Rack>): Record<string, Rack> {
-  const out = { ...racks }
-  for (const t of song.tracks) {
-    if (out[t.id]) continue
-    const patch = defaultPatch()
-    out[t.id] = { patch, values: initialValues(patch) }
-  }
-  return out
-}
 
 export default function App() {
-  // Restore the last session, or start from the stock rack.
-  const initialDoc = useMemo<Doc>(() => {
-    const loaded = loadLocalProject()
-    const song = loaded?.song ?? benchSong()
-    return {
-      name: loaded?.name ?? 'Untitled',
-      song,
-      racks: fillRacks(song, loaded?.racks ?? {}),
-    }
-  }, [])
-
-  const [history, setHistory] = useState<History<Doc>>(() => initHistory(initialDoc))
-  const { name, song, racks } = history.present
-
-  /**
-   * Which track is on the bench.
-   *
-   * Outside the history on purpose: looking at a different rack is not an
-   * edit, and a Ctrl+Z that moved you to another track before undoing the
-   * thing you were looking at would be worse than useless.
-   */
-  const [selected, setSelected] = useState(() => initialDoc.song.tracks[0]?.id ?? BENCH_TRACK)
-  /** Undo can take a track away underneath the selection, so this is checked. */
-  const trackId = song.tracks.some((t) => t.id === selected)
-    ? selected
-    : (song.tracks[0]?.id ?? BENCH_TRACK)
-  const { patch, values } = racks[trackId] ?? initialDoc.racks[BENCH_TRACK]
-  /** A patch is named on its track: the one name is both. */
-  const patchName = song.tracks.find((t) => t.id === trackId)?.name ?? 'Untitled'
-
-  /** Which pattern the roll is writing into. Also a view, also not an edit. */
-  const [patternId, setPatternId] = useState(() => initialDoc.song.patterns[0]?.id ?? 'main')
-  const activePattern = song.patterns.some((p) => p.id === patternId)
-    ? patternId
-    : (song.patterns[0]?.id ?? 'main')
+  const initialDoc = useMemo(loadInitialDoc, [])
+  const {
+    history,
+    name,
+    song,
+    racks,
+    trackId,
+    setSelected,
+    patch,
+    values,
+    patchName,
+    activePattern,
+    setPatternId,
+    commitDoc,
+    breakCoalesce,
+    editRack,
+    editPatch,
+    editSong,
+    setParam,
+    setParams,
+    setNotes,
+    stepBack,
+    stepForward,
+  } = useDocument(initialDoc)
 
   // The engine outlives any single patch; it is rewired, never replaced.
   const engine = useMemo(
@@ -271,25 +207,6 @@ export default function App() {
    */
   const [autosave, setAutosave] = useState<'ok' | 'failed' | 'dismissed'>('ok')
 
-  /**
-   * Rendered takes, by the track they were rendered from.
-   *
-   * Per track because a take is a recording of one rack: with one list for
-   * the whole app, switching tracks left the last track's takes on the new
-   * track's recorder, and downloading them named the files after whichever
-   * track happened to be on the bench. Outside the history like the
-   * selection -- a take is a file waiting to be written, not an edit.
-   */
-  const [takeSets, setTakeSets] = useState<Readonly<Record<string, Take[]>>>({})
-  const [playing, setPlaying] = useState<number | null>(null)
-  const [exporting, setExporting] = useState<string | null>(null)
-  /**
-   * Each track's render settings. Up here rather than in the recorder's
-   * panel, which is remounted whenever the rack changes track or the
-   * recorder moves, and forgot them every time.
-   */
-  const [exportSettings, setExportSettings] = useState<Readonly<Record<string, ExportSettings>>>({})
-
   const [appearance, setAppearance] = useAppearanceState()
 
   /**
@@ -300,7 +217,6 @@ export default function App() {
 
   const [flipped, setFlipped] = useState(false)
   const [turning, setTurning] = useState(false)
-  const [drag, setDrag] = useState<DragState | null>(null)
   const [geometry, setGeometry] = useState<JackGeometry>({})
   const [hoveredCable, setHoveredCable] = useState<string | undefined>()
   /**
@@ -308,14 +224,19 @@ export default function App() {
    * menu would scroll the page and a bound key would play the instrument.
    */
   const [menuOpen, setMenuOpen] = useState(false)
-  /**
-   * The Trigger whose key cap is waiting to be told which key, if any. One at
-   * a time: the wait takes the whole keyboard, so a second cap listening at
-   * the same time would be two panels racing for the same press.
-   */
-  const [listening, setListening] = useState<string | null>(null)
   /** True while the patch library is up, which takes the keyboard with it. */
   const [libraryOpen, setLibraryOpen] = useState(false)
+  const [LibraryDialog, setLibraryDialog] = useState<LibraryDialogType | null>(null)
+  const openLibrary = useCallback(() => {
+    setLibraryOpen(true)
+    loadLibrary().then(
+      (dialog) => setLibraryDialog(() => dialog),
+      () => {
+        setLibraryOpen(false)
+        setNotice('Could not load the library -- check the connection and try again')
+      },
+    )
+  }, [])
   /**
    * The module search, when it is up: for adding a module, or, carrying the
    * loose end of a cable let go of over empty rack, for finishing that cable.
@@ -339,17 +260,6 @@ export default function App() {
   const [cableColors, setCableColors] = useState<'signal' | 'module'>(
     () => loadPrefs().cableColors ?? 'signal',
   )
-  /**
-   * Triggers currently latched open, by module id.
-   *
-   * Latch is the one fire mode that is not in the DSP. It changes what a press
-   * means rather than what the gate carries, so the audio thread sees nothing
-   * but an ordinary held gate that the release never arrives for. Keeping it
-   * here is also what lets the button light up: a Trigger has no inputs, so
-   * the key and the button are the only things that can open one, and both of
-   * them are already on this side.
-   */
-  const [latched, setLatched] = useState<ReadonlySet<string>>(() => new Set())
   /** Matches the width at which the rack itself drops to a single column. */
   const [narrow, setNarrow] = useState(false)
   const [dock, setDock] = useState(() => loadDock() ?? { open: false, height: 300 })
@@ -374,20 +284,7 @@ export default function App() {
   const [looping, setLooping] = useState(true)
 
   const rackRef = useRef<HTMLDivElement>(null)
-  const fileRef = useRef<HTMLInputElement>(null)
-  const projectRef = useRef<HTMLInputElement>(null)
-  /** The file on disk this project was opened from or last saved to, where the browser allows one. */
-  const projectHandle = useRef<FileSystemFileHandle | null>(null)
-  const trackFileRef = useRef<HTMLInputElement>(null)
   const jackEls = useRef(new Map<string, HTMLElement>())
-  const dragRef = useRef<DragState | null>(null)
-  const stopPreview = useRef<(() => void) | null>(null)
-  const coalesceKey = useRef<string | null>(null)
-  const coalesceAt = useRef(0)
-
-  useEffect(() => {
-    dragRef.current = drag
-  })
 
   useEffect(() => {
     const q = window.matchMedia('(max-width: 760px)')
@@ -395,22 +292,6 @@ export default function App() {
     sync()
     q.addEventListener('change', sync)
     return () => q.removeEventListener('change', sync)
-  }, [])
-
-  // --- document ------------------------------------------------------
-  /**
-   * `key` groups rapid edits to the same control into one undo step. Whether
-   * to coalesce is decided out here rather than inside the updater, because
-   * StrictMode runs updaters twice and the second pass would see its own
-   * timestamp and reach a different answer.
-   */
-  const commitDoc = useCallback((next: (doc: Doc) => Doc, key?: string) => {
-    const now = Date.now()
-    const fold =
-      key !== undefined && key === coalesceKey.current && now - coalesceAt.current < COALESCE_MS
-    coalesceKey.current = key ?? null
-    coalesceAt.current = now
-    setHistory((h) => commit(h, next(h.present), fold))
   }, [])
 
   /**
@@ -458,41 +339,6 @@ export default function App() {
     void pruneSamples(keep).catch(() => {})
   }, [initialDoc])
 
-  /** Change the rack on the bench, whichever track that is. */
-  const editRack = useCallback(
-    (fn: (rack: Rack) => Rack, key?: string) => {
-      commitDoc((doc) => {
-        const current = doc.racks[trackId]
-        if (!current) return doc
-        const next = fn(current)
-        if (next === current) return doc
-        return { ...doc, racks: { ...doc.racks, [trackId]: next } }
-      }, key)
-    },
-    [commitDoc, trackId],
-  )
-
-  const editPatch = useCallback(
-    (fn: (p: Patch) => Patch) => {
-      editRack((rack) => {
-        const next = fn(rack.patch)
-        if (next === rack.patch) return rack
-        return { patch: next, values: reconcileValues(next, rack.values) }
-      })
-    },
-    [editRack],
-  )
-
-  const editSong = useCallback(
-    (fn: (s: Song) => Song, key?: string) => {
-      commitDoc((doc) => {
-        const next = fn(doc.song)
-        return next === doc.song ? doc : { ...doc, song: next }
-      }, key)
-    },
-    [commitDoc],
-  )
-
   /**
    * Point a Sampler at a file, or at nothing.
    *
@@ -527,47 +373,6 @@ export default function App() {
   // the patch stays put, and one edit lands when the drag is let go.
   const rack = useRackDrag(moduleIds, rackRef, onReorder)
 
-  const setParam = useCallback(
-    (moduleId: string, paramId: string, value: number) => {
-      const key = `${moduleId}.${paramId}`
-      // Keyed by track as well, so dragging the same knob on two racks does
-      // not fold into one step of undo.
-      editRack(
-        (rack) => ({ ...rack, values: { ...rack.values, [key]: value } }),
-        `param:${trackId}.${key}`,
-      )
-    },
-    [editRack, trackId],
-  )
-
-  /**
-   * Several knobs on one module in a single edit, for a control that moves
-   * more than one at once -- a Macro handle is a window edge and a value.
-   * Keyed by which knobs they are, so a drag folds into one step of undo the
-   * way a knob drag does, where setting them one at a time would alternate
-   * keys and leave a step for every pixel.
-   */
-  const setParams = useCallback(
-    (moduleId: string, changes: Record<string, number>) => {
-      const ids = Object.keys(changes).sort()
-      editRack(
-        (rack) => {
-          const values = { ...rack.values }
-          for (const id of ids) values[`${moduleId}.${id}`] = changes[id]
-          return { ...rack, values }
-        },
-        `params:${trackId}.${moduleId}.${ids.join(',')}`,
-      )
-    },
-    [editRack, trackId],
-  )
-
-  const setNotes = useCallback(
-    (notes: Parameters<typeof setPatternNotes>[2]) =>
-      editSong((s) => setPatternNotes(s, activePattern, notes)),
-    [editSong, activePattern],
-  )
-
   // --- tracks and patterns -------------------------------------------
   const onAddTrack = useCallback(() => {
     const id = nextTrackId(song)
@@ -579,7 +384,7 @@ export default function App() {
     }))
     // Selected straight away: adding a track is asking to work on it.
     setSelected(id)
-  }, [commitDoc, song])
+  }, [commitDoc, song, setSelected])
 
   /**
    * Take a track out, rack and all. No confirm: it undoes like any other
@@ -639,18 +444,8 @@ export default function App() {
       editSong((s) => (from ? duplicatePattern(s, from, id, name) : addPattern(s, id, name)))
       setPatternId(id)
     },
-    [editSong, song],
+    [editSong, song, setPatternId],
   )
-
-  const stepBack = useCallback(() => {
-    coalesceKey.current = null
-    setHistory(undo)
-  }, [])
-
-  const stepForward = useCallback(() => {
-    coalesceKey.current = null
-    setHistory(redo)
-  }, [])
 
   // --- engine sync ---------------------------------------------------
   /**
@@ -699,13 +494,6 @@ export default function App() {
   }, [engine, trackId])
 
   /**
-   * What the transport plays.
-   *
-   * The roll loops the pattern being written, on its own; the playlist plays
-   * the arrangement. Derived as a song either way, so there is one code path
-   * rather than a mode inside the transport.
-   */
-  /**
    * The section the playlist is looping, by its marker's tick, or null for
    * the whole song. Chosen by clicking a marker; only the playlist plays it.
    */
@@ -714,6 +502,13 @@ export default function App() {
     () => (dockView !== 'roll' && section !== null ? sectionAt(song, section) : null),
     [dockView, section, song],
   )
+  /**
+   * What the transport plays.
+   *
+   * The roll loops the pattern being written, on its own; the playlist plays
+   * the arrangement. Derived as a song either way, so there is one code path
+   * rather than a mode inside the transport.
+   */
   const inContext = dockView === 'roll' && rollPlays === 'song'
   const playSong = useMemo(
     () => (dockView === 'roll' && !inContext ? patternOnly(song, activePattern) : song),
@@ -779,18 +574,23 @@ export default function App() {
   /**
    * Which module in each track's rack that track's notes are played on.
    *
-   * Recomputed whenever a rack changes, because adding a Keyboard to one that
-   * had none is exactly the moment the roll should start working.
+   * Worked out whenever a rack changes, because adding a Keyboard to one that
+   * had none is exactly the moment the roll should start working -- but only
+   * a new answer makes a new map. A knob turn replaces the racks too, and a
+   * map rebuilt for it would redraw the whole dock for nothing.
    */
-  const targets = useMemo(() => {
-    const map = new Map<string, NoteTarget>()
-    for (const track of song.tracks) {
-      const rack = racks[track.id]
-      const target = rack && noteTarget(rack.patch)
-      if (target) map.set(track.id, target)
-    }
-    return map
-  }, [song.tracks, racks])
+  const targetList = song.tracks.flatMap((track) => {
+    const rack = racks[track.id]
+    const target = rack && noteTarget(rack.patch)
+    return target ? [[track.id, target] as const] : []
+  })
+  const targetKey = targetList.map(([id, t]) => `${id}:${t.kind}:${t.module}`).join('|')
+  const targets = useMemo(
+    () => new Map<string, NoteTarget>(targetList),
+    // `targetList` is rebuilt every render; `targetKey` is what it says.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [targetKey],
+  )
 
   useEffect(() => {
     transport.setTargets(targets)
@@ -981,16 +781,6 @@ export default function App() {
     setPicked(new Set(pasted))
   }, [editRack])
 
-  const onAssignKey = useCallback(
-    (id: string, code: string | undefined) => editPatch((p) => setModuleKey(p, id, code)),
-    [editPatch],
-  )
-
-  const onRemoveModule = useCallback(
-    (id: string) => editPatch((p) => removeModule(p, id)),
-    [editPatch],
-  )
-
   /**
    * Copy a unit, with its knobs where they are standing rather than where the
    * patch last wrote them.
@@ -1033,12 +823,6 @@ export default function App() {
     [editRack],
   )
 
-  const onMoveModule = useCallback(
-    (id: string, delta: number) => editPatch((p) => moveModule(p, id, delta)),
-    [editPatch],
-  )
-
-  /** Replace the whole rack: knobs come from the incoming patch, not kept. */
   /**
    * Put a whole different rack on the bench.
    *
@@ -1048,7 +832,7 @@ export default function App() {
    */
   const applyPatch = useCallback(
     (next: Patch, trackName: string, preset?: Record<string, number>) => {
-      coalesceKey.current = null
+      breakCoalesce()
       const values = preset ? { ...initialValues(next), ...preset } : initialValues(next)
       commitDoc((doc) => ({
         ...doc,
@@ -1059,8 +843,28 @@ export default function App() {
         racks: { ...doc.racks, [trackId]: { patch: next, values } },
       }))
     },
-    [commitDoc, trackId],
+    [commitDoc, breakCoalesce, trackId],
   )
+
+  const files = useProjectFiles({
+    name,
+    song,
+    racks,
+    patch,
+    values,
+    patchName,
+    engine,
+    samples,
+    commitDoc,
+    breakCoalesce,
+    applyPatch,
+    setSelected,
+    setPatternId,
+    setNotice,
+  })
+  const bounce = useBounce({ song, racks, name, engine, samples, transport, setNotice })
+  const { recorder } = useTakes({ engine, samples, trackId, patchName, patch, values, setNotice })
+  const triggers = useTriggers(engine, trackId, patch, values)
 
   /**
    * No confirmation step any more. It used to be a button on the bar, where a
@@ -1069,9 +873,8 @@ export default function App() {
    * edit, so the way back is the way back from everything else.
    */
   const onNew = useCallback(() => {
-    coalesceKey.current = null
-    // A new project has not been saved anywhere, so its first Save asks where.
-    projectHandle.current = null
+    breakCoalesce()
+    files.forgetHandle()
     const patch = defaultPatch()
     const song = benchSong()
     commitDoc(() => ({
@@ -1082,7 +885,7 @@ export default function App() {
     setSelected(BENCH_TRACK)
     setPatternId(song.patterns[0].id)
     setNotice('Started a new project -- Ctrl+Z to undo')
-  }, [commitDoc])
+  }, [commitDoc, breakCoalesce, files, setSelected, setPatternId])
 
   /**
    * Start from a template.
@@ -1120,408 +923,18 @@ export default function App() {
 
   /** Show or hide the music dock, from the View menu or Ctrl+M. */
   const toggleDock = useCallback(() => setDock((d) => ({ ...d, open: !d.open })), [])
-
-  /**
-   * Export the rack: a patch on its own, or a bundle when a Sampler is in it.
-   *
-   * The audio is fetched from storage rather than re-encoded from what is
-   * loaded, so what lands in the zip is the file that was dropped in.
-   */
-  /** The audio a set of racks names, fetched from storage as it was dropped in. */
-  const gatherSamples = useCallback(async (patches: readonly Patch[]) => {
-    const ids = [
-      ...new Set(patches.flatMap((p) => p.modules.map((m) => m.sample?.id)).filter(Boolean)),
-    ] as string[]
-    const found: StoredSample[] = []
-    for (const id of ids) {
-      const s = await getSample(id)
-      if (s) found.push(s)
-    }
-    return { found, missing: ids.length - found.length }
-  }, [])
-
-  const onExportPatch = useCallback(async () => {
-    const { found, missing } = await gatherSamples([patch])
-    downloadRack(toStored(patchName, patch, values), found)
-    // Said every time rather than only when something is wrong, because what
-    // is in the file -- and what is not -- is the whole difference between
-    // this and saving the project.
-    setNotice(
-      missing > 0
-        ? `Saved patch ${patchName} without ${missing} missing sample(s)`
-        : `Saved patch ${patchName}: this track's sound${found.length ? ` and ${countOf(found.length, 'sample')}` : ''}, no notes`,
-    )
-  }, [patchName, patch, values, gatherSamples])
-
-  /**
-   * The whole piece: the arrangement, every rack, and all of the audio.
-   *
-   * Where the browser can hold on to a file, Save writes back into the one
-   * this project came from or was last saved to, and only Save As -- or a
-   * project that has never been to disk -- asks where. Elsewhere every save
-   * is a download, as it always was.
-   */
-  const onSaveProject = useCallback(
-    async (saveAs = false) => {
-      const patches = song.tracks.flatMap((t) => racks[t.id]?.patch ?? [])
-      const { found, missing } = await gatherSamples(patches)
-      const stored = toStoredProject(name, song, racks)
-      const summary =
-        missing > 0
-          ? `without ${missing} missing sample(s)`
-          : `${countOf(song.tracks.length, 'track')}, ${countOf(song.patterns.length, 'pattern')}${found.length ? `, ${countOf(found.length, 'sample')}` : ''}`
-
-      if (!canUseFileHandles) {
-        downloadProject(stored, found)
-        setNotice(`Saved project ${name}: ${summary}`)
-        return
-      }
-
-      const file = projectFile(stored, found)
-      let handle = saveAs ? null : projectHandle.current
-      // A project that has gained or lost its audio since it was last saved
-      // changes form, and zip bytes in a file called .json would be a file
-      // lying about what it is. So it asks where the new one goes, offering
-      // the right name.
-      const changedForm = handle !== null && projectKindOf(handle.name) !== file.kind
-      if (changedForm) handle = null
-      if (!handle) {
-        try {
-          handle = await pickFileToSave(file.filename, [PROJECT_FILE_KINDS[file.kind]])
-        } catch (e) {
-          setNotice(`Could not save: ${(e as Error).message}`)
-          return
-        }
-        if (!handle) return
-      }
-
-      try {
-        await writeFile(handle, file.data)
-      } catch (e) {
-        setNotice(`Could not save ${handle.name}: ${(e as Error).message}`)
-        return
-      }
-      projectHandle.current = handle
-      setNotice(
-        `Saved ${handle.name}: ${summary}${changedForm ? ` -- now a ${file.kind === 'zip' ? 'zip, to carry its audio' : 'plain JSON file'}` : ''}`,
-      )
-    },
-    [name, song, racks, gatherSamples],
-  )
-
-  /**
-   * Bounce the arrangement to a file.
-   *
-   * The transport is stopped first. The bounce runs its own player and would
-   * be correct either way, but the two would be competing for the same thread
-   * and the loop you were listening to would stutter for as long as it took.
-   */
-  const onBounceSong = useCallback(async () => {
-    if (songEnd(song) <= 0) {
-      setNotice('Nothing on the playlist to bounce -- put a pattern in a bar first')
-      return
-    }
-    transport.stop()
-    setNotice('Bouncing...')
-    try {
-      const audio = await renderSong(song, racks, {
-        sampleRate: engine.sampleRate,
-        samples: samples.bank(),
-        onProgress: async (done) => {
-          setNotice(`Bouncing ${Math.round(done * 100)}%`)
-          await nextFrame()
-        },
-      })
-      // 24-bit: a mix is more likely than a one-shot to be mastered or
-      // re-encoded afterwards, and the headroom costs a third of a file that
-      // is already small.
-      downloadBytes(
-        encodeWav([audio.left, audio.right], audio.sampleRate, 24) as BlobPart,
-        `${slug(name)}.wav`,
-        'audio/wav',
-      )
-      setNotice(
-        audio.peak > 1
-          ? `Bounced ${audio.seconds.toFixed(1)}s -- it clips at ${audio.peak.toFixed(2)}, so bring the levels down`
-          : `Bounced ${audio.seconds.toFixed(1)}s, peak ${audio.peak.toFixed(2)}`,
-      )
-    } catch (err) {
-      setNotice(`Bounce failed: ${err instanceof Error ? err.message : String(err)}`)
-    }
-  }, [song, racks, name, engine, samples, transport])
-
-  /** One file per track, so the mix can be rebuilt or re-balanced elsewhere. */
-  /**
-   * Stems, carrying as much of each track's channel as was asked for: the rack
-   * alone, through its strip, or with its reverb and echo as well.
-   */
-  const onBounceStems = useCallback(async (stemMix: StemMix) => {
-    if (songEnd(song) <= 0) {
-      setNotice('Nothing on the playlist to bounce -- put a pattern in a bar first')
-      return
-    }
-    transport.stop()
-    setNotice('Bouncing stems...')
-    try {
-      const stems = await renderStems(song, racks, {
-        stemMix,
-        sampleRate: engine.sampleRate,
-        samples: samples.bank(),
-        onProgress: async (done) => {
-          setNotice(`Bouncing stems ${Math.round(done * 100)}%`)
-          await nextFrame()
-        },
-      })
-      if (stems.length === 0) {
-        setNotice('Every track is muted, so there are no stems to write')
-        return
-      }
-      // Numbered, so they sort into the order the tracks are in rather than
-      // alphabetically -- which is the order anybody will want to line them up.
-      const entries: ZipEntry[] = stems.map((stem, i) => ({
-        name: `${String(i + 1).padStart(2, '0')} ${slug(stem.name)}.wav`,
-        data: encodeWav([stem.audio.left, stem.audio.right], stem.audio.sampleRate, 24),
-      }))
-      downloadBytes(makeZip(entries) as BlobPart, `${slug(name)}-stems.zip`, 'application/zip')
-      setNotice(`Bounced ${stems.length} stem${stems.length === 1 ? '' : 's'}`)
-    } catch (err) {
-      setNotice(`Bounce failed: ${err instanceof Error ? err.message : String(err)}`)
-    }
-  }, [song, racks, name, engine, samples, transport])
-
-  const onOpenProject = useCallback(
-    async (file: File) => {
-      const result = await readProjectFile(file)
-      if ('error' in result) {
-        setNotice(result.error)
-        return false
-      }
-      // Whatever file the last project was saved to is not this one's. The
-      // picker that opened this file hands its own back once this returns.
-      projectHandle.current = null
-      // Audio first, racks second. The other order puts every Sampler through
-      // its missing state on the way to a file in the same zip.
-      for (const s of result.samples ?? []) await samples.addStored(s)
-      if (result.samples?.length) engine.setSamples(samples.records())
-
-      coalesceKey.current = null
-      const loaded = fillRacks(result.song, result.racks)
-      commitDoc(() => ({ name: result.name, song: result.song, racks: loaded }))
-      setSelected(result.song.tracks[0]?.id ?? BENCH_TRACK)
-      setPatternId(result.song.patterns[0]?.id ?? 'main')
-      setNotice(
-        result.warnings.length
-          ? `Opened with ${result.warnings.length} warning(s): ${result.warnings[0]}`
-          : `Opened ${result.name}`,
-      )
-      for (const w of result.warnings) console.warn('[fresyn project]', w)
-      return true
-    },
-    [commitDoc, engine, samples],
-  )
-
-  /**
-   * Choose a project to open. Through the file picker that can hold on to
-   * the file when there is one, so a later Save goes back into it; through
-   * the plain file input otherwise.
-   */
-  const onPickProject = useCallback(async () => {
-    if (!canUseFileHandles) {
-      projectRef.current?.click()
-      return
-    }
-    let picked
-    try {
-      picked = await pickFileToOpen([
-        {
-          description: 'Fresyn project',
-          accept: { 'application/json': ['.json'], 'application/zip': ['.zip'] },
-        },
-      ])
-    } catch (e) {
-      setNotice(`Could not open: ${(e as Error).message}`)
-      return
-    }
-    if (!picked) return
-    if (await onOpenProject(picked.file)) projectHandle.current = picked.handle
-  }, [onOpenProject])
-
-  /**
-   * Bring a patch in from a file: onto the selected track in place of the
-   * sound it has, or onto a track of its own. Either way the arrangement is
-   * left alone -- a patch has no notes in it.
-   */
-  const onImport = useCallback(
-    async (file: File, asTrack: boolean) => {
-      const result = await readPatchFile(file)
-      if ('error' in result) {
-        setNotice(result.error)
-        return
-      }
-      // Audio first, patch second. The other order puts every Sampler in the
-      // rack through its missing state on the way to a file that arrived in
-      // the same zip.
-      for (const s of result.samples ?? []) await samples.addStored(s)
-      if (result.samples?.length) engine.setSamples(samples.records())
-
-      if (asTrack) {
-        coalesceKey.current = null
-        const id = nextTrackId(song)
-        const values = initialValues(result.patch)
-        commitDoc((doc) => ({
-          ...doc,
-          song: addTrack(doc.song, id, result.name),
-          racks: { ...doc.racks, [id]: { patch: result.patch, values } },
-        }))
-        setSelected(id)
-      } else {
-        applyPatch(result.patch, result.name)
-      }
-      setNotice(
-        result.warnings.length
-          ? `Loaded with ${result.warnings.length} warning(s): ${result.warnings[0]}`
-          : asTrack
-            ? `Added ${result.name} as a new track -- Ctrl+Z to undo`
-            : `Loaded ${result.name} onto this track -- Ctrl+Z to undo`,
-      )
-      for (const w of result.warnings) console.warn('[fresyn load]', w)
-    },
-    [applyPatch, commitDoc, song],
-  )
-
-  // --- rendering and audition ----------------------------------------
-  const stop = useCallback(() => {
-    stopPreview.current?.()
-    stopPreview.current = null
-    setPlaying(null)
-  }, [])
-
-  useEffect(() => () => stopPreview.current?.(), [])
-
-  // A take playing belongs to the track it came from; the list it would be
-  // lit in goes away with the track.
-  useEffect(() => stop(), [trackId, stop])
-
-  /** The takes on the bench's recorder: this track's, and no other's. */
-  const takes = takeSets[trackId] ?? []
-  const setTakes = useCallback(
-    (id: string, fn: (prev: Take[]) => Take[]) =>
-      setTakeSets((all) => ({ ...all, [id]: fn(all[id] ?? []) })),
-    [],
-  )
-
-  const onRender = useCallback(
-    async (settings: ExportSettings) => {
-      // Captured at the start: the render takes a while, and a track switched
-      // to half way through is not the one these takes are of.
-      const id = trackId
-      const source = patchName
-      stop()
-      setTakes(id, () => [])
-      setExporting('Rendering')
-
-      try {
-        const rendered: Take[] = []
-        let limited = 0
-        for (let i = 0; i < settings.count; i++) {
-          setExporting(`Take ${i + 1} of ${settings.count}`)
-          // Rendering is synchronous and fast, but a batch still has to let
-          // the page paint between takes or the progress never appears.
-          await nextFrame()
-
-          const take = renderVariation(
-            patch,
-            values,
-            {
-              sampleRate: settings.sampleRate,
-              duration: settings.duration,
-              gateSeconds: settings.gateSeconds,
-              seed: settings.seed,
-              // A take has to contain whatever a Sampler is playing, so the
-              // offline pass gets the same audio the live rack has.
-              samples: samples.bank(),
-            },
-            i,
-            settings.spread,
-          )
-          // Levelled here, before anything is drawn or heard, so the take
-          // you audition is the take that gets saved.
-          const level = normalize(take.left, take.right, take.sampleRate, settings.normalize)
-          if (level.limited) limited++
-          rendered.push({
-            index: i,
-            seed: take.seed,
-            seconds: take.seconds,
-            peak: level.peak,
-            sampleRate: take.sampleRate,
-            left: level.left,
-            right: level.right,
-            envelope: peakEnvelope(level.left, level.right, WAVE_COLUMNS),
-            keep: true,
-            source,
-            bitDepth: settings.bitDepth,
-          })
-        }
-        setTakes(id, () => rendered)
-        setNotice(
-          `Rendered ${rendered.length} take${rendered.length === 1 ? '' : 's'}` +
-            // Said, because the file is quieter than the target it was set to.
-            (limited > 0
-              ? ` -- ${limited} held at -1 dB peak, short of the loudness target`
-              : ''),
-        )
-      } catch (err) {
-        setNotice(`Render failed: ${err instanceof Error ? err.message : String(err)}`)
-      } finally {
-        setExporting(null)
-      }
-    },
-    [patch, values, stop, trackId, patchName, setTakes],
-  )
-
-  const onPlayTake = useCallback(
-    async (index: number) => {
-      const wasPlaying = playing === index
-      stop()
-      if (wasPlaying) return
-
-      const take = takes.find((t) => t.index === index)
-      if (!take) return
-
-      setPlaying(index)
-      stopPreview.current = await engine.preview(
-        take.left,
-        take.right,
-        take.sampleRate,
-        // This also fires when we stop it early, so only clear if the take
-        // that ended is still the one showing as playing.
-        () => setPlaying((p) => (p === index ? null : p)),
-      )
-    },
-    [engine, takes, playing, stop],
-  )
-
-  const onDownloadTakes = useCallback(() => {
-    const kept = takes.filter((t) => t.keep)
-    if (kept.length === 0) return
-
-    // Named after the sound they were rendered from, as it was called then.
-    const base = slug(kept[0].source)
-    const bitDepth = kept[0].bitDepth
-    const files: ZipEntry[] = kept.map((take) => ({
-      name:
-        kept.length === 1
-          ? `${base}.wav`
-          : `${base}_${String(take.index + 1).padStart(2, '0')}.wav`,
-      data: encodeWav([take.left, take.right], take.sampleRate, bitDepth),
-    }))
-
-    if (files.length === 1) downloadBytes(files[0].data, files[0].name, 'audio/wav')
-    else downloadBytes(makeZip(files), `${base}.zip`, 'application/zip')
-    setNotice(`Saved ${files.length} take${files.length === 1 ? '' : 's'}`)
-  }, [takes])
+  const setDockOpen = useCallback((open: boolean) => setDock((d) => ({ ...d, open })), [])
+  const setDockHeight = useCallback((height: number) => setDock((d) => ({ ...d, height })), [])
 
   // --- cables --------------------------------------------------------
+  const cables = useCableDrag({
+    rackRef,
+    patch,
+    geometry,
+    editPatch,
+    onDropLoose: (cable) => setSearch({ cable }),
+  })
+
   const occupied = useMemo(() => {
     const s = new Set<string>()
     for (const c of patch.cables) {
@@ -1533,94 +946,13 @@ export default function App() {
 
   const isOccupied = useCallback((ref: PortRef) => occupied.has(jackKey(ref)), [occupied])
 
-  const isCandidate = useCallback(
-    (_ref: PortRef, kind: JackKind) => drag !== null && kind !== drag.anchorKind,
-    [drag],
-  )
-
-  const cursorIn = (e: { clientX: number; clientY: number }) => {
-    const base = rackRef.current?.getBoundingClientRect()
-    if (!base) return { x: 0, y: 0 }
-    return { x: e.clientX - base.left, y: e.clientY - base.top }
-  }
-
-  const onJackDown = useCallback(
-    (ref: PortRef, kind: JackKind, e: React.PointerEvent) => {
-      e.preventDefault()
-
-      // Right-click clears a jack outright; the context menu is suppressed by
-      // the input layer so the button is free for this.
-      if (e.button === 2) {
-        editPatch((p) => disconnectAt(p, ref))
-        return
-      }
-
-      const cursor = cursorIn(e)
-
-      // Grabbing a patched input pulls that cable out and leaves you holding
-      // the loose end, the way it works on a real panel.
-      if (kind === 'input') {
-        const existing = cableInto(patch, ref)
-        if (existing) {
-          editPatch((p) => disconnect(p, existing.id))
-          setDrag({ anchor: existing.from, anchorKind: 'output', cursor, pulled: true })
-          return
-        }
-      }
-      setDrag({ anchor: ref, anchorKind: kind, cursor })
-    },
-    [patch, editPatch],
-  )
-
-  /**
-   * Patching from the keyboard: Enter or Space on a jack.
-   *
-   * The same cable in hand as a drag, marked as the keyboard's so the
-   * pointer's release does not end it. With nothing in hand, a press picks
-   * a cable up -- pulling it out of a patched input, as grabbing one does.
-   * With a cable in hand, a press on a jack of the other kind plugs it in;
-   * on one of the same kind it starts again from there. Escape puts it down.
-   * As the focus moves between jacks the loose end follows it, so you can
-   * see where it would go.
-   */
-  const onJackKey = useCallback(
-    (ref: PortRef, kind: JackKind, action: 'press' | 'focus') => {
-      const at = geometry[jackKey(ref)]
-      const current = dragRef.current
-      if (action === 'focus') {
-        if (current?.keyboard && at) setDrag({ ...current, cursor: at })
-        return
-      }
-      const cursor = at ?? { x: 0, y: 0 }
-
-      if (current?.keyboard && kind !== current.anchorKind) {
-        setDrag(null)
-        const from = current.anchorKind === 'output' ? current.anchor : ref
-        const to = current.anchorKind === 'output' ? ref : current.anchor
-        editPatch((p) => connect(p, from, to))
-        return
-      }
-
-      if (kind === 'input') {
-        const existing = cableInto(patch, ref)
-        if (existing) {
-          editPatch((p) => disconnect(p, existing.id))
-          setDrag({ anchor: existing.from, anchorKind: 'output', cursor, pulled: true, keyboard: true })
-          return
-        }
-      }
-      setDrag({ anchor: ref, anchorKind: kind, cursor, keyboard: true })
-    },
-    [geometry, patch, editPatch],
-  )
-
   // Cables are hit-tested here rather than through SVG hit areas, so that a
   // jack a cable happens to cross stays usable. The jack gets first refusal.
   const onRackPointerDown = useCallback(
     (e: React.PointerEvent) => {
-      if (!flipped || drag || rack.id) return
+      if (!flipped || cables.dragRef.current || rack.id) return
       if (e.target instanceof Element && e.target.closest(PANEL_CONTROLS)) return
-      const hit = nearestCable(patch, geometry, cursorIn(e))
+      const hit = nearestCable(patch, geometry, cables.cursorIn(e))
       if (!hit) return
       // Alt+click gives a cable a colour of its own, and the next one each
       // time, round to none; a plain click still pulls it out.
@@ -1632,12 +964,12 @@ export default function App() {
       }
       editPatch((p) => disconnect(p, hit.id))
     },
-    [flipped, drag, rack.id, patch, geometry, editPatch],
+    [flipped, cables, rack.id, patch, geometry, editPatch],
   )
 
   const onRackPointerMove = useCallback(
     (e: React.PointerEvent) => {
-      if (!flipped || drag || rack.id) {
+      if (!flipped || cables.dragRef.current || rack.id) {
         setHoveredCable(undefined)
         return
       }
@@ -1645,163 +977,12 @@ export default function App() {
         setHoveredCable(undefined)
         return
       }
-      setHoveredCable(nearestCable(patch, geometry, cursorIn(e))?.id)
+      setHoveredCable(nearestCable(patch, geometry, cables.cursorIn(e))?.id)
     },
-    [flipped, drag, rack.id, patch, geometry],
+    [flipped, cables, rack.id, patch, geometry],
   )
 
-  const dragging = drag !== null
-  useEffect(() => {
-    if (!dragging) return
-
-    const move = (e: PointerEvent) => {
-      const cursor = cursorIn(e)
-      setDrag((d) => (d ? { ...d, cursor } : d))
-    }
-
-    const up = (e: PointerEvent) => {
-      const current = dragRef.current
-      setDrag(null)
-      if (!current) return
-
-      // Hit-test through the document rather than capturing the pointer:
-      // capture would deliver pointerup to the jack the drag started on.
-      const el = document.elementFromPoint(e.clientX, e.clientY)
-      const target = el instanceof Element ? el.closest('.jack') : null
-      // A new cable let go of over nothing: offer the modules that could take
-      // it, the way the fastest racks work -- the cable stays in hand until a
-      // module is chosen for it, and Escape drops it. One pulled out of a jack
-      // and let go of is unplugged, which is what that gesture has always been.
-      // A cable picked up from the keyboard and clicked away is put down:
-      // offering modules for it would be answering a question nobody asked.
-      if (!(target instanceof HTMLElement)) {
-        if (!current.pulled && !current.keyboard) setSearch({ cable: current })
-        return
-      }
-
-      const kind = target.dataset.kind as JackKind | undefined
-      const ref = { module: target.dataset.module ?? '', port: target.dataset.port ?? '' }
-      if (!kind || kind === current.anchorKind) return
-
-      const from = current.anchorKind === 'output' ? current.anchor : ref
-      const to = current.anchorKind === 'output' ? ref : current.anchor
-      editPatch((p) => connect(p, from, to))
-    }
-
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up)
-    return () => {
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
-    }
-  }, [dragging, editPatch])
-
-  // --- transport -----------------------------------------------------
-  /**
-   * Open one module's gate. There is no rack-wide gate any more: a Trigger is
-   * played by its own key or its own button, and everything else in the rack
-   * hears it down a cable.
-   *
-   * The gate is recorded before the context is asked to open, not after. The
-   * other way round it would land behind an await, and a key tapped while the
-   * context was still booting would open a gate whose release had already gone
-   * past -- a note stuck on from the first press of the session.
-   */
-  const gateOn = useCallback(
-    (moduleId: string) => {
-      engine.gate(true, trackId, moduleId)
-      void engine.start()
-    },
-    [engine, trackId],
-  )
-
-  const gateOff = useCallback(
-    (moduleId: string) => engine.gate(false, trackId, moduleId),
-    [engine, trackId],
-  )
-
-  /** A module's Mode, as the knob currently reads. */
-  const modeOf = useCallback(
-    (moduleId: string) => Math.round(values[`${moduleId}.mode`] ?? 0),
-    [values],
-  )
-
-  /**
-   * A press, wherever it came from. The key and the panel button both arrive
-   * here so that a mode means the same thing however the Trigger was played.
-   */
-  const press = useCallback(
-    (moduleId: string) => {
-      if (modeOf(moduleId) !== MODE_LATCH) {
-        gateOn(moduleId)
-        return
-      }
-      const on = latched.has(moduleId)
-      if (on) gateOff(moduleId)
-      else gateOn(moduleId)
-      setLatched((prev) => {
-        const next = new Set(prev)
-        if (on) next.delete(moduleId)
-        else next.add(moduleId)
-        return next
-      })
-    },
-    [latched, modeOf, gateOn, gateOff],
-  )
-
-  /** The release. A latched Trigger ignores it; that is the whole of latch. */
-  const release = useCallback(
-    (moduleId: string) => {
-      if (modeOf(moduleId) === MODE_LATCH) return
-      gateOff(moduleId)
-    },
-    [modeOf, gateOff],
-  )
-
-  /**
-   * Let go of anything latched that has no business still being open: a
-   * Trigger taken out of the rack, or one whose Mode has been turned off
-   * latch while it was on. Without this the gate would be held by a module
-   * nobody can reach any more, and the only way out would be a reload.
-   */
-  useEffect(() => {
-    if (latched.size === 0) return
-    const stale = [...latched].filter(
-      (id) => !patch.modules.some((m) => m.id === id) || modeOf(id) !== MODE_LATCH,
-    )
-    if (stale.length === 0) return
-    for (const id of stale) gateOff(id)
-    setLatched((prev) => {
-      const next = new Set(prev)
-      for (const id of stale) next.delete(id)
-      return next
-    })
-  }, [latched, patch.modules, modeOf, gateOff])
-
-  /**
-   * The rack's playable keys, read off the patch.
-   *
-   * Grouped by key before they become bindings because the input layer holds
-   * one binding per key: two Triggers on W have to arrive as a single binding
-   * that opens both gates, or the second would quietly replace the first.
-   */
-  const triggerKeys = useMemo(() => {
-    const byCode = new Map<string, string[]>()
-    for (const m of patch.modules) {
-      if (!defOf(m.type).keyed || !m.key) continue
-      byCode.set(m.key, [...(byCode.get(m.key) ?? []), m.id])
-    }
-    return [...byCode].map(([code, ids]) => ({
-      code,
-      onDown: () => {
-        for (const id of ids) press(id)
-      },
-      onUp: () => {
-        for (const id of ids) release(id)
-      },
-    }))
-  }, [patch.modules, press, release])
-
+  // --- input ---------------------------------------------------------
   // All browser input is captured in one place: without it a held key
   // auto-repeats past the handler and scrolls the page, and right-click opens
   // the browser menu over the rack.
@@ -1818,16 +999,16 @@ export default function App() {
   useInput({
     // A cap waiting for a key needs the keyboard to itself, or the key being
     // assigned would fire whatever it is already bound to on the way past.
-    suspended: menuOpen || libraryOpen || search !== null || listening !== null,
+    suspended: menuOpen || libraryOpen || search !== null || triggers.listening !== null,
     bindings: [
       { code: FLIP_KEY, onDown: flip },
-      ...triggerKeys,
+      ...triggers.triggerKeys,
       { code: 'KeyK', ctrl: true, onDown: () => setSearch({}) },
       { code: 'KeyM', ctrl: true, onDown: toggleDock },
       // Taken from the browser, whose own Save would write out the page.
-      { code: 'KeyS', ctrl: true, onDown: () => void onSaveProject() },
-      { code: 'KeyS', ctrl: true, shift: true, onDown: () => void onSaveProject(true) },
-      { code: 'KeyO', ctrl: true, onDown: () => void onPickProject() },
+      { code: 'KeyS', ctrl: true, onDown: () => void files.saveProject() },
+      { code: 'KeyS', ctrl: true, shift: true, onDown: () => void files.saveProject(true) },
+      { code: 'KeyO', ctrl: true, onDown: () => void files.pickProject() },
       // The rack's copy and paste stand aside while the roll has the keyboard:
       // there, the same keys copy notes.
       { code: 'KeyC', ctrl: true, onDown: () => rackHasKeys() && copyPicked() },
@@ -1837,10 +1018,7 @@ export default function App() {
         onDown: () => {
           // A cable picked up from the keyboard is put down before anything
           // else Escape might mean.
-          if (dragRef.current?.keyboard) {
-            setDrag(null)
-            return
-          }
+          if (cables.putDownKeyboard()) return
           if (rackHasKeys()) setPicked(new Set())
         },
       },
@@ -1848,6 +1026,67 @@ export default function App() {
       { code: 'KeyZ', ctrl: true, shift: true, onDown: stepForward },
       { code: 'KeyY', ctrl: true, onDown: stepForward },
     ],
+  })
+
+  // --- the units -----------------------------------------------------
+  /**
+   * What the units ask of the rack, as one object that never changes. Each
+   * handler runs the newest version of itself, so the units can be memoized
+   * without any of them acting on a patch that has since moved on.
+   */
+  const rackActions = useStableActions<RackActions>({
+    grab: (id, e) => {
+      // Shift+click on an ear adds the unit to what is picked or takes it
+      // out, and moves nothing. A plain press picks it alone and is also the
+      // start of a drag, as it always was.
+      if (e.shiftKey) {
+        e.preventDefault()
+        setPicked((prev) => {
+          const next = new Set(prev)
+          if (next.has(id)) next.delete(id)
+          else next.add(id)
+          return next
+        })
+        return
+      }
+      // Taking hold of one of several picked units takes hold of them all,
+      // and they move as one block. Any other unit is picked alone and moves
+      // alone.
+      if (picked.has(id) && picked.size > 1) {
+        rack.start(id, e, [...picked])
+        return
+      }
+      if (e.button === 0) setPicked(new Set([id]))
+      rack.start(id, e)
+    },
+    gate: (id, open) => (open ? triggers.gateOn(id) : triggers.gateOff(id)),
+    press: (id) => triggers.press(id),
+    release: (id) => triggers.release(id),
+    listen: (id, on) => triggers.setListening(on ? id : null),
+    assignKey: (id, code) => editPatch((p) => setModuleKey(p, id, code)),
+    bypass: (id) => editPatch((p) => toggleBypass(p, id)),
+    applyPreset: (id, params) => {
+      const m = patch.modules.find((x) => x.id === id)
+      if (!m) return
+      // One edit, so a preset loaded by mistake is one Ctrl+Z.
+      editRack((r) => {
+        const next = { ...r.values }
+        for (const spec of defOf(m.type).params) {
+          const v = params[spec.id]
+          if (typeof v === 'number' && Number.isFinite(v)) next[`${id}.${spec.id}`] = v
+        }
+        return { ...r, values: next }
+      })
+    },
+    setParam: (id, paramId, v) => setParam(id, paramId, v),
+    setParams: (id, changes) => setParams(id, changes),
+    sample: (id, file) => void onSample(id, file),
+    register: registerJack,
+    jackDown: (ref, kind, e) => cables.onJackDown(ref, kind, e),
+    jackKey: (ref, kind, action) => cables.onJackKey(ref, kind, action),
+    move: (id, delta) => editPatch((p) => moveModule(p, id, delta)),
+    duplicate: onDuplicateModule,
+    remove: (id) => editPatch((p) => removeModule(p, id)),
   })
 
   /**
@@ -1858,186 +1097,68 @@ export default function App() {
    */
   const recorderHost = patch.modules.find((m) => m.type === 'rec')?.id
   /** The rack renders in the drag's order, which is a list of ids. */
-  const byId = new Map(patch.modules.map((m) => [m.id, m]))
+  const byId = useMemo(() => new Map(patch.modules.map((m) => [m.id, m])), [patch])
   /** How the half-width units split their rows, in the order they are shown. */
-  const shares = rackShares(rack.order, (id) => {
-    const m = byId.get(id)
-    return m && defOf(m.type)
-  })
-  const recorder = (
-    <>
-      <ExportPanel
-        settings={exportSettings[trackId] ?? DEFAULT_EXPORT}
-        onSettings={(next) => setExportSettings((all) => ({ ...all, [trackId]: next }))}
-        onExport={(s) => void onRender(s)}
-        busy={exporting}
-        hasTakes={takes.length > 0}
-      />
-      <TakeList
-        takes={takes}
-        playing={playing}
-        onPlay={(i) => void onPlayTake(i)}
-        onToggleKeep={(i) =>
-          setTakes(trackId, (prev) => prev.map((t) => (t.index === i ? { ...t, keep: !t.keep } : t)))
-        }
-        onKeepAll={(keep) => setTakes(trackId, (prev) => prev.map((t) => ({ ...t, keep })))}
-        onExport={onDownloadTakes}
-        onDiscard={() => {
-          stop()
-          setTakes(trackId, () => [])
-        }}
-      />
-    </>
+  const shares = useMemo(
+    () =>
+      rackShares(rack.order, (id) => {
+        const m = byId.get(id)
+        return m && defOf(m.type)
+      }),
+    [rack.order, byId],
+  )
+  const indexEntries = useMemo(
+    () =>
+      rack.order.flatMap((id) => {
+        const m = byId.get(id)
+        return m ? [{ id, name: defOf(m.type).name, bypassed: !!m.bypass }] : []
+      }),
+    [rack.order, byId],
   )
 
-  const menus: MenuDef[] = [
-    {
-      // The whole piece: every track, the patch on each, the notes, the
-      // arrangement, and the audio the Samplers play.
-      label: 'Project',
-      items: [
-        { kind: 'action', label: 'New project', onSelect: onNew },
-        { kind: 'action', label: 'Open project...', shortcut: 'Ctrl+O', onSelect: () => void onPickProject() },
-        { kind: 'action', label: 'Save project', shortcut: 'Ctrl+S', onSelect: () => void onSaveProject() },
-        { kind: 'action', label: 'Save project as...', shortcut: 'Ctrl+Shift+S', onSelect: () => void onSaveProject(true) },
-        { kind: 'separator' },
-        // The piece as audio. The project above is the piece as something you
-        // can still change your mind about.
-        { kind: 'action', label: 'Bounce song...', onSelect: () => void onBounceSong() },
-        {
-          kind: 'submenu',
-          label: 'Bounce stems',
-          // What each stem carries of its channel. Never the master bus: see
-          // `StemMix`.
-          items: [
-            { kind: 'action', label: 'Channel only (EQ, pan, fader)...', onSelect: () => void onBounceStems('channel') },
-            { kind: 'action', label: 'Channel and sends (with reverb, delay)...', onSelect: () => void onBounceStems('sends') },
-            { kind: 'action', label: 'Raw rack output...', onSelect: () => void onBounceStems('raw') },
-          ],
-        },
-      ],
+  const menus = buildMenus({
+    newProject: onNew,
+    openProject: () => void files.pickProject(),
+    saveProject: (saveAs) => void files.saveProject(saveAs),
+    bounceSong: () => void bounce.bounceSong(),
+    bounceStems: (mix) => void bounce.bounceStems(mix),
+    canUndo: canUndo(history),
+    canRedo: canRedo(history),
+    undo: stepBack,
+    redo: stepForward,
+    canCopy: picked.size > 0,
+    canPaste: hasClip,
+    copy: copyPicked,
+    paste: pasteClip,
+    openLibrary,
+    openPatch: () => files.pickPatch(false),
+    addPatchAsTrack: () => files.pickPatch(true),
+    savePatch: () => void files.exportPatch(),
+    saveToLibrary: () => void onSaveToLibrary(),
+    search: () => setSearch({}),
+    addModule: onAddModule,
+    flipped,
+    flip,
+    dockOpen: dock.open,
+    toggleDock,
+    knobHelp,
+    setKnobHelp: (on) => {
+      setKnobHelp(on)
+      savePrefs({ knobHelp: on })
     },
-    {
-      label: 'Edit',
-      items: [
-        {
-          kind: 'action', label: 'Undo', shortcut: 'Ctrl+Z',
-          disabled: !canUndo(history), onSelect: stepBack,
-        },
-        {
-          kind: 'action', label: 'Redo', shortcut: 'Ctrl+Shift+Z',
-          disabled: !canRedo(history), onSelect: stepForward,
-        },
-        { kind: 'separator' },
-        {
-          kind: 'action', label: 'Copy modules', shortcut: 'Ctrl+C',
-          disabled: picked.size === 0, onSelect: copyPicked,
-        },
-        {
-          kind: 'action', label: 'Paste modules', shortcut: 'Ctrl+V',
-          disabled: !hasClip, onSelect: pasteClip,
-        },
-      ],
+    compact,
+    setCompact: (on) => {
+      setCompact(on)
+      savePrefs({ compact: on })
     },
-    {
-      // One sound: the rack on the selected track and any audio it plays.
-      // What you send somebody when you mean "here is a sound" rather than
-      // "here is the piece", and what carries a sound from one project into
-      // the next. No notes travel with it.
-      label: 'Patch',
-      items: [
-        { kind: 'action', label: 'Library...', onSelect: () => setLibraryOpen(true) },
-        { kind: 'separator' },
-        { kind: 'action', label: 'Open patch...', onSelect: () => fileRef.current?.click() },
-        {
-          kind: 'action',
-          label: 'Add patch as track...',
-          onSelect: () => trackFileRef.current?.click(),
-        },
-        { kind: 'action', label: 'Save patch...', onSelect: () => void onExportPatch() },
-        { kind: 'action', label: 'Save to library', onSelect: () => void onSaveToLibrary() },
-      ],
+    cableColors,
+    setCableColors: (by) => {
+      setCableColors(by)
+      savePrefs({ cableColors: by })
     },
-    {
-      label: 'Modules',
-      // Grouped from the catalogue itself, so a new module appears here
-      // without this file knowing anything about it.
-      items: [
-        { kind: 'action' as const, label: 'Search...', shortcut: 'Ctrl+K', onSelect: () => setSearch({}) },
-        { kind: 'separator' as const },
-        ...MODULE_GROUPS.map((g) => ({
-          kind: 'submenu' as const,
-          label: g.name,
-          items: modulesByGroup(g.id).map((def) => ({
-            kind: 'action' as const,
-            label: def.name,
-            onSelect: () => onAddModule(def.type),
-          })),
-        })),
-      ],
-    },
-    {
-      label: 'View',
-      items: [
-        { kind: 'toggle', label: 'Back panel', shortcut: 'F', checked: flipped, onSelect: flip },
-        // Beside the rack's flip, because the dock is the other half of the
-        // room: the button on the dock's bar does the same thing.
-        { kind: 'toggle', label: 'Music', shortcut: 'Ctrl+M', checked: dock.open, onSelect: toggleDock },
-        {
-          kind: 'toggle',
-          label: 'Knob help',
-          checked: knobHelp,
-          onSelect: () => {
-            setKnobHelp(!knobHelp)
-            savePrefs({ knobHelp: !knobHelp })
-          },
-        },
-        {
-          kind: 'toggle',
-          label: 'Compact rack',
-          checked: compact,
-          onSelect: () => {
-            setCompact(!compact)
-            savePrefs({ compact: !compact })
-          },
-        },
-        {
-          kind: 'submenu',
-          label: 'Cable colours',
-          items: (['signal', 'module'] as const).map((by) => ({
-            kind: 'toggle' as const,
-            label: by === 'signal' ? 'By signal' : 'By module',
-            checked: cableColors === by,
-            onSelect: () => {
-              setCableColors(by)
-              savePrefs({ cableColors: by })
-            },
-          })),
-        },
-        { kind: 'separator' },
-        {
-          kind: 'submenu',
-          label: 'Theme',
-          items: THEMES.map((t) => ({
-            kind: 'toggle' as const,
-            label: t.name,
-            checked: appearance.theme === t.id,
-            onSelect: () => setAppearance({ ...appearance, theme: t.id }),
-          })),
-        },
-        {
-          kind: 'submenu',
-          label: 'Appearance',
-          items: (['dark', 'light'] as const).map((m) => ({
-            kind: 'toggle' as const,
-            label: m === 'dark' ? 'Dark' : 'Light',
-            checked: appearance.mode === m,
-            onSelect: () => setAppearance({ ...appearance, mode: m }),
-          })),
-        },
-      ],
-    },
-  ]
+    appearance,
+    setAppearance,
+  })
 
   /**
    * Scroll a unit into view and pick it, so it is lit when it arrives.
@@ -2047,12 +1168,12 @@ export default function App() {
    * Tab started again from the top of the page. On the unit, the next Tab is
    * its first control.
    */
-  const jumpTo = (id: string, focus = false) => {
+  const jumpTo = useCallback((id: string, focus = false) => {
     const el = document.querySelector<HTMLElement>(`.unit-flip[data-module="${CSS.escape(id)}"]`)
     el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     if (focus) el?.focus({ preventScroll: true })
     setPicked(new Set([id]))
-  }
+  }, [])
 
   return (
     <>
@@ -2068,49 +1189,7 @@ export default function App() {
 
           <MenuBar menus={menus} onOpenChange={setMenuOpen} collapsed={narrow} />
 
-          <input
-            ref={fileRef}
-            className="patch-file"
-            type="file"
-            // A bundle is a zip, and a rack with a Sampler in it exports as one.
-            accept="application/json,.json,application/zip,.zip"
-            hidden
-            onChange={(e) => {
-              const file = e.target.files?.[0]
-              if (file) void onImport(file, false)
-              e.target.value = ''
-            }}
-          />
-
-          <input
-            ref={trackFileRef}
-            className="track-file"
-            type="file"
-            accept="application/json,.json,application/zip,.zip"
-            hidden
-            onChange={(e) => {
-              const file = e.target.files?.[0]
-              if (file) void onImport(file, true)
-              e.target.value = ''
-            }}
-          />
-
-          {/* Its own input rather than a mode on the one above: the two accept
-              the same extensions, and a single control that sometimes replaced
-              one rack and sometimes the whole project would be the kind of
-              thing you only find out about afterwards. */}
-          <input
-            ref={projectRef}
-            className="project-file"
-            type="file"
-            accept="application/json,.json,application/zip,.zip"
-            hidden
-            onChange={(e) => {
-              const file = e.target.files?.[0]
-              if (file) void onOpenProject(file)
-              e.target.value = ''
-            }}
-          />
+          {files.fileInputs}
 
           {/* Every unit in the rack by name, for getting to one without
               scrolling a long rack to look for it. Choosing one scrolls it into
@@ -2126,14 +1205,11 @@ export default function App() {
             }}
           >
             <option value="">Jump to…</option>
-            {rack.order.flatMap((id) => {
-              const m = byId.get(id)
-              return m ? [
-                <option key={id} value={id}>
-                  {id} · {defOf(m.type).name}
-                </option>,
-              ] : []
-            })}
+            {indexEntries.map((entry) => (
+              <option key={entry.id} value={entry.id}>
+                {entry.id} · {entry.name}
+              </option>
+            ))}
           </select>
         </div>
       </header>
@@ -2210,7 +1286,7 @@ export default function App() {
           )}
         </div>
 
-        {libraryOpen && (
+        {libraryOpen && LibraryDialog && (
           <LibraryDialog onPick={onPickTemplate} onClose={() => setLibraryOpen(false)} onSave={onSaveToLibrary} />
         )}
 
@@ -2226,10 +1302,7 @@ export default function App() {
           tracks={song.tracks}
           trackId={trackId}
           onSelectTrack={setSelected}
-          entries={rack.order.flatMap((id) => {
-            const m = byId.get(id)
-            return m ? [{ id, name: defOf(m.type).name, bypassed: !!m.bypass }] : []
-          })}
+          entries={indexEntries}
           picked={picked}
           onJump={jumpTo}
           flipped={flipped}
@@ -2255,92 +1328,22 @@ export default function App() {
               onPointerLeave={() => setHoveredCable(undefined)}
             >
               {rack.order.flatMap((id) => byId.get(id) ?? []).map((m) => (
-                <UnitBoundary key={m.id} moduleId={m.id} onRemove={() => onRemoveModule(m.id)}>
-                <RackUnit
-                  def={defOf(m.type)}
-                  moduleId={m.id}
-                  flipped={flipped}
-                  share={shares.get(m.id)}
-                  onGrab={(e) => {
-                    // Shift+click on an ear adds the unit to what is picked or
-                    // takes it out, and moves nothing. A plain press picks it
-                    // alone and is also the start of a drag, as it always was.
-                    if (e.shiftKey) {
-                      e.preventDefault()
-                      setPicked((prev) => {
-                        const next = new Set(prev)
-                        if (next.has(m.id)) next.delete(m.id)
-                        else next.add(m.id)
-                        return next
-                      })
-                      return
-                    }
-                    // Taking hold of one of several picked units takes hold of
-                    // them all, and they move as one block. Any other unit is
-                    // picked alone and moves alone.
-                    if (picked.has(m.id) && picked.size > 1) {
-                      rack.start(m.id, e, [...picked])
-                      return
-                    }
-                    if (e.button === 0) setPicked(new Set([m.id]))
-                    rack.start(m.id, e)
-                  }}
-                  onGate={(open) => (open ? gateOn(m.id) : gateOff(m.id))}
-                  dragging={rack.group.includes(m.id)}
-                  selected={picked.has(m.id)}
-                  bypassed={!!m.bypass}
-                  onBypass={defOf(m.type).bypass ? () => editPatch((p) => toggleBypass(p, m.id)) : undefined}
-                  presets={{
-                    current: () =>
-                      Object.fromEntries(
-                        defOf(m.type).params.map((spec) => [spec.id, values[`${m.id}.${spec.id}`] ?? spec.default]),
-                      ),
-                    // One edit, so a preset loaded by mistake is one Ctrl+Z.
-                    onApply: (params) =>
-                      editRack((r) => {
-                        const next = { ...r.values }
-                        for (const spec of defOf(m.type).params) {
-                          const v = params[spec.id]
-                          if (typeof v === 'number' && Number.isFinite(v)) next[`${m.id}.${spec.id}`] = v
-                        }
-                        return { ...r, values: next }
-                      }),
-                  }}
-                  faceExtra={
-                    defOf(m.type).trigger ? (
-                      <TriggerButton
-                        onDown={() => press(m.id)}
-                        onUp={() => release(m.id)}
-                        latched={latched.has(m.id)}
-                        // Only a keyed module is handed the assignment props, so
-                        // the cap appears on the Trigger and nowhere else.
-                        {...(defOf(m.type).keyed
-                          ? {
-                              keyCode: m.key,
-                              listening: listening === m.id,
-                              onListen: (on: boolean) => setListening(on ? m.id : null),
-                              onAssign: (code: string | undefined) => onAssignKey(m.id, code),
-                            }
-                          : {})}
-                      />
-                    ) : m.id === recorderHost ? (
-                      recorder
-                    ) : undefined
-                  }
-                  valueOf={(paramId) => values[`${m.id}.${paramId}`]}
-                  onChange={(paramId, v) => setParam(m.id, paramId, v)}
-                  onChanges={(changes) => setParams(m.id, changes)}
-                  sample={m.sample}
-                  onSample={(file) => void onSample(m.id, file)}
-                  isOccupied={isOccupied}
-                  isCandidate={isCandidate}
-                  register={registerJack}
-                  onJackDown={onJackDown}
-                  onJackKey={onJackKey}
-                  onMove={(delta) => onMoveModule(m.id, delta)}
-                  onDuplicate={() => onDuplicateModule(m.id)}
-                  onRemove={() => onRemoveModule(m.id)}
-                />
+                <UnitBoundary key={m.id} moduleId={m.id} onRemove={() => rackActions.remove(m.id)}>
+                  <RackUnit
+                    def={defOf(m.type)}
+                    module={m}
+                    values={values}
+                    flipped={flipped}
+                    share={shares.get(m.id)}
+                    dragging={rack.group.includes(m.id)}
+                    selected={picked.has(m.id)}
+                    latched={triggers.latched.has(m.id)}
+                    listening={triggers.listening === m.id}
+                    recorder={m.id === recorderHost ? recorder : undefined}
+                    isOccupied={isOccupied}
+                    isCandidate={cables.isCandidate}
+                    actions={rackActions}
+                  />
                 </UnitBoundary>
               ))}
 
@@ -2348,7 +1351,8 @@ export default function App() {
                 <Cables
                   patch={patch}
                   geometry={geometry}
-                  drag={search?.cable ?? drag}
+                  drag={search?.cable ?? cables.drag}
+                  cursor={cables.cursor}
                   hovered={hoveredCable}
                   colorBy={cableColors}
                 />
@@ -2359,10 +1363,6 @@ export default function App() {
         </ThemeContext.Provider>
         </KnobHelpOn.Provider>
 
-        {/* The panel in hand. It rides outside the rack because the rack sets a
-            perspective, and a perspective is a containing block -- a fixed
-            element inside one is positioned against it rather than the
-            viewport, which is not what "follows the pointer" means. */}
         {/* The roll. Outside the rack for the same reason the ghost below is:
             the rack sets a perspective, and a perspective is a containing block,
             so a fixed element inside one is positioned against the rack rather
@@ -2395,12 +1395,16 @@ export default function App() {
             looping={looping}
             onLooping={setLooping}
             open={dock.open}
-            onOpenChange={(open) => setDock((d) => ({ ...d, open }))}
+            onOpenChange={setDockOpen}
             height={dock.height}
-            onHeight={(height) => setDock((d) => ({ ...d, height }))}
+            onHeight={setDockHeight}
           />
         </ThemeContext.Provider>
 
+        {/* The panel in hand. It rides outside the rack because the rack sets a
+            perspective, and a perspective is a containing block -- a fixed
+            element inside one is positioned against it rather than the
+            viewport, which is not what "follows the pointer" means. */}
         {rack.id && rack.ghost && (
           <div
             className="rack-ghost"
@@ -2424,8 +1428,6 @@ export default function App() {
     </>
   )
 }
-
-const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
 
 /**
  * A new module of this type for a rack. A Trigger arrives on Space, so the

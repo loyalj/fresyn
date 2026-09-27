@@ -1,4 +1,5 @@
 import { Smoothed } from '../Smoothed'
+import { expCv } from '../util'
 import { DspModule } from './types'
 
 const P_BITS = 0
@@ -48,7 +49,7 @@ export class BitcrushModule extends DspModule {
     // slows, the steps get longer and the pitch of what it is holding drops
     // with it.
     const rate =
-      this.params[P_RATE] * Math.pow(2, slots[this.ins[IN_CV]] * this.params[P_CV_AMOUNT])
+      expCv(this.params[P_RATE], slots[this.ins[IN_CV]], this.params[P_CV_AMOUNT])
     this.phase += rate / this.ctx.sampleRate
     if (this.phase >= 1) {
       // Not a while loop: asking for a rate above the one the rack runs at

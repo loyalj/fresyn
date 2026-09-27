@@ -3,46 +3,56 @@
  * by button and by dragging a unit's spine, and verify that a patch survives a
  * reload and a round trip through a file.
  *
- * Needs `npm run dev -- --port 5199` in another terminal.
- * Point CHROME_PATH at a Chromium build if the default is wrong.
+ * Starts its own dev server (see harness.mjs); set DEV_URL to use a running
+ * one, and CHROME_PATH if Chrome is not where the harness looks.
  */
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import puppeteer from 'puppeteer-core'
-
-const CHROME =
-  process.env.CHROME_PATH ||
-  'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'
-const URL = process.env.DEV_URL || 'http://localhost:5199/'
+import { check, finish, flipRack, open, problems, settle, waitUntil } from './harness.mjs'
 
 const downloads = mkdtempSync(join(tmpdir(), 'fresyn-'))
 
-const browser = await puppeteer.launch({
-  executablePath: CHROME,
-  headless: 'new',
-  args: ['--autoplay-policy=no-user-gesture-required', '--no-sandbox'],
-})
-const page = await browser.newPage()
 // Tall enough for the whole rack: the cable checks need jacks on screen.
-await page.setViewport({ width: 1200, height: 1500 })
+const { page, url } = await open({ viewport: { width: 1200, height: 1500 } })
 
-const problems = []
-page.on('console', (m) => {
-  if (m.type() === 'error' && !m.text().includes('favicon')) problems.push('console: ' + m.text())
-})
-page.on('pageerror', (e) => problems.push('pageerror: ' + e.message))
-
-let failures = 0
-const check = (name, ok, detail = '') => {
-  if (!ok) failures++
-  console.log(`  ${ok ? 'ok  ' : 'FAIL'}  ${name}${detail ? '  ' + detail : ''}`)
-}
-
-const settle = (ms = 200) => new Promise((r) => setTimeout(r, ms))
 const unitCount = () => page.evaluate(() => document.querySelectorAll('.unit-flip').length)
 const unitIds = () =>
   page.evaluate(() => [...document.querySelectorAll('.unit-face-front .unit-id')].map((e) => e.textContent))
+
+// Waits for the rack to reach a state, in place of guessing how long an edit
+// takes to land. Each gives up quietly after the harness's timeout: the check
+// after it is what reports the rack did not get there.
+/** Until the rack holds n units. */
+const unitsBecome = (n) =>
+  waitUntil(page, (n) => document.querySelectorAll('.unit-flip').length === n, { args: [n] })
+/** Until the front faces read these ids, in this order. */
+const idsBecome = (ids) =>
+  waitUntil(
+    page,
+    (want) => [...document.querySelectorAll('.unit-face-front .unit-id')].map((e) => e.textContent).join(',') === want,
+    { args: [ids.join(',')] },
+  )
+/** Until a unit with this id is on the rack (or, with present false, is not). */
+const unitThere = (id, present = true) =>
+  waitUntil(
+    page,
+    (id, present) =>
+      [...document.querySelectorAll('.unit-face-front .unit-id')].some((e) => e.textContent === id) === present,
+    { args: [id, present] },
+  )
+/** Until the selected track's name field reads this. */
+const nameBecomes = (name) =>
+  waitUntil(page, (n) => document.querySelector('.track.on .track-name')?.value === n, { args: [name] })
+/** Until a file ending in ext is in the downloads folder. Returns the matches. */
+const downloaded = async (ext, timeout = 5000) => {
+  const until = Date.now() + timeout
+  for (;;) {
+    const hits = readdirSync(downloads).filter((f) => f.endsWith(ext))
+    if (hits.length || Date.now() > until) return hits
+    await settle(50)
+  }
+}
 // The name lives on the selected track in the dock now, so the dock has to be
 // open to reach it.
 const nameField = async () => {
@@ -86,7 +96,6 @@ const menuRows = () =>
 
 const menuOpen = () => page.evaluate(() => !!document.querySelector('.menu'))
 
-
 /**
  * Add a module from the Modules menu, wherever in its submenus it lives.
  *
@@ -129,8 +138,9 @@ const addModule = async (name) => {
     )
     const iel = ih.asElement()
     if (iel) {
+      const units = await unitCount()
       await iel.click()
-      await settle(300)
+      await unitsBecome(units + 1)
       return true
     }
   }
@@ -206,7 +216,7 @@ await page.evaluateOnNewDocument(() => {
   delete window.showOpenFilePicker
   delete window.showSaveFilePicker
 })
-await page.goto(URL, { waitUntil: 'networkidle0' })
+await page.goto(url, { waitUntil: 'networkidle0' })
 // Start from a known state; the autosave persists across runs.
 await page.evaluate(() => localStorage.clear())
 await page.reload({ waitUntil: 'networkidle0' })
@@ -271,7 +281,7 @@ console.log('\nadding in front of the picked unit')
   await page.keyboard.press('KeyZ')
   await page.keyboard.up('Control')
   await page.keyboard.press('Escape')
-  await settle(300)
+  await unitThere('noise1', false)
   check('and undo takes it away again', !(await unitIds()).includes('noise1'))
 }
 
@@ -285,7 +295,7 @@ console.log('\nremoving a module')
     return !!el
   })
   check('the remove control is present', removed)
-  await settle(300)
+  await unitsBecome(before - 1)
   check('the rack shrank', (await unitCount()) === before - 1)
   check('the unit is gone', !(await unitIds()).includes('lpf2'))
 }
@@ -296,7 +306,7 @@ console.log('\nremoving a module')
   await page.evaluate(() => {
     document.querySelector('[aria-label="Remove lpf1"]')?.click()
   })
-  await settle(300)
+  await unitsBecome(before - 1)
   check('a patched module can be removed', (await unitCount()) === before - 1)
   check('no errors from the dangling cables', problems.length === 0, problems.join('; '))
 
@@ -306,7 +316,7 @@ console.log('\nremoving a module')
   await page.keyboard.down('Control')
   await page.keyboard.press('KeyZ')
   await page.keyboard.up('Control')
-  await settle(300)
+  await unitsBecome(before)
   check('and undo brings it and its cables back', (await unitCount()) === before)
 }
 
@@ -341,7 +351,7 @@ console.log('\nduplicating a unit')
     return !!el
   })
   check('the duplicate control is present', clicked)
-  await settle(300)
+  await unitsBecome(before + 1)
 
   check('the rack grew', (await unitCount()) === before + 1)
   const ids = await unitIds()
@@ -358,7 +368,7 @@ console.log('\nduplicating a unit')
   await page.keyboard.down('Control')
   await page.keyboard.press('KeyZ')
   await page.keyboard.up('Control')
-  await settle(300)
+  await unitsBecome(before)
   check('and a duplicate is undoable', (await unitCount()) === before)
 }
 
@@ -440,7 +450,8 @@ console.log('\nthe patch library')
     return !!row
   })
   check('a template can be chosen', picked)
-  await settle(400)
+  await waitUntil(page, () => !document.querySelector('.library-row'))
+  await unitThere('slew1')
 
   check('choosing one closes the sheet', !(await sheetOpen()))
   const loaded = await unitIds()
@@ -466,7 +477,7 @@ console.log('\nthe patch library')
   await page.keyboard.down('Control')
   await page.keyboard.press('KeyZ')
   await page.keyboard.up('Control')
-  await settle(350)
+  await idsBecome(before)
   check('loading a template is undoable', (await unitIds()).join(',') === before.join(','))
 }
 
@@ -564,7 +575,7 @@ console.log('half-width panels share a row')
     await page.keyboard.press('KeyZ')
     await page.keyboard.up('Control')
   }
-  await settle(300)
+  await unitsBecome(baseCount)
   check('the rack is back as it was', (await unitCount()) === baseCount, `${await unitCount()} units`)
 }
 
@@ -648,7 +659,11 @@ console.log('\ndragging a unit by its spine')
   await page.keyboard.down('Control')
   await page.keyboard.press('KeyZ')
   await page.keyboard.up('Control')
-  await settle(300)
+  await waitUntil(
+    page,
+    (want) => [...document.querySelectorAll('.unit-flip')].map((e) => e.dataset.module).join(',') === want,
+    { args: [before.join(',')] },
+  )
   check('one undo puts it back', (await rackOrder()).join(',') === before.join(','), (await rackOrder()).join(','))
 }
 
@@ -697,7 +712,7 @@ console.log('the oscillator panel')
     const r = knob.querySelector('svg').getBoundingClientRect()
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
   })
-  await new Promise((r) => setTimeout(r, 120))
+  await settle(120)
   await page.mouse.move(decay.x, decay.y)
   await page.mouse.down()
   await page.mouse.move(decay.x, decay.y - 60, { steps: 6 })
@@ -753,7 +768,7 @@ console.log('the oscillator panel')
     const r = knob.querySelector('svg').getBoundingClientRect()
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
   })
-  await new Promise((r) => setTimeout(r, 120))
+  await settle(120)
   await page.mouse.move(widthKnob.x, widthKnob.y)
   await page.mouse.down()
   await page.mouse.move(widthKnob.x, widthKnob.y + 50, { steps: 6 })
@@ -798,7 +813,7 @@ console.log('the oscillator panel')
     const r = knob.querySelector('svg').getBoundingClientRect()
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
   })
-  await new Promise((r) => setTimeout(r, 120))
+  await settle(120)
   await page.mouse.move(octave.x, octave.y)
   await page.mouse.down()
   await page.mouse.move(octave.x, octave.y - 40, { steps: 6 })
@@ -904,7 +919,7 @@ console.log('the LFO panel')
 
   const turn = async (label, dy) => {
     const at = await lfoKnob(label)
-    await new Promise((r) => setTimeout(r, 120))
+    await settle(120)
     await page.mouse.move(at.x, at.y)
     await page.mouse.down()
     await page.mouse.move(at.x, at.y + dy, { steps: 6 })
@@ -1003,7 +1018,7 @@ console.log('the keyboard panel')
 
   // Put the rack back the way the sections below expect it.
   await page.evaluate(() => document.querySelector('[aria-label="Remove key1"]')?.click())
-  await settle(300)
+  await unitThere('key1', false)
   check('the keyboard was removed again', !(await unitIds()).includes('key1'))
 }
 
@@ -1071,7 +1086,7 @@ console.log('the sequencer panel')
   check('and keeps all sixteen knobs', shortened?.stepKnobs === 16, `${shortened?.stepKnobs}`)
 
   await page.evaluate(() => document.querySelector('[aria-label="Remove seq1"]')?.click())
-  await settle(300)
+  await unitThere('seq1', false)
   check('the sequencer was removed again', !(await unitIds()).includes('seq1'))
 }
 
@@ -1079,8 +1094,7 @@ console.log('the sequencer panel')
 console.log()
 console.log('controls on the back panel')
 {
-  await page.keyboard.press('KeyF')
-  await settle(700)
+  await flipRack(page, true)
 
   // Scrolled into view before measuring, and taken from the back face only:
   // both faces carry the same controls, so the label alone is ambiguous.
@@ -1124,7 +1138,7 @@ console.log('controls on the back panel')
   const before = { units: await unitCount(), cables: await cables() }
 
   await page.mouse.click(spot.x, spot.y)
-  await settle(300)
+  await unitsBecome(before.units - 1)
 
   check('removing from the back works', (await unitCount()) === before.units - 1)
   check('the unit is gone', !(await unitIds()).includes('lfo1'))
@@ -1171,8 +1185,7 @@ console.log('controls on the back panel')
     `${arrowed.slice(0, 3).join(',')} -> ${(await unitIds()).slice(0, 3).join(',')}`,
   )
 
-  await page.keyboard.press('KeyF')
-  await settle(700)
+  await flipRack(page, false)
 }
 
 // --- undo and redo ---------------------------------------------------
@@ -1197,13 +1210,13 @@ console.log('\nundo and redo')
     (id) => document.querySelector(`[aria-label="Remove ${id}"]`)?.click(),
     ids[0],
   )
-  await settle(300)
+  await unitsBecome(before - 1)
   check('a module was removed', (await unitCount()) === before - 1)
 
   await page.keyboard.down('Control')
   await page.keyboard.press('KeyZ')
   await page.keyboard.up('Control')
-  await settle(300)
+  await unitsBecome(before)
   check('Ctrl+Z brings it back', (await unitCount()) === before)
   check('it comes back in the same place', (await unitIds()).join(',') === ids.join(','))
   check('redo is now available', (await editRow('Redo'))?.disabled === false)
@@ -1213,17 +1226,16 @@ console.log('\nundo and redo')
   await page.keyboard.press('KeyZ')
   await page.keyboard.up('Shift')
   await page.keyboard.up('Control')
-  await settle(300)
+  await unitsBecome(before - 1)
   check('Ctrl+Shift+Z removes it again', (await unitCount()) === before - 1)
 
   // Put it back for the checks that follow.
   check('the Undo menu row works too', await pick('Edit', 'Undo'))
-  await settle(300)
+  await unitsBecome(before)
   check('and it brought the module back', (await unitCount()) === before)
 
   // A cable edit is undoable in the same history.
-  await page.keyboard.press('KeyF')
-  await settle(700)
+  await flipRack(page, true)
   const cables = () =>
     page.evaluate(() => document.querySelectorAll('.cables g.cable:not(.cable-dragging)').length)
   const cablesBefore = await cables()
@@ -1251,8 +1263,7 @@ console.log('\nundo and redo')
   await settle(300)
   check('undo re-plugs the cable', (await cables()) === cablesBefore)
 
-  await page.keyboard.press('KeyF')
-  await settle(700)
+  await flipRack(page, false)
 }
 
 // --- persistence -----------------------------------------------------
@@ -1260,11 +1271,12 @@ console.log('\nsurviving a reload')
 {
   await page.click(await nameField(), { clickCount: 3 })
   await page.keyboard.type('Thunder Hit')
-  await settle(700) // autosave debounce
+  // Until the autosave has it, rather than a guess at the debounce.
+  await waitUntil(page, () => localStorage.getItem('fresyn.project.v1')?.includes('Thunder Hit') ?? false)
 
   const before = { name: await patchName(), count: await unitCount(), ids: await unitIds() }
   await page.reload({ waitUntil: 'networkidle0' })
-  await settle(400)
+  await unitsBecome(before.count)
 
   check('the name came back', (await patchName()) === before.name, await patchName())
   check('the rack came back', (await unitCount()) === before.count)
@@ -1275,9 +1287,8 @@ console.log('\nsurviving a reload')
 console.log('\nexport and import')
 {
   check('the Save patch action is there', await pick('Patch', 'Save patch...'))
-  await settle(600)
 
-  const files = readdirSync(downloads).filter((f) => f.endsWith('.json'))
+  const files = await downloaded('.json')
   check('a file was written', files.length === 1, files.join(','))
 
   let parsed = null
@@ -1296,21 +1307,21 @@ console.log('\nexport and import')
   // step now that reaching it means opening a menu, but it does go through the
   // history like any other edit -- which the undo below is what proves.
   check('New project is in the Project menu', await pick('Project', 'New project'))
-  await settle(400)
+  await nameBecomes('Rack')
   check('New reset the rack', (await patchName()) === 'Rack', await patchName())
 
   await page.keyboard.down('Control')
   await page.keyboard.press('KeyZ')
   await page.keyboard.up('Control')
-  await settle(400)
+  await nameBecomes('Thunder Hit')
   check('and New is undoable', (await patchName()) === 'Thunder Hit', await patchName())
   await pick('Project', 'New project')
-  await settle(400)
+  await nameBecomes('Rack')
 
   if (files.length) {
     const input = await page.$('input[type=file]')
     await input.uploadFile(join(downloads, files[0]))
-    await settle(600)
+    await nameBecomes('Thunder Hit')
     check('the imported name is restored', (await patchName()) === 'Thunder Hit', await patchName())
     check('the imported rack is restored', (await unitCount()) === parsed.patch.modules.length)
   }
@@ -1333,7 +1344,7 @@ console.log('\na project is not a patch')
 
   for (const f of readdirSync(downloads)) unlinkSync(join(downloads, f))
   await pick('Project', 'Save project')
-  await settle(600)
+  await downloaded('.fproject.json')
   const saved = readdirSync(downloads)
   check(
     'a project saves under its own name',
@@ -1345,10 +1356,10 @@ console.log('\na project is not a patch')
   const before = await tracks()
   const patchFile = join(downloads, 'rumble.fpatch.json')
   await pick('Patch', 'Save patch...')
-  await settle(600)
+  await downloaded('rumble.fpatch.json')
   if (existsSync(patchFile)) {
     await (await page.$('.track-file')).uploadFile(patchFile)
-    await settle(600)
+    await waitUntil(page, (n) => document.querySelectorAll('.track').length === n, { args: [before + 1] })
     check('a patch can be added as a track', (await tracks()) === before + 1, `${await tracks()}`)
     check('under its own name', (await patchName()) === 'Rumble', await patchName())
   } else {
@@ -1359,7 +1370,7 @@ console.log('\na project is not a patch')
   if (saved.length === 1) {
     const count = await tracks()
     await (await page.$('.patch-file')).uploadFile(join(downloads, saved[0]))
-    await settle(600)
+    await waitUntil(page, () => !!document.querySelector('.notice'))
     const notice = await page.evaluate(() => document.querySelector('.notice')?.textContent ?? '')
     check('a project is not opened as a patch', notice.includes('not a patch'), notice)
     check('and nothing changed', (await tracks()) === count)
@@ -1379,8 +1390,7 @@ console.log('jacks on the back panel')
     check(`${name} was added`, await addModule(name))
   }
 
-  await page.keyboard.press('KeyF')
-  await settle(700)
+  await flipRack(page, true)
   check(
     'the rack is showing its back',
     await page.evaluate(() => !!document.querySelector('.rack-flipped')),
@@ -1452,8 +1462,7 @@ console.log('jacks on the back panel')
 
   await page.setViewport({ width: 1200, height: 1500 })
   await settle(400)
-  await page.keyboard.press('KeyF')
-  await settle(700)
+  await flipRack(page, false)
 }
 
 // --- saving in place ---------------------------------------------------
@@ -1541,10 +1550,4 @@ console.log('\nsaving a project in place')
   check('a new project asks again', s.asked.save === 3, JSON.stringify(s.asked))
 }
 
-console.log('\nproblems    :', problems.length ? problems : 'none')
-await browser.close()
-rmSync(downloads, { recursive: true, force: true })
-
-const ok = failures === 0 && problems.length === 0
-console.log(ok ? '\nPASS' : `\nFAIL (${failures} check(s))`)
-process.exit(ok ? 0 : 1)
+await finish({ cleanup: () => rmSync(downloads, { recursive: true, force: true }) })

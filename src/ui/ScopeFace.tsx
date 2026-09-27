@@ -1,10 +1,10 @@
 import { useEffect, useRef } from 'react'
 import { SCOPE_CAPTURE } from '../dsp/modules/Scope'
 import type { ModuleDef } from '../patch/types'
-import { Control } from './Control'
 import { useEngine } from './EngineContext'
 import { drawScope, type ScopeView } from './scopeDraw'
 import { useAppearance } from './ThemeContext'
+import { useFace } from './useFace'
 
 interface Props {
   def: ModuleDef
@@ -43,10 +43,10 @@ export function ScopeFace({ def, moduleId, valueOf, onChange }: Props) {
     dim: '#3d424c',
   })
 
-  const byId = Object.fromEntries(def.params.map((p) => [p.id, p]))
-  const timebase = valueOf('timebase') ?? byId.timebase.default
-  const gain = valueOf('gain') ?? byId.gain.default
-  const mode = Math.round(valueOf('mode') ?? byId.mode.default)
+  const { read, control } = useFace(def, valueOf, onChange)
+  const timebase = read('timebase')
+  const gain = read('gain')
+  const mode = Math.round(read('mode'))
 
   // Settings are read through a ref so the draw loop never has to be torn
   // down and rebuilt when a knob moves.
@@ -128,14 +128,7 @@ export function ScopeFace({ def, moduleId, valueOf, onChange }: Props) {
       </div>
 
       <div className="controls">
-        {KNOBS.map((id) => (
-          <Control
-            key={id}
-            spec={byId[id]}
-            value={valueOf(id)}
-            onChange={(v) => onChange(id, v)}
-          />
-        ))}
+        {KNOBS.map(control)}
       </div>
     </div>
   )

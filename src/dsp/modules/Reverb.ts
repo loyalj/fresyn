@@ -1,6 +1,7 @@
 import { DcBlocker } from '../DcBlocker'
 import { DelayLine, OnePole } from '../DelayLine'
 import { Smoothed } from '../Smoothed'
+import { clamp } from '../util'
 import { DspModule } from './types'
 
 const P_SIZE = 0
@@ -77,7 +78,7 @@ export class ReverbModule extends DspModule {
 
   prepare() {
     const sr = this.ctx.sampleRate
-    this.size = new Smoothed(clamp01(this.params[P_SIZE]), sr, SIZE_GLIDE_MS)
+    this.size = new Smoothed(clamp(this.params[P_SIZE], 0, 1), sr, SIZE_GLIDE_MS)
     this.decay = new Smoothed(this.params[P_DECAY], sr)
     this.damping = new Smoothed(this.params[P_DAMPING], sr)
     this.mix = new Smoothed(this.params[P_MIX], sr)
@@ -87,7 +88,7 @@ export class ReverbModule extends DspModule {
     const dry = slots[this.ins[IN_SIGNAL]]
     const input = this.dc.process(dry)
 
-    this.size.set(clamp01(this.params[P_SIZE]))
+    this.size.set(clamp(this.params[P_SIZE], 0, 1))
     this.decay.set(this.params[P_DECAY])
     this.damping.set(this.params[P_DAMPING])
     this.mix.set(this.params[P_MIX])
@@ -160,10 +161,6 @@ export class ReverbModule extends DspModule {
       this.gains[i] = feedbackFor(samples, decay, sr)
     }
   }
-}
-
-function clamp01(v: number) {
-  return v < 0 ? 0 : v > 1 ? 1 : v
 }
 
 /**

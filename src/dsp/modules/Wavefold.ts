@@ -1,6 +1,7 @@
 import { ADAA_EPS, saneInput } from '../Adaa'
 import { DcBlocker } from '../DcBlocker'
 import { Smoothed } from '../Smoothed'
+import { expCv } from '../util'
 import { DspModule } from './types'
 
 const P_FOLD = 0
@@ -57,7 +58,7 @@ export class WavefoldModule extends DspModule {
     // the folds the signal reaches, at the cost of the level going with it.
     // This moves the folding itself and leaves the level alone.
     const fold =
-      this.fold.next() * Math.pow(2, slots[this.ins[IN_CV]] * this.params[P_CV_AMOUNT])
+      expCv(this.fold.next(), slots[this.ins[IN_CV]], this.params[P_CV_AMOUNT])
     const x = saneInput(slots[this.ins[IN_SIGNAL]] * fold + this.symmetry.next())
 
     // Averaged over the step from the last input rather than taken at this

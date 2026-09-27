@@ -1,5 +1,6 @@
 import { Envelope } from '../Envelope'
 import { Smoothed } from '../Smoothed'
+import { clamp } from '../util'
 import { DspModule, type Metering } from './types'
 
 const P_PITCH = 0
@@ -145,8 +146,7 @@ export class VoiceModule extends DspModule implements Metering {
 
     this.pitch.set(this.params[P_PITCH])
     this.tone.set(this.params[P_TONE])
-    let breathTarget = this.params[P_BREATH] + slots[this.ins[IN_BREATH]]
-    breathTarget = breathTarget < 0 ? 0 : breathTarget > 1 ? 1 : breathTarget
+    const breathTarget = clamp(this.params[P_BREATH] + slots[this.ins[IN_BREATH]], 0, 1)
     this.breath.set(breathTarget)
 
     if (gain === 0) {

@@ -1,8 +1,7 @@
-import { PolyBlepOsc, type Waveform } from '../PolyBlepOsc'
+import { PolyBlepOsc, WAVEFORMS } from '../PolyBlepOsc'
 import { Smoothed } from '../Smoothed'
+import { expCv } from '../util'
 import { DspModule, EdgeDetector } from './types'
-
-const WAVES: Waveform[] = ['saw', 'pulse', 'tri', 'sine']
 
 const P_RATE = 0
 const P_SHAPE = 1
@@ -57,9 +56,9 @@ export class LfoModule extends DspModule {
     // phase is continuous through a rate change, so there is nothing to
     // zipper -- only the step it would take to get there, which is the point.
     const rate =
-      this.params[P_RATE] * Math.pow(2, slots[this.ins[IN_CV]] * this.params[P_CV_AMOUNT])
+      expCv(this.params[P_RATE], slots[this.ins[IN_CV]], this.params[P_CV_AMOUNT])
 
-    const wave = WAVES[Math.round(this.params[P_SHAPE])] ?? 'sine'
+    const wave = WAVEFORMS[Math.round(this.params[P_SHAPE])] ?? 'sine'
     const v = this.osc.process(rate, wave, pw) * this.depth.next()
 
     slots[this.outs[OUT_BIPOLAR]] = v

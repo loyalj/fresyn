@@ -1,3 +1,5 @@
+import { tauDecay } from './util'
+
 type Stage = 'idle' | 'delay' | 'attack' | 'hold' | 'decay' | 'sustain' | 'release'
 
 /**
@@ -114,7 +116,6 @@ export class Envelope {
 
   /** Per-sample multiplier that decays to ~1/e over `seconds`. */
   private coeff(seconds: number) {
-    const n = Math.max(1, seconds * this.sampleRate)
-    return Math.exp(-1 / n)
+    return tauDecay(Math.max(1, seconds * this.sampleRate))
   }
 }

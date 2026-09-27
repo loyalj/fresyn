@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react'
+import { memo, useSyncExternalStore, type CSSProperties } from 'react'
 import { jackKey } from './Jack'
 import { cablePath, type JackGeometry, type Point } from './cableGeometry'
 import { signalOf, type Signal } from '../patch/defs'
@@ -10,7 +10,6 @@ export type { JackGeometry, Point }
 export interface DragState {
   anchor: PortRef
   anchorKind: 'input' | 'output'
-  cursor: Point
   /**
    * The cable was pulled out of a jack it was plugged into, rather than
    * started from a free one. Let go of over nothing, such a cable is simply
@@ -26,10 +25,44 @@ export interface DragState {
   keyboard?: true
 }
 
+/**
+ * Where the loose end of the cable in hand is, in rack coordinates.
+ *
+ * A little store rather than state, because it changes on every pointer
+ * move: only the loose cable listens to it, so a drag redraws one path and
+ * nothing else in the room.
+ */
+export interface CursorStore {
+  get: () => Point
+  set: (p: Point) => void
+  subscribe: (fn: () => void) => () => void
+}
+
+export function cursorStore(): CursorStore {
+  let at: Point = { x: 0, y: 0 }
+  const listeners = new Set<() => void>()
+  return {
+    get: () => at,
+    set: (p) => {
+      if (p.x === at.x && p.y === at.y) return
+      at = p
+      for (const fn of listeners) fn()
+    },
+    subscribe: (fn) => {
+      listeners.add(fn)
+      return () => {
+        listeners.delete(fn)
+      }
+    },
+  }
+}
+
 interface Props {
   patch: Patch
   geometry: JackGeometry
   drag: DragState | null
+  /** Where the loose end of `drag` is. */
+  cursor: CursorStore
   /** The cable under the pointer, highlighted as grabbable. */
   hovered?: string
   /**
@@ -54,7 +87,7 @@ const SIGNAL_HUE: Record<Signal, number> = { audio: 30, cv: 205, gate: 130 }
  * resolved against the curve in `nearestCable`, so a jack underneath a cable
  * stays usable.
  */
-export function Cables({ patch, geometry, drag, hovered, colorBy }: Props) {
+export const Cables = memo(function Cables({ patch, geometry, drag, cursor, hovered, colorBy }: Props) {
   const anchorPoint = drag ? geometry[jackKey(drag.anchor)] : undefined
   const typeOf = new Map(patch.modules.map((m) => [m.id, m.type]))
   /** A cable's own colour, or the rack's for it. */
@@ -83,14 +116,21 @@ export function Cables({ patch, geometry, drag, hovered, colorBy }: Props) {
         )
       })}
 
-      {drag && anchorPoint && (
-        <g className="cable cable-dragging" style={hueVar(hueFor(drag.anchor))}>
-          <path d={cablePath(anchorPoint, drag.cursor)} className="cable-shadow" />
-          <path d={cablePath(anchorPoint, drag.cursor)} className="cable-line" />
-          <circle cx={anchorPoint.x} cy={anchorPoint.y} r={4} className="cable-grip" />
-        </g>
-      )}
+      {drag && anchorPoint && <LooseCable anchor={anchorPoint} hue={hueFor(drag.anchor)} cursor={cursor} />}
     </svg>
+  )
+})
+
+/** The cable in hand, from its jack to wherever the pointer or the focus is. */
+function LooseCable({ anchor, hue, cursor }: { anchor: Point; hue: number; cursor: CursorStore }) {
+  const at = useSyncExternalStore(cursor.subscribe, cursor.get)
+  const d = cablePath(anchor, at)
+  return (
+    <g className="cable cable-dragging" style={hueVar(hue)}>
+      <path d={d} className="cable-shadow" />
+      <path d={d} className="cable-line" />
+      <circle cx={anchor.x} cy={anchor.y} r={4} className="cable-grip" />
+    </g>
   )
 }
 

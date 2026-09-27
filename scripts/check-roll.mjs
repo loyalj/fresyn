@@ -1,10 +1,10 @@
-import puppeteer from 'puppeteer-core'
 import { join } from 'node:path'
-import { mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { check, finish, flushAutosave, frames, open, problems, settle as wait, waitUntil } from './harness.mjs'
 
 /**
- * End-to-end check for the music dock, against a running dev server.
+ * End-to-end check for the music dock, in a real browser.
  *
  * The headless checks prove the scheduling arithmetic and the arrangement
  * edits; this proves the part none of them can reach -- that a note drawn
@@ -14,37 +14,19 @@ import { tmpdir } from 'node:os'
  * goes through the real app, and the sound is read off the mixer's meters
  * rather than out of the engine.
  *
- * Needs `npm run dev -- --port 5199` in another terminal.
- * Point CHROME_PATH at a Chromium build if the default is wrong.
+ * Starts its own dev server (see harness.mjs); set DEV_URL to use a running
+ * one, and CHROME_PATH if Chrome is not where the harness looks.
+ *
+ * Most steps used to sleep 700 ms so the autosave's debounce had passed
+ * before the document was read back. stored() flushes the autosave instead,
+ * the way the app does on pagehide, and an edit is given two frames to land.
  */
-const CHROME =
-  process.env.CHROME_PATH || 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'
-const URL = process.env.DEV_URL || 'http://localhost:5199/'
-
 const downloads = mkdtempSync(join(tmpdir(), 'fresyn-'))
 
-const browser = await puppeteer.launch({
-  executablePath: CHROME,
-  headless: 'new',
-  args: ['--autoplay-policy=no-user-gesture-required', '--no-sandbox'],
-})
-const page = await browser.newPage()
-await page.setViewport({ width: 1280, height: 1000 })
+const { page, url } = await open({ viewport: { width: 1280, height: 1000 } })
 
-const problems = []
-page.on('console', (m) => {
-  if (m.type() !== 'error') return
-  if (m.text().includes('favicon')) return
-  problems.push('console: ' + m.text())
-})
-page.on('pageerror', (e) => problems.push('pageerror: ' + e.message))
-
-let failures = 0
-const check = (name, ok, detail = '') => {
-  if (!ok) failures++
-  console.log(`  ${ok ? 'ok  ' : 'FAIL'}  ${name}${detail ? '  ' + detail : ''}`)
-}
-const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+/** An edit has landed: React has committed it and scheduled the autosave. */
+const edited = () => frames(page)
 
 const cdp = await page.createCDPSession()
 await cdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads })
@@ -141,19 +123,20 @@ function readWav(path) {
   return { channels, rate, bits, seconds: dataBytes / (rate * channels * (bits / 8)) }
 }
 
-
 // A fresh session every run, so a project left behind by the last one cannot
 // make a broken build look like it works.
-await page.goto(URL, { waitUntil: 'networkidle0' })
+await page.goto(url, { waitUntil: 'networkidle0' })
 await page.evaluate(() => localStorage.clear())
 await page.reload({ waitUntil: 'networkidle0' })
 
 /** The project as the autosave has it, which is the document itself. */
-const stored = () =>
-  page.evaluate(() => {
+const stored = async () => {
+  await flushAutosave(page)
+  return page.evaluate(() => {
     const raw = localStorage.getItem('fresyn.project.v1')
     return raw ? JSON.parse(raw) : null
   })
+}
 
 const notesOf = async (patternIndex = 0) =>
   (await stored())?.song?.patterns?.[patternIndex]?.notes ?? []
@@ -249,7 +232,7 @@ async function drawNote(rowFromTop, fromX, toX) {
 console.log('\ndrawing notes')
 {
   await drawNote(4, 60, 140)
-  await wait(700)
+  await edited()
   const notes = await notesOf()
   check('a drag writes a note', notes.length === 1, `got ${notes.length}`)
   check('it is on the bench track', notes[0]?.track === 'bench', `got ${notes[0]?.track}`)
@@ -263,13 +246,13 @@ console.log('\ndrawing notes')
   await page.keyboard.down('Alt')
   await page.mouse.click(box.x + 70, box.y + 16 + 4 * 12 + 4)
   await page.keyboard.up('Alt')
-  await wait(700)
+  await edited()
   check('alt-click removes it', (await notesOf()).length === 0)
 
   await page.keyboard.down('Control')
   await page.keyboard.press('KeyZ')
   await page.keyboard.up('Control')
-  await wait(700)
+  await edited()
   check('ctrl+z puts it back', (await notesOf()).length === 1)
 }
 
@@ -312,7 +295,7 @@ const press = async (key, mods = []) => {
   for (const m of mods) await page.keyboard.down(m)
   await page.keyboard.press(key)
   for (const m of [...mods].reverse()) await page.keyboard.up(m)
-  await wait(700)
+  await edited()
 }
 
 console.log('\nselecting, copying and stretching')
@@ -371,7 +354,7 @@ console.log('\nselecting, copying and stretching')
   await page.mouse.down()
   await page.mouse.move(endX + 60, rowY, { steps: 5 })
   await page.mouse.up()
-  await wait(700)
+  await edited()
   notes = await notesOf()
   const grown = notes.map((n, i) => n.length - before[i])
   check('dragging an end stretches the whole selection by the same amount',
@@ -449,7 +432,7 @@ console.log('\nselecting, copying and stretching')
     await page.mouse.move(p.tickX(1900), y, { steps: 12 })
     await page.mouse.up()
     await page.keyboard.up('Alt')
-    await wait(700)
+    await edited()
     let all = await notesOf()
     const painted = all.filter((n) => n.pitch === row)
     const gaps = painted.map((n, i) => (i ? n.tick - painted[i - 1].tick : 0)).slice(1)
@@ -462,7 +445,7 @@ console.log('\nselecting, copying and stretching')
     await page.mouse.down({ button: 'right' })
     await page.mouse.move(p.tickX(1950), y, { steps: 3 })
     await page.mouse.up({ button: 'right' })
-    await wait(700)
+    await edited()
     all = await notesOf()
     check('a right-drag erases everything it sweeps over', all.length === before && !all.some((n) => n.pitch === row),
       `${all.length} notes left`)
@@ -490,7 +473,7 @@ console.log('\nselecting, copying and stretching')
     const p = await rollGeometry()
     const before = (await notesOf()).length
     await page.mouse.click(p.tickX(330), p.pitchY(22))
-    await wait(700)
+    await edited()
     let drawn = (await notesOf()).find((n) => n.pitch === 22)
     check('a triplet grid puts notes on triplets', drawn?.tick === 320, `tick ${drawn?.tick}`)
     await pick('1/16')
@@ -498,14 +481,14 @@ console.log('\nselecting, copying and stretching')
       [...document.querySelectorAll('.roll-tools .dock-toggle')].find((b) => b.textContent.trim() === 'Quantize'),
     )
     await quantize.asElement().click()
-    await wait(700)
+    await edited()
     drawn = (await notesOf()).find((n) => n.pitch === 22)
     check('Quantize snaps the selected note to the grid', drawn?.tick === 240, `tick ${drawn?.tick}`)
     const humanize = await page.evaluateHandle(() =>
       [...document.querySelectorAll('.roll-tools .dock-toggle')].find((b) => b.textContent.trim() === 'Humanize'),
     )
     await humanize.asElement().click()
-    await wait(700)
+    await edited()
     const after = await notesOf()
     check('Humanize keeps every note', after.length === before + 1)
   }
@@ -519,16 +502,16 @@ console.log('\nselecting, copying and stretching')
       [...document.querySelectorAll('.roll-tools .dock-toggle')].find((b) => b.textContent.trim() === 'Snap to key'),
     )
     await snap.asElement().click()
-    await wait(700)
+    await edited()
     check('the key is saved with the song', JSON.stringify((await stored()).song.scale) === '{"root":0,"mode":"major","snap":true}',
       JSON.stringify((await stored()).song.scale))
     const p = await rollGeometry()
     await page.mouse.click(p.tickX(2900), p.pitchY(13))
-    await wait(700)
+    await edited()
     const onKey = (await notesOf()).find((n) => n.tick === 2880)
     check('a note drawn on C# with C major snapped lands on D', onKey?.pitch === 14, `pitch ${onKey?.pitch}`)
     await page.select('.roll-tools select[aria-label="Scale"]', '')
-    await wait(700)
+    await edited()
     check('and No scale takes the key off the song', (await stored()).song.scale === undefined)
   }
 
@@ -543,7 +526,7 @@ console.log('\nselecting, copying and stretching')
     await page.mouse.down()
     await page.mouse.move(p.tickX(3840) - 2, y, { steps: 4 })
     await page.mouse.up()
-    await wait(700)
+    await edited()
     const chord = (await notesOf()).filter((n) => n.tick === 3360)
     check('a chord click lays every note of the chord', chord.map((n) => n.pitch).sort((a, b) => a - b).join() === '14,17,21,24',
       chord.map((n) => n.pitch).join())
@@ -559,7 +542,7 @@ console.log('\nselecting, copying and stretching')
     await page.mouse.down()
     await page.mouse.move(barX, laneBottom - 14, { steps: 4 })
     await page.mouse.up()
-    await wait(700)
+    await edited()
     const quieter = (await notesOf()).filter((n) => n.tick === 3360)
     check("dragging a chord's velocity bar moves every note of it",
       quieter.length === 4 && quieter.every((n) => n.velocity === quieter[0].velocity && n.velocity < 0.8),
@@ -595,7 +578,7 @@ console.log('\nselecting, copying and stretching')
   await press('KeyA', ['Control'])
   await press('Delete')
   await drawNote(4, 60, 140)
-  await wait(700)
+  await edited()
   check('and the roll is back to one note', (await notesOf()).length === 1)
 }
 
@@ -605,13 +588,13 @@ console.log('\na second track is a second rack')
   // on both faces, so the DOM has two of everything.
   const before = (await stored()).racks.bench.patch.modules.length
   await page.click('.track-add')
-  await wait(400)
+  await waitUntil(page, () => document.querySelectorAll('.track').length === 2)
   check('a track is added', (await page.$$('.track')).length === 2)
   check('and it is the one selected', await page.$eval('.track.on .track-name', (e) => e.value) !== '')
 
   // The rack on the bench must be the new track's, not the first one's.
   check('adding a module to it works', await addModule('Noise'))
-  await wait(700)
+  await edited()
   const project = await stored()
   const ids = Object.keys(project.racks)
   check('the project holds a rack per track', ids.length === 2, ids.join(', '))
@@ -626,7 +609,7 @@ console.log('\na second track is a second rack')
 
   // Notes drawn now belong to the new track.
   await drawNote(9, 60, 200)
-  await wait(700)
+  await edited()
   const notes = await notesOf()
   check('notes go to the selected track', notes.length === 2, `got ${notes.length}`)
   check('the new one names it', notes.some((n) => n.track !== 'bench'), notes.map((n) => n.track).join())
@@ -647,19 +630,19 @@ console.log('\na second track is a second rack')
 console.log('\nmute and solo')
 {
   await page.click('.track:nth-child(2) .track-flag[title="Mute"]')
-  await wait(500)
+  await edited()
   let tracks = (await stored()).song.tracks
   check('mute is written to the track', tracks[1].mute === true, JSON.stringify(tracks[1]))
 
   await page.click('.track:nth-child(1) .track-flag[title="Solo"]')
-  await wait(500)
+  await edited()
   tracks = (await stored()).song.tracks
   check('solo is written too', tracks[0].solo === true)
   check('and it is exclusive', tracks.filter((t) => t.solo).length === 1)
 
   await page.click('.track:nth-child(1) .track-flag[title="Solo"]')
   await page.click('.track:nth-child(2) .track-flag[title="Mute"]')
-  await wait(500)
+  await edited()
   tracks = (await stored()).song.tracks
   check('both clear again', tracks.every((t) => !t.solo && !t.mute))
 }
@@ -669,7 +652,7 @@ console.log('\npatterns and the playlist')
   // From the roll, through the last row of the pattern menu: the playlist,
   // with its own add button, is not on screen here.
   await page.select('.dock-bar select[aria-label="Pattern"]', '__new')
-  await wait(600)
+  await edited()
   const project = await stored()
   check('a second pattern is added', project.song.patterns.length === 2, `got ${project.song.patterns.length}`)
   check('and it is empty', project.song.patterns[1].notes.length === 0)
@@ -677,7 +660,7 @@ console.log('\npatterns and the playlist')
   // The roll follows the new pattern, so the notes from the first are gone
   // from view -- and drawing here writes into the second.
   await drawNote(6, 40, 100)
-  await wait(700)
+  await edited()
   check('notes go into the new pattern', (await notesOf(1)).length === 1)
   check('and the first one is untouched', (await notesOf(0)).length === 2)
 
@@ -737,7 +720,7 @@ console.log('\npatterns and the playlist')
   const cells = await rows[1].$$('.playlist-cell')
   check('the second row has cells', cells.length > 3, `got ${cells.length}`)
   await cells[2].click()
-  await wait(600)
+  await edited()
   const placed = (await stored()).song.playlist
   const second = (await stored()).song.patterns[1].id
   check('a click places it', placed.length === 2, JSON.stringify(placed))
@@ -748,7 +731,7 @@ console.log('\npatterns and the playlist')
   )
 
   await cells[2].click()
-  await wait(600)
+  await edited()
   check('and clicking again takes it off', (await stored()).song.playlist.length === 1)
   await cells[2].click()
   await wait(400)
@@ -772,7 +755,7 @@ console.log('\nthe transport plays what is showing')
 
   // Still in Song view: this plays the arrangement, not one pattern.
   await page.click('.dock-play')
-  await wait(400)
+  await waitUntil(page, () => !!document.querySelector('.dock-play.on'))
   check('the button lights', (await page.$('.dock-play.on')) !== null)
 
   let loudest = 0
@@ -783,10 +766,20 @@ console.log('\nthe transport plays what is showing')
   check('the arrangement makes a noise', loudest > 0.05, `peak ${(loudest * 100).toFixed(1)}%`)
 
   await page.click('.dock-play')
-  await wait(400)
+  await waitUntil(page, () => !document.querySelector('.dock-play.on'))
   check('stopping puts it out', (await page.$('.dock-play.on')) === null)
-  // Long enough for a full-scale bar to fall all the way to the floor.
-  await wait(1500)
+  // Until every bar has fallen to the floor, which a full-scale one takes
+  // over a second to do. Below the check's own line, so a reading a frame
+  // later cannot land on it.
+  await waitUntil(
+    page,
+    () =>
+      [...document.querySelectorAll('.strip-meter-fill')].every((el) => {
+        const m = /inset\(([\d.]+)%/.exec(el.style.clipPath || '')
+        return (m ? 1 - Number(m[1]) / 100 : 0) < 0.01
+      }),
+    { timeout: 5000 },
+  )
   check('and nothing is left droning', (await meterFill()) < 0.02, `got ${await meterFill()}`)
 }
 
@@ -835,11 +828,10 @@ console.log('\nbouncing it to a file')
   }
 }
 
-
 console.log('\nit all comes back')
 {
   await page.reload({ waitUntil: 'networkidle0' })
-  await wait(600)
+  await waitUntil(page, () => !!document.querySelector('.roll-canvas, .playlist'))
   const project = await stored()
   check('the tracks survive a reload', project.song.tracks.length === 2)
   check('the patterns survive', project.song.patterns.length === 2)
@@ -853,6 +845,4 @@ console.log('\nthe rack survives it')
   check('no page errors', problems.length === 0, problems.slice(0, 3).join(' | '))
 }
 
-await browser.close()
-console.log(failures === 0 ? '\nall good\n' : `\n${failures} failed\n`)
-process.exit(failures === 0 ? 0 : 1)
+await finish({ cleanup: () => rmSync(downloads, { recursive: true, force: true }) })

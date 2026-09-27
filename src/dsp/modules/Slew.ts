@@ -1,3 +1,4 @@
+import { tauStep } from '../util'
 import { DspModule } from './types'
 
 const P_RISE = 0
@@ -34,7 +35,7 @@ export class SlewModule extends DspModule {
       // One-pole: the time is a time constant, covering 63% of what is left
       // in that long and never quite arriving. This is what a hardware slew
       // limiter does, and it is the shape portamento wants.
-      this.value += (target - this.value) * (1 - Math.exp(-1 / (time * this.ctx.sampleRate)))
+      this.value += (target - this.value) * tauStep(time * this.ctx.sampleRate)
     }
 
     slots[this.outs[0]] = this.value

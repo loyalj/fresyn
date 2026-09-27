@@ -1,4 +1,5 @@
 import { Smoothed } from '../Smoothed'
+import { expCv } from '../util'
 import { DspModule } from './types'
 
 const P_VOWEL = 0
@@ -109,7 +110,7 @@ export class FormantModule extends DspModule {
     else if (vowel > LAST) vowel = LAST
     // A bigger head is lower formants: Size 2 halves them. The jack is in
     // octaves of size, so a positive voltage makes the thing bigger too.
-    const scale = 1 / (this.size.next() * Math.pow(2, slots[this.ins[IN_SIZE]] * this.params[P_SIZE_AMOUNT]))
+    const scale = 1 / expCv(this.size.next(), slots[this.ins[IN_SIZE]], this.params[P_SIZE_AMOUNT])
     const res = this.params[P_RES]
 
     if (vowel !== this.lastVowel || scale !== this.lastScale || res !== this.lastRes) {

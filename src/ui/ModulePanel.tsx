@@ -1,7 +1,7 @@
 import type { ModuleDef } from '../patch/types'
 import { Control } from './Control'
 import { KeysFace } from './KeysFace'
-import { LadderFace } from './LadderFace'
+import { FilterFace, LADDER, SVF } from './FilterFace'
 import { LfoFace } from './LfoFace'
 import { MacroFace } from './MacroFace'
 import { MixerFace } from './MixerFace'
@@ -9,7 +9,6 @@ import { SamplerFace } from './SamplerFace'
 import { OscFace } from './OscFace'
 import { ScopeFace } from './ScopeFace'
 import { SeqFace } from './SeqFace'
-import { SvfFace } from './SvfFace'
 import { KnobHelpModule } from './KnobHelp'
 import { UnitSpine } from './UnitSpine'
 
@@ -92,12 +91,12 @@ export function ModulePanel({
     }
     if (def.type === 'ladder') {
       return (
-        <LadderFace def={def} valueOf={valueOf} onChange={onChange} faceExtra={faceExtra} />
+        <FilterFace def={def} filter={LADDER} valueOf={valueOf} onChange={onChange} faceExtra={faceExtra} />
       )
     }
     if (def.type === 'svf') {
       return (
-        <SvfFace def={def} valueOf={valueOf} onChange={onChange} faceExtra={faceExtra} />
+        <FilterFace def={def} filter={SVF} valueOf={valueOf} onChange={onChange} faceExtra={faceExtra} />
       )
     }
     if (def.type === 'macro') {

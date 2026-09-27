@@ -1,3 +1,4 @@
+import { pulseSamples } from '../util'
 import { DspModule, EdgeDetector } from './types'
 
 const P_COUNT = 0
@@ -15,9 +16,6 @@ const OUT_END = 2
 const MAX_COUNT = 16
 /** How far Curve can stretch the last gap relative to the first, either way. */
 const CURVE_RANGE = 6
-/** The End pulse. Long enough to catch, short enough not to read as a gate. */
-const END_SECONDS = 0.002
-
 /**
  * One trigger in, a run of triggers out.
  *
@@ -62,7 +60,7 @@ export class BurstModule extends DspModule {
   private ramp = 0
 
   prepare() {
-    this.endPulse = Math.max(1, Math.round(END_SECONDS * this.ctx.sampleRate))
+    this.endPulse = pulseSamples(this.ctx.sampleRate)
   }
 
   process(slots: Float32Array) {

@@ -1,3 +1,5 @@
+import { tauDecay } from './util'
+
 /**
  * One-pole parameter smoother. Every knob goes through one of these; a raw
  * jump in a coefficient is what zipper noise sounds like.
@@ -10,7 +12,7 @@ export class Smoothed {
   constructor(initial: number, sampleRate: number, timeMs = 8) {
     this.value = initial
     this.target = initial
-    this.coeff = Math.exp(-1 / ((timeMs / 1000) * sampleRate))
+    this.coeff = tauDecay((timeMs / 1000) * sampleRate)
   }
 
   set(target: number) {

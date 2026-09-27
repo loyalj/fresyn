@@ -6,43 +6,19 @@
  * wrong CRC or a wrong offset still reads back fine through the same code that
  * wrote it -- only a different implementation will reject it.
  *
- * Needs `npm run dev -- --port 5199` in another terminal.
- * Point CHROME_PATH at a Chromium build if the default is wrong.
+ * Starts its own dev server (see harness.mjs); set DEV_URL to use a running
+ * one, and CHROME_PATH if Chrome is not where the harness looks.
  */
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import puppeteer from 'puppeteer-core'
-
-const CHROME =
-  process.env.CHROME_PATH ||
-  'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'
-const URL = process.env.DEV_URL || 'http://localhost:5199/'
+import { check, finish, open, settle, waitUntil } from './harness.mjs'
 
 const downloads = mkdtempSync(join(tmpdir(), 'fresyn-wav-'))
 const extracted = join(downloads, 'unzipped')
 
-const browser = await puppeteer.launch({
-  executablePath: CHROME,
-  headless: 'new',
-  args: ['--autoplay-policy=no-user-gesture-required', '--no-sandbox'],
-})
-const page = await browser.newPage()
-await page.setViewport({ width: 1200, height: 1000 })
-
-const problems = []
-page.on('console', (m) => {
-  if (m.type() === 'error' && !m.text().includes('favicon')) problems.push('console: ' + m.text())
-})
-page.on('pageerror', (e) => problems.push('pageerror: ' + e.message))
-
-let failures = 0
-const check = (name, ok, detail = '') => {
-  if (!ok) failures++
-  console.log(`  ${ok ? 'ok  ' : 'FAIL'}  ${name}${detail ? '  ' + detail : ''}`)
-}
-const settle = (ms = 200) => new Promise((r) => setTimeout(r, ms))
+const { page, url } = await open({ viewport: { width: 1200, height: 1000 } })
 
 const waitForFile = async (dir, ext, timeoutMs = 20000) => {
   const until = Date.now() + timeoutMs
@@ -54,7 +30,7 @@ const waitForFile = async (dir, ext, timeoutMs = 20000) => {
   return []
 }
 
-await page.goto(URL, { waitUntil: 'networkidle0' })
+await page.goto(url, { waitUntil: 'networkidle0' })
 await page.evaluate(() => localStorage.clear())
 await page.reload({ waitUntil: 'networkidle0' })
 
@@ -87,7 +63,6 @@ console.log('\nthe recorder lives on its own panel')
     'the stock rack has no render controls',
     await page.evaluate(() => !document.querySelector('.export-panel')),
   )
-
 
 /**
  * Add a module from the Modules menu, wherever in its submenus it lives.
@@ -204,7 +179,7 @@ const menuModules = async () => {
   // recorder: only the first is the one the compiler takes the render from.
   const added = await addModule('Recorder')
   check('the picker offers a second Recorder', added)
-  await settle(300)
+  await waitUntil(page, () => [...document.querySelectorAll('.unit-face-front .unit-id')].some((e) => e.textContent === 'rec2'))
 
   const ids = await page.evaluate(() =>
     [...document.querySelectorAll('.unit-face-front .unit-id')].map((e) => e.textContent),
@@ -220,7 +195,7 @@ const menuModules = async () => {
     )
     unit.closest('.unit-flip').querySelector('.unit-remove').click()
   })
-  await settle(300)
+  await waitUntil(page, () => document.querySelectorAll('.unit-face-front').length === 6)
   check(
     'the spare was removed again',
     // Five stock units plus the recorder this section added.
@@ -308,7 +283,15 @@ console.log('\nrendering a batch')
   check('Length can be turned down', await turnUntil('Length', short), await knobReads('Length'))
 
   await page.click('.export-panel .export-go')
-  await settle(1500)
+  // Rendering is done when every take is listed with its waveform drawn.
+  await waitUntil(
+    page,
+    () => {
+      const paths = [...document.querySelectorAll('.take .waveform path')]
+      return paths.length === 3 && paths.every((p) => (p.getAttribute('d') ?? '').length > 100)
+    },
+    { timeout: 15000 },
+  )
 
   // --- audition --------------------------------------------------------
   const takes = await page.evaluate(() => document.querySelectorAll('.take').length)
@@ -334,7 +317,7 @@ console.log('\nrendering a batch')
   await settle(60)
   check('clicking a waveform plays it', await isPlaying())
 
-  await settle(600)
+  await waitUntil(page, () => !document.querySelector('.take.playing'), { timeout: 3000 })
   check('it stops itself at the end', !(await isPlaying()))
 
   await page.click('.take .take-wave')
@@ -437,7 +420,7 @@ console.log('\nrendering a batch')
 
   // Another track has its own recorder panel: no takes, and its own settings.
   await page.click('.track-add')
-  await settle(400)
+  await waitUntil(page, () => document.querySelectorAll('.take').length === 0)
   check('a new track shows none of them', (await takeRows()) === 0, `${await takeRows()} rows`)
   // Through the search, Ctrl+K: the menu helper above is scoped to its own
   // section.
@@ -457,7 +440,7 @@ console.log('\nrendering a batch')
     const name = await row.$eval('.track-name', (i) => i.value)
     if (name === 'Renamed') await (await row.$('.track-db')).click()
   }
-  await settle(400)
+  await waitUntil(page, () => document.querySelectorAll('.take').length === 3)
   check('the first track has its takes back', (await takeRows()) === 3, `${await takeRows()} rows`)
   check('and its settings', (await knobReads('Takes')) === '3', await knobReads('Takes'))
 
@@ -471,10 +454,4 @@ console.log('\nrendering a batch')
   check('the second throws them away', (await takeRows()) === 0)
 }
 
-console.log('\nproblems    :', problems.length ? problems : 'none')
-await browser.close()
-rmSync(downloads, { recursive: true, force: true })
-
-const ok = failures === 0 && problems.length === 0
-console.log(ok ? '\nPASS' : `\nFAIL (${failures} check(s))`)
-process.exit(ok ? 0 : 1)
+await finish({ cleanup: () => rmSync(downloads, { recursive: true, force: true }) })

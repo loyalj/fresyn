@@ -1,5 +1,30 @@
 @import './theme.css';
 
+/* The page's layers, bottom to top, named in one place so that anything new
+   that floats has to decide where it goes against everything else that does.
+   Not theme: a theme changes how the room looks, never what sits over what.
+   Stacking inside one control -- a black key over the white ones -- stays a
+   plain number where it is, since it never meets anything on this list. */
+:root {
+  /* The cables over the back of the rack, and the index card beside it. */
+  --z-cables: 5;
+  --z-index-card: 5;
+  /* The head panel, which the rack scrolls under. */
+  --z-masthead: 10;
+  /* Over the rack and the sticky masthead, under the menus. */
+  --z-dock: 20;
+  --z-ghost: 20;
+  /* Messages: over the dock and the rack, under the menus. */
+  --z-notices: 25;
+  --z-menu: 30;
+  --z-context-menu: 40;
+  /* Sheets take the whole window; a preset sheet opens from inside one. */
+  --z-sheet: 60;
+  --z-preset: 70;
+  /* The knob help card, which never takes the pointer, goes over it all. */
+  --z-knob-help: 80;
+}
+
 * { box-sizing: border-box; }
 
 /* The page still scrolls -- wheel, keys, touch -- but shows no bar for it.
@@ -42,7 +67,7 @@ body {
 .masthead {
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: var(--z-masthead);
   margin-bottom: 14px;
   border-bottom: 1px solid var(--panel-edge);
   /* The accent wash sits over the same gradient the units use, so this
@@ -85,9 +110,6 @@ body {
   text-transform: uppercase;
   color: var(--accent-line);
 }
-
-
-.tagline { color: var(--ink-dim); font-size: 11px; }
 
 .led {
   width: 7px;
@@ -165,7 +187,7 @@ body {
   position: absolute;
   top: calc(100% + 5px);
   left: 0;
-  z-index: 30;
+  z-index: var(--z-menu);
   min-width: 190px;
   padding: 4px;
   display: flex;
@@ -184,7 +206,7 @@ body {
    control it belongs to, so that a panel's own scrolling and clipping cannot
    cut it in half; the list inside it therefore stops placing itself and
    simply fills the box the pointer put here. */
-.context-menu { position: fixed; z-index: 40; }
+.context-menu { position: fixed; z-index: var(--z-context-menu); }
 .context-menu > .menu { position: static; min-width: 170px; }
 
 .menu-slot { position: relative; display: flex; }
@@ -664,7 +686,7 @@ body {
 .sheet-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: var(--z-sheet);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -836,7 +858,7 @@ body {
 
 .preset-sheet {
   position: fixed;
-  z-index: 70;
+  z-index: var(--z-preset);
   width: 230px;
   display: flex;
   flex-direction: column;
@@ -903,7 +925,7 @@ body {
    says it does. Never under the pointer's control -- it takes no events. */
 .knob-help {
   position: fixed;
-  z-index: 80;
+  z-index: var(--z-knob-help);
   max-width: 260px;
   padding: 8px 10px;
   font-size: 12px;
@@ -949,7 +971,7 @@ body {
 
   .rack-index-card {
     position: fixed;
-    z-index: 5;
+    z-index: var(--z-index-card);
     /* Just under the head panel, and level with the rack's first unit. */
     top: 68px;
     /* The rack's right edge is half its column (504px of content) past the
@@ -1407,7 +1429,7 @@ body {
   position: fixed;
   left: 0;
   top: 0;
-  z-index: 20;
+  z-index: var(--z-ghost);
   display: flex;
   opacity: 0.88;
   pointer-events: none;
@@ -1607,7 +1629,7 @@ body {
   height: 100%;
   overflow: visible;
   pointer-events: none;
-  z-index: 5;
+  z-index: var(--z-cables);
 }
 
 .cable-shadow {
@@ -1655,7 +1677,7 @@ body {
   position: fixed;
   right: 16px;
   bottom: calc(var(--dock-h, 44px) + 12px);
-  z-index: 25;
+  z-index: var(--z-notices);
   width: min(340px, calc(100vw - 32px));
   display: flex;
   flex-direction: column;
@@ -1856,9 +1878,7 @@ body {
 .export-go:disabled { opacity: 0.55; cursor: default; }
 /* Asking before it throws the takes on the panel away: the danger colour, as
    the other buttons that cannot be taken back use. */
-.export-go.confirm { font-size: 11px; color: var(--on-accent); background: var(--danger); border-color: var(--danger); }
-.export-actions .add-cancel { margin-top: 0; }
-.export-note { font-size: 10px; color: var(--ink-dim); }
+.export-go.confirm { font-size: 11px; color: var(--on-danger); background: var(--danger); border-color: var(--danger); }
 
 /* --- takes ----------------------------------------------------------- */
 
@@ -2629,7 +2649,7 @@ body {
   bottom: 0;
   /* Over the rack and the sticky masthead, under the menus, which have to
      be able to open across it. */
-  z-index: 20;
+  z-index: var(--z-dock);
   display: flex;
   flex-direction: column;
   border-top: 1px solid var(--panel-edge);

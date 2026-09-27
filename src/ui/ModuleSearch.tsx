@@ -128,12 +128,6 @@ export function ModuleSearch({ cable, onPick, onClose }: Props) {
 }
 
 /**
- * Every module, or for a cable every jack it could go into. A module with
- * several matching jacks is listed once per jack, first jack first, because
- * which jack is the whole question: a filter's In and its CV are different
- * cables.
- */
-/**
  * The names on a module's switches, so a search finds a module by what it can
  * be switched to: "flanger" is the Chorus, "notch" the Multimode Filter.
  */
@@ -141,6 +135,12 @@ function modes(def: (typeof MODULE_DEFS)[string]) {
   return def.params.flatMap((p) => p.steps ?? []).join(' ')
 }
 
+/**
+ * Every module, or for a cable every jack it could go into. A module with
+ * several matching jacks is listed once per jack, first jack first, because
+ * which jack is the whole question: a filter's In and its CV are different
+ * cables.
+ */
 function buildEntries(cable?: 'input' | 'output'): Entry[] {
   const groupName = new Map(MODULE_GROUPS.map((g) => [g.id, g.name]))
   const out: Entry[] = []

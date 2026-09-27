@@ -4,38 +4,15 @@
  * of scrolling past it, and the escape hatches for browser shortcuts and
  * text fields still work.
  *
- * Needs `npm run dev -- --port 5199` in another terminal.
- * Point CHROME_PATH at a Chromium build if the default is wrong.
+ * Starts its own dev server (see harness.mjs); set DEV_URL to use a running
+ * one, and CHROME_PATH if Chrome is not where the harness looks.
  */
-import puppeteer from 'puppeteer-core'
+import { check, finish, flipRack, open, settle, waitUntil } from './harness.mjs'
 
-const CHROME =
-  process.env.CHROME_PATH ||
-  'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'
-const URL = process.env.DEV_URL || 'http://localhost:5199/'
-
-const browser = await puppeteer.launch({
-  executablePath: CHROME,
-  headless: 'new',
-  args: ['--autoplay-policy=no-user-gesture-required', '--no-sandbox'],
-})
-const page = await browser.newPage()
 // Short on purpose, so the page is definitely scrollable.
-await page.setViewport({ width: 1200, height: 700 })
+const { page, url } = await open({ viewport: { width: 1200, height: 700 } })
 
-const problems = []
-page.on('console', (m) => {
-  if (m.type() === 'error' && !m.text().includes('favicon')) problems.push('console: ' + m.text())
-})
-page.on('pageerror', (e) => problems.push('pageerror: ' + e.message))
-
-let failures = 0
-const check = (name, ok, detail = '') => {
-  if (!ok) failures++
-  console.log(`  ${ok ? 'ok  ' : 'FAIL'}  ${name}${detail ? '  ' + detail : ''}`)
-}
-
-await page.goto(URL, { waitUntil: 'networkidle0' })
+await page.goto(url, { waitUntil: 'networkidle0' })
 const cdp = await page.createCDPSession()
 
 // Record whether each event reached the browser with its default intact.
@@ -62,7 +39,7 @@ console.log('\nspace holds the gate without scrolling')
 {
   await page.evaluate(() => window.scrollTo(0, 0))
   await page.keyboard.down('Space')
-  await new Promise((r) => setTimeout(r, 120))
+  await settle(120)
   check('a single press does not scroll', (await scrollY()) === 0, `scrollY=${await scrollY()}`)
 
   // Auto-repeat is the case that actually leaked: the old handler returned
@@ -82,7 +59,7 @@ console.log('\nspace holds the gate without scrolling')
       autoRepeat: true,
     })
   }
-  await new Promise((r) => setTimeout(r, 120))
+  await settle(120)
   check('auto-repeat does not scroll', (await scrollY()) === 0, `scrollY=${await scrollY()}`)
 
   await page.keyboard.up('Space')
@@ -96,7 +73,7 @@ console.log('\nspace after clicking a button')
   await page.click('.trigger')
   await page.evaluate(() => window.scrollTo(0, 0))
   await page.keyboard.down('Space')
-  await new Promise((r) => setTimeout(r, 100))
+  await settle(100)
   await page.keyboard.up('Space')
   check('still does not scroll', (await scrollY()) === 0, `scrollY=${await scrollY()}`)
   check('the key never reaches the focused button', (await lastSeen('keydown'))?.prevented === true)
@@ -108,7 +85,7 @@ console.log('\narrow keys')
   await page.evaluate(() => window.scrollTo(0, 0))
   await page.keyboard.press('ArrowDown')
   await page.keyboard.press('PageDown')
-  await new Promise((r) => setTimeout(r, 120))
+  await settle(120)
   check('arrows and page keys do not scroll', (await scrollY()) === 0, `scrollY=${await scrollY()}`)
 }
 
@@ -120,15 +97,14 @@ console.log('\ntab moves focus; F flips')
   const before = await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 80) ?? '')
   await clearSeen()
   await page.keyboard.press('Tab')
-  await new Promise((r) => setTimeout(r, 300))
+  await settle(300)
   const after = await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 80) ?? '')
   check('Tab moved the focus', before !== after, `${before} -> ${after}`)
   check('Tab was not taken from the browser', (await lastSeen('keydown'))?.prevented === false)
   check('Tab did not flip the rack', await page.evaluate(() => !document.querySelector('.rack-flipped')))
 
   await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : null))
-  await page.keyboard.press('KeyF')
-  await new Promise((r) => setTimeout(r, 700))
+  await flipRack(page, true)
   check('F flips the rack', await page.evaluate(() => !!document.querySelector('.rack-flipped')))
 
   // Typing an F into a field is typing, not turning the rack round.
@@ -139,7 +115,7 @@ console.log('\ntab moves focus; F flips')
     input.focus()
   })
   await page.keyboard.type('ff')
-  await new Promise((r) => setTimeout(r, 200))
+  await settle(200)
   check(
     'F in a field types, and does not flip',
     (await page.evaluate(() => document.querySelector('#fprobe').value)) === 'ff' &&
@@ -153,14 +129,14 @@ console.log('\nright click belongs to the rack')
 {
   await clearSeen()
   await page.mouse.click(600, 300, { button: 'right' })
-  await new Promise((r) => setTimeout(r, 100))
+  await settle(100)
   const menu = await lastSeen('contextmenu')
   check('the browser menu is suppressed', menu?.prevented === true, JSON.stringify(menu))
 }
 
 // Now make the whole rack visible so a jack can be right-clicked.
 await page.setViewport({ width: 1200, height: 1500 })
-await new Promise((r) => setTimeout(r, 400))
+await settle(400)
 {
   const before = await cableCount()
   const jack = await page.evaluate(() => {
@@ -169,7 +145,7 @@ await new Promise((r) => setTimeout(r, 400))
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
   })
   await page.mouse.click(jack.x, jack.y, { button: 'right' })
-  await new Promise((r) => setTimeout(r, 150))
+  await settle(150)
   const after = await cableCount()
   check('right-clicking a jack unplugs it', after === before - 1, `${before} -> ${after}`)
 }
@@ -181,8 +157,7 @@ console.log('\nthe wheel tunes a knob, and only over a knob')
   // are on the front of it.
   if (await page.evaluate(() => !!document.querySelector('.rack-flipped'))) {
     await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : null))
-    await page.keyboard.press('KeyF')
-    await new Promise((r) => setTimeout(r, 600))
+    await flipRack(page, false)
   }
   await page.evaluate(() => window.scrollTo(0, 0))
 
@@ -236,9 +211,9 @@ console.log('\nthe wheel tunes a knob, and only over a knob')
   const notch = async (deltaY, times = 1) => {
     for (let i = 0; i < times; i++) {
       await page.mouse.wheel({ deltaY })
-      await new Promise((r) => setTimeout(r, 40))
+      await settle(40)
     }
-    await new Promise((r) => setTimeout(r, 120))
+    await settle(120)
   }
 
   await overKnob()
@@ -283,7 +258,7 @@ console.log('\nthe wheel tunes a knob, and only over a knob')
   // four units, which fits in a tall window with nothing left to scroll, so
   // the window is shortened to give the page somewhere to go.
   await page.setViewport({ width: 1200, height: 420 })
-  await new Promise((r) => setTimeout(r, 200))
+  await settle(200)
   // Outside the rack entirely: the panels are 1040px wide and centred, so
   // this lands on the page background rather than on any control.
   await page.mouse.move(1160, 300)
@@ -303,7 +278,7 @@ console.log()
 console.log("a knob's value can be said outright")
 {
   await page.setViewport({ width: 1200, height: 1500 })
-  await new Promise((r) => setTimeout(r, 300))
+  await settle(300)
   await page.evaluate(() => window.scrollTo(0, 0))
 
   /** The middle of one part of the knob carrying `label`, in page coords. */
@@ -339,7 +314,7 @@ console.log("a knob's value can be said outright")
     const at = await partAt(label, sel)
     if (!at) return false
     await page.mouse.click(at.x, at.y, options)
-    await new Promise((r) => setTimeout(r, 150))
+    await settle(150)
     return true
   }
   /** A row of the menu at the pointer, by its label. */
@@ -360,7 +335,7 @@ console.log("a knob's value can be said outright")
   check('the readout opens for typing', await clickPart('FM Amt', '.knob-readout'))
   await page.keyboard.type('1.00')
   await page.keyboard.press('Enter')
-  await new Promise((r) => setTimeout(r, 150))
+  await settle(150)
   check('a typed value lands exactly', (await valueOf('FM Amt')) === 1, `${await valueOf('FM Amt')}`)
   check('and the field closes behind it', !(await entryOpen()))
 
@@ -369,11 +344,11 @@ console.log("a knob's value can be said outright")
   await clickPart('FM Amt', '.knob-readout')
   await page.keyboard.type('250 ms')
   await page.keyboard.press('Enter')
-  await new Promise((r) => setTimeout(r, 150))
+  await settle(150)
   check('a value in the wrong unit is refused', await entryOpen())
   check('and the knob has not moved', (await valueOf('FM Amt')) === 1)
   await page.keyboard.press('Escape')
-  await new Promise((r) => setTimeout(r, 150))
+  await settle(150)
   check('Escape gives up on it', !(await entryOpen()) && (await valueOf('FM Amt')) === 1)
 
   // A pitch is a note, and a knob that spans twelve octaves cannot be tuned
@@ -393,13 +368,13 @@ console.log("a knob's value can be said outright")
   await clickPart('Pitch', '.knob-readout')
   await page.keyboard.type('110')
   await page.keyboard.press('Enter')
-  await new Promise((r) => setTimeout(r, 150))
+  await settle(150)
   check('a pitch says which note it is', (await noteOf()) === 'A2', String(await noteOf()))
 
   await clickPart('Pitch', '.knob-readout')
   await page.keyboard.type('A3')
   await page.keyboard.press('Enter')
-  await new Promise((r) => setTimeout(r, 150))
+  await settle(150)
   check('and takes one as a value', Math.abs((await valueOf('Pitch')) - 220) < 0.01, `${await valueOf('Pitch')} Hz`)
   check('and says it back', (await noteOf()) === 'A3', String(await noteOf()))
 
@@ -413,7 +388,7 @@ console.log("a knob's value can be said outright")
   await page.mouse.move(dial.x, dial.y - 37, { steps: 8 })
   await page.mouse.up()
   await page.keyboard.up('Alt')
-  await new Promise((r) => setTimeout(r, 150))
+  await settle(150)
   const snapped = await valueOf('Pitch')
   const semitones = 12 * Math.log2(snapped / 440)
   check(
@@ -430,7 +405,7 @@ console.log("a knob's value can be said outright")
   const copy = await row('Copy')
   check('the menu offers Copy', !!copy)
   await copy.click()
-  await new Promise((r) => setTimeout(r, 150))
+  await settle(150)
 
   // The filter's, in octaves like FM Amt. The VCA has a CV Amt too, and it
   // measures nothing.
@@ -438,7 +413,7 @@ console.log("a knob's value can be said outright")
   const paste = await row('Paste')
   check('Paste is offered on a knob in the same unit', !!paste && !(await page.evaluate((b) => b.disabled, paste)))
   await paste.click()
-  await new Promise((r) => setTimeout(r, 150))
+  await settle(150)
   check('and it arrives exactly', (await valueOf('lpf1::CV Amt')) === 1, `${await valueOf('lpf1::CV Amt')}`)
 
   const cutoffWas = await valueOf('Cutoff')
@@ -449,7 +424,7 @@ console.log("a knob's value can be said outright")
     !!refused && (await page.evaluate((b) => b.disabled, refused)),
   )
   await page.keyboard.press('Escape')
-  await new Promise((r) => setTimeout(r, 150))
+  await settle(150)
   check('so the frequency is untouched', (await valueOf('Cutoff')) === cutoffWas)
   check('and the menu is gone', !(await page.evaluate(() => !!document.querySelector('.context-menu'))))
 }
@@ -473,7 +448,7 @@ console.log('a menu takes the keyboard off the rack')
     const el = h.asElement()
     if (!el) return false
     await el.click()
-    await new Promise((r) => setTimeout(r, 150))
+    await settle(150)
     return true
   }
   const menuShowing = () => page.evaluate(() => !!document.querySelector('.menu'))
@@ -486,16 +461,16 @@ console.log('a menu takes the keyboard off the rack')
   // The three keys the rack would otherwise take.
   await clearSeen()
   await page.keyboard.press('ArrowDown')
-  await new Promise((r) => setTimeout(r, 80))
+  await settle(80)
   check('arrow keys do not scroll the rack away', (await scrollY()) === 0, `scrollY=${await scrollY()}`)
 
   const wasFlipped = await flipped()
   await page.keyboard.press('KeyF')
-  await new Promise((r) => setTimeout(r, 200))
+  await settle(200)
   check('F does not turn the rack around', (await flipped()) === wasFlipped)
 
   await page.keyboard.press('Escape')
-  await new Promise((r) => setTimeout(r, 200))
+  await settle(200)
   check('Escape closes it', !(await menuShowing()))
 
   // And the rack has the keyboard back the moment it does. The focus is
@@ -505,7 +480,7 @@ console.log('a menu takes the keyboard off the rack')
   await page.evaluate(() => window.scrollTo(0, 0))
   await clearSeen()
   await page.keyboard.press('ArrowDown')
-  await new Promise((r) => setTimeout(r, 120))
+  await settle(120)
   check('the rack has its keys back afterwards', (await lastSeen('keydown'))?.prevented === true)
   check('and still does not scroll', (await scrollY()) === 0, `scrollY=${await scrollY()}`)
   check('and the menu stays shut', !(await menuShowing()))
@@ -513,10 +488,10 @@ console.log('a menu takes the keyboard off the rack')
   // Space is a button's own key, and with no Trigger on it, it presses the
   // focused one -- which, for a menu's name, opens that menu.
   await page.keyboard.press('Space')
-  await new Promise((r) => setTimeout(r, 150))
+  await settle(150)
   check('Space presses the focused button when nothing claims it', await menuShowing())
   await page.keyboard.press('Escape')
-  await new Promise((r) => setTimeout(r, 150))
+  await settle(150)
 
   // Closing a menu leaves focus on the word it opened from, which is right
   // for a keyboard user and would quietly change what the sections below are
@@ -533,7 +508,7 @@ console.log('claimed modifier combos')
     for (const m of mods) await page.keyboard.down(m)
     await page.keyboard.press(code)
     for (const m of [...mods].reverse()) await page.keyboard.up(m)
-    await new Promise((r) => setTimeout(r, 80))
+    await settle(80)
     return lastSeen('keydown')
   }
 
@@ -552,7 +527,7 @@ console.log('\nescape hatches')
   await page.keyboard.down('Control')
   await page.keyboard.press('Space')
   await page.keyboard.up('Control')
-  await new Promise((r) => setTimeout(r, 100))
+  await settle(100)
   check('modifier combos pass through', (await lastSeen('keydown'))?.prevented === false)
 }
 
@@ -565,7 +540,7 @@ console.log('\nescape hatches')
   })
   await clearSeen()
   await page.keyboard.type('a b')
-  await new Promise((r) => setTimeout(r, 100))
+  await settle(100)
   const value = await page.evaluate(() => document.querySelector('#probe').value)
   check('typing into a field is not swallowed', value === 'a b', `value="${value}"`)
   check('its space is not prevented', (await lastSeen('keydown'))?.prevented === false)
@@ -575,7 +550,7 @@ console.log('\nescape hatches')
   await page.keyboard.down('Control')
   await page.keyboard.press('KeyZ')
   await page.keyboard.up('Control')
-  await new Promise((r) => setTimeout(r, 80))
+  await settle(80)
   check('Ctrl+Z in a field belongs to the field', (await lastSeen('keydown'))?.prevented === false)
 
   await page.evaluate(() => document.querySelector('#probe').remove())
@@ -588,8 +563,7 @@ console.log('\nthe keyboard sets controls')
 {
   if (await page.evaluate(() => !!document.querySelector('.rack-flipped'))) {
     await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : null))
-    await page.keyboard.press('KeyF')
-    await new Promise((r) => setTimeout(r, 700))
+    await flipRack(page, false)
   }
   await page.evaluate(() => window.scrollTo(0, 0))
   const knob = '.unit-face-front .knob svg[role="slider"]'
@@ -604,28 +578,28 @@ console.log('\nthe keyboard sets controls')
   const start = await knobValue()
   await clearSeen()
   await page.keyboard.press('ArrowUp')
-  await new Promise((r) => setTimeout(r, 100))
+  await settle(100)
   const up = await knobValue()
   check('ArrowUp turns it up', up > start, `${start} -> ${up}`)
   check('and the page did not scroll', (await scrollY()) === 0, `scrollY=${await scrollY()}`)
   await page.keyboard.press('ArrowDown')
-  await new Promise((r) => setTimeout(r, 100))
+  await settle(100)
   const back = await knobValue()
   check('ArrowDown turns it back', Math.abs(back - start) < Math.abs(up - start) / 2 + 1e-6, `${up} -> ${back}`)
   await page.keyboard.press('PageUp')
-  await new Promise((r) => setTimeout(r, 100))
+  await settle(100)
   const paged = await knobValue()
   check('Page Up is a bigger step than an arrow', paged - back > up - start, `${back} -> ${paged}`)
   await page.keyboard.press('Home')
-  await new Promise((r) => setTimeout(r, 100))
+  await settle(100)
   check('Home goes to the bottom', (await knobValue()) === knobBounds.min, `${await knobValue()}`)
   await page.keyboard.press('End')
-  await new Promise((r) => setTimeout(r, 100))
+  await settle(100)
   check('End goes to the top', (await knobValue()) === knobBounds.max, `${await knobValue()}`)
   await page.keyboard.down('Control')
   await page.keyboard.press('KeyZ')
   await page.keyboard.up('Control')
-  await new Promise((r) => setTimeout(r, 100))
+  await settle(100)
   check('Ctrl+Z still undoes with a knob focused', (await knobValue()) !== knobBounds.max, `${await knobValue()}`)
 
   // A switch: one stop for the whole row, and the arrows move along it.
@@ -645,11 +619,11 @@ console.log('\nthe keyboard sets controls')
     document.querySelector('.unit-face-front .switch [role="radio"][aria-checked="true"]')?.focus(),
   )
   await page.keyboard.press('ArrowRight')
-  await new Promise((r) => setTimeout(r, 100))
+  await settle(100)
   const moved = await lit()
   check('ArrowRight moves a switch along', moved !== was && moved >= 0, `${was} -> ${moved}`)
   await page.keyboard.press('ArrowLeft')
-  await new Promise((r) => setTimeout(r, 100))
+  await settle(100)
   check('and ArrowLeft brings it back', (await lit()) === was, `${await lit()}`)
 
   // The tempo is typed, and only lands when it is finished with.
@@ -663,32 +637,46 @@ console.log('\nthe keyboard sets controls')
         return null
       }
     })
+  /** Until the field reads this and the autosave has the same tempo. */
+  const landed = (value) =>
+    waitUntil(
+      page,
+      (t, v) => {
+        try {
+          const song = JSON.parse(localStorage.getItem('fresyn.project.v1')).song
+          return document.querySelector(t)?.value === v && song.tempo === Number(v)
+        } catch {
+          return false
+        }
+      },
+      { args: [tempo, value] },
+    )
   const before = await field()
   await page.click(tempo, { clickCount: 3 })
   await page.keyboard.type('1')
-  await new Promise((r) => setTimeout(r, 600))
+  await settle(600)
   check('typing a first digit is not clamped', (await field()) === '1', `${await field()}`)
   check('and the song keeps its tempo meanwhile', String(await saved()) === before, `${await saved()}`)
   await page.keyboard.type('40')
   await page.keyboard.press('Enter')
-  await new Promise((r) => setTimeout(r, 600))
+  await landed('140')
   check('Enter sets the tempo typed', (await field()) === '140' && (await saved()) === 140, `${await field()} / ${await saved()}`)
   await page.click(tempo, { clickCount: 3 })
   await page.keyboard.type('9')
   await page.keyboard.press('Escape')
-  await new Promise((r) => setTimeout(r, 200))
+  await settle(200)
   check('Escape puts it back', (await field()) === '140', `${await field()}`)
   await page.click(tempo, { clickCount: 3 })
   await page.keyboard.type('999')
   await page.evaluate(() => document.activeElement?.blur())
-  await new Promise((r) => setTimeout(r, 600))
+  await landed('300')
   check('leaving the field clamps what was typed', (await field()) === '300' && (await saved()) === 300, `${await field()}`)
   // Back as it was, for the sections below.
   await page.click(tempo, { clickCount: 3 })
   await page.keyboard.type(before)
   await page.keyboard.press('Enter')
   await page.evaluate(() => document.activeElement?.blur())
-  await new Promise((r) => setTimeout(r, 300))
+  await settle(300)
 }
 
 // --- trigger key bindings ----------------------------------------------
@@ -709,7 +697,7 @@ console.log('\ntrigger keys')
     [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Patch'),
   )
   await menu.click()
-  await new Promise((r) => setTimeout(r, 150))
+  await settle(150)
   const item = await page.evaluateHandle(() =>
     [...document.querySelectorAll('[role=menuitem], button')].find((b) => b.textContent.includes('Library')),
   )
@@ -721,18 +709,13 @@ console.log('\ntrigger keys')
     ),
   )
   await row.click()
-  await new Promise((r) => setTimeout(r, 400))
+  await waitUntil(page, () => !!document.querySelector('.trigger-cap'))
 
   const capText = () =>
     page.evaluate(() => document.querySelector('.trigger-cap')?.textContent ?? null)
   const listening = () => page.evaluate(() => !!document.querySelector('.trigger-cap.listening'))
 
   check('the Trigger has a cap', (await capText()) === 'Space', `${await capText()}`)
-
-  // Start the engine the way a user does, and let the note decay away again
-  // so the meters below start from silence.
-  await page.click('.trigger')
-  await new Promise((r) => setTimeout(r, 1500))
 
   // How full each mixer bar is, read off the geometry the audio thread draws.
   const barFill = () =>
@@ -742,15 +725,39 @@ console.log('\ntrigger keys')
         return m ? 1 - Number(m[1]) / 100 : 0
       }),
     )
+  /**
+   * Until some bar shows sound (loud) or every bar is back on the floor.
+   * The same reading as barFill, made in the page so the wait ends the
+   * frame it comes true; a timeout just leaves the check below to fail.
+   */
+  const meters = (loud) =>
+    waitUntil(
+      page,
+      (loud) => {
+        const fill = [...document.querySelectorAll('.strip-meter-fill')].map((e) => {
+          const m = /inset\(([\d.]+)%/.exec(e.style.clipPath || '')
+          return m ? 1 - Number(m[1]) / 100 : 0
+        })
+        return loud ? fill.some((v) => v > 0.05) : fill.every((v) => v < 0.01)
+      },
+      { args: [loud], timeout: loud ? 3000 : 5000 },
+    )
+
+  // Start the engine the way a user does, and let the note decay away again
+  // so the meters below start from silence.
+  await page.click('.trigger')
+  await meters(true)
+  await meters(false)
+
   /** Hold a key for a moment and report whether the rack made a sound. */
   const sounds = async (code) => {
     await page.keyboard.down(code)
-    await new Promise((r) => setTimeout(r, 500))
+    await meters(true)
     const fill = await barFill()
     await page.keyboard.up(code)
-    // Long enough for a full-scale bar to fall all the way to the floor, so
-    // the next call starts from silence rather than from this one's tail.
-    await new Promise((r) => setTimeout(r, 1500))
+    // Until a full-scale bar has fallen all the way to the floor, so the
+    // next call starts from silence rather than from this one's tail.
+    await meters(false)
     return fill.some((v) => v > 0.05)
   }
 
@@ -763,19 +770,19 @@ console.log('\ntrigger keys')
   // Tab moves the focus, so a Trigger may not take it. The refusal has to be
   // visible: a press that silently did nothing would read as a broken cap.
   await page.keyboard.press('Tab')
-  await new Promise((r) => setTimeout(r, 150))
+  await settle(150)
   check('a reserved key is refused', (await capText()) === 'In use', `${await capText()}`)
   check('and the cap keeps waiting', await listening())
   check('the rack did not flip', await page.evaluate(() => !document.querySelector('.rack-flipped')))
 
   await page.keyboard.press('Escape')
-  await new Promise((r) => setTimeout(r, 150))
+  await settle(150)
   check('Escape ends the wait', !(await listening()))
   check('and leaves the binding alone', (await capText()) === 'Space', `${await capText()}`)
 
   await page.click('.trigger-cap')
   await page.keyboard.press('KeyW')
-  await new Promise((r) => setTimeout(r, 200))
+  await settle(200)
   check('a key can be assigned', (await capText()) === 'W', `${await capText()}`)
   check('the wait is over', !(await listening()))
   // The cap keeps the focus, and with Space no longer bound, Space would
@@ -790,7 +797,7 @@ console.log('\ntrigger keys')
   await page.keyboard.down('Control')
   await page.keyboard.press('KeyZ')
   await page.keyboard.up('Control')
-  await new Promise((r) => setTimeout(r, 250))
+  await settle(250)
   check('undo puts the binding back', (await capText()) === 'Space', `${await capText()}`)
 
   // --- latch ----------------------------------------------------------
@@ -813,7 +820,7 @@ console.log('\ntrigger keys')
       button.click()
       return true
     }, label)
-    await new Promise((r) => setTimeout(r, 150))
+    await settle(150)
     return found
   }
 
@@ -825,17 +832,17 @@ console.log('\ntrigger keys')
 
   // Tap and let go. A held gate would have closed here; a latched one does not.
   await page.keyboard.press('Space')
-  await new Promise((r) => setTimeout(r, 150))
+  await settle(150)
   check('a tap latches it on', await isLatched())
 
   await page.keyboard.press('Space')
-  await new Promise((r) => setTimeout(r, 150))
+  await settle(150)
   check('and the next tap lets it go', !(await isLatched()))
 
   // Turning Mode off latch while it is on has to release it, or the gate
   // would be held by a control that no longer has any way to close it.
   await page.keyboard.press('Space')
-  await new Promise((r) => setTimeout(r, 150))
+  await settle(150)
   check('latched again', await isLatched())
   await setMode('held')
   check('leaving latch releases it', !(await isLatched()))
@@ -847,9 +854,4 @@ console.log('\ntrigger keys')
   await page.evaluate(() => localStorage.clear())
 }
 
-console.log('\nproblems    :', problems.length ? problems : 'none')
-await browser.close()
-
-const ok = failures === 0 && problems.length === 0
-console.log(ok ? '\nPASS' : `\nFAIL (${failures} check(s))`)
-process.exit(ok ? 0 : 1)
+await finish()

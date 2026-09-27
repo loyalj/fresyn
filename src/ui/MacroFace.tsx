@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { MACRO_LANES, macroLane } from '../dsp/modules/Macro'
 import type { ModuleDef } from '../patch/types'
-import { Control } from './Control'
+import { useFace } from './useFace'
 
 /** Where each lane's colour sits on the wheel; the theme sets the rest. */
 const LANE_HUES = [30, 190, 300, 95]
@@ -49,11 +49,7 @@ interface Grab {
  * from the picture as well as from the knob.
  */
 export function MacroFace({ def, valueOf, onChange, onChanges, faceExtra }: Props) {
-  const byId = Object.fromEntries(def.params.map((p) => [p.id, p]))
-  const read = (id: string) => valueOf(id) ?? byId[id].default
-  const render = (id: string) => (
-    <Control key={id} spec={byId[id]} value={valueOf(id)} onChange={(v) => onChange(id, v)} />
-  )
+  const { read, control: render } = useFace(def, valueOf, onChange)
   const set = (values: Record<string, number>) => {
     if (onChanges) onChanges(values)
     else for (const [id, v] of Object.entries(values)) onChange(id, v)

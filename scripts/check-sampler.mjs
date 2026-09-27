@@ -9,19 +9,13 @@
  * drew, what the patch says it is pointed at, and whether the audio survives
  * a reload with nothing dropped on it a second time.
  *
- * Needs `npm run dev -- --port 5199` in another terminal.
- * Point CHROME_PATH at a Chromium build if the default is wrong.
+ * Starts its own dev server (see harness.mjs); set DEV_URL to use a running
+ * one, and CHROME_PATH if Chrome is not where the harness looks.
  */
-import puppeteer from 'puppeteer-core'
 import { join } from 'node:path'
 import { writeFileSync, mkdtempSync, readdirSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-
-const CHROME =
-  process.env.CHROME_PATH ||
-  'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'
-const URL = process.env.DEV_URL || 'http://localhost:5199/'
-const FLIP_SETTLE = 700
+import { check, finish, flipRack, open, settle, waitUntil } from './harness.mjs'
 
 /** A short stereo hit, written where the page's file input can reach it. */
 function writeWav() {
@@ -55,28 +49,25 @@ function writeWav() {
 
 const wav = writeWav()
 
-const browser = await puppeteer.launch({
-  executablePath: CHROME,
-  headless: 'new',
-  args: ['--autoplay-policy=no-user-gesture-required', '--no-sandbox'],
-})
-const page = await browser.newPage()
-await page.setViewport({ width: 1200, height: 2200 })
+const { page, url } = await open({ viewport: { width: 1200, height: 2200 } })
 
-const problems = []
-page.on('console', (m) => {
-  if (m.type() === 'error' && !m.text().includes('favicon')) problems.push('console: ' + m.text())
-})
-page.on('pageerror', (e) => problems.push('pageerror: ' + e.message))
+/**
+ * Until the Sampler shows a waveform and names the file under it: hashing,
+ * storing and decoding are all asynchronous, and this is the end of all
+ * three. The checks after it read the same two things.
+ */
+const sampleShowing = (timeout = 8000) =>
+  waitUntil(
+    page,
+    () => {
+      const path = document.querySelector('[data-module="smp1"] .sampler-trace')
+      const caption = document.querySelector('[data-module="smp1"] .sampler-caption')?.textContent ?? ''
+      return (path?.getAttribute('d')?.length ?? 0) > 400 && caption.includes('hit.wav')
+    },
+    { timeout },
+  )
 
-let failures = 0
-const check = (name, ok, detail = '') => {
-  if (!ok) failures++
-  console.log(`  ${ok ? 'ok  ' : 'FAIL'}  ${name}${detail ? '  ' + detail : ''}`)
-}
-const settle = (ms = 250) => new Promise((r) => setTimeout(r, ms))
-
-await page.goto(URL, { waitUntil: 'networkidle0' })
+await page.goto(url, { waitUntil: 'networkidle0' })
 await page.evaluate(() => localStorage.clear())
 await page.reload({ waitUntil: 'networkidle0' })
 
@@ -122,8 +113,9 @@ const addModule = async (name) => {
     )
     const iel = ih.asElement()
     if (iel) {
+      const units = await page.evaluate(() => document.querySelectorAll('.unit-flip').length)
       await iel.click()
-      await settle(300)
+      await waitUntil(page, (n) => document.querySelectorAll('.unit-flip').length === n, { args: [units + 1] })
       return true
     }
   }
@@ -151,8 +143,7 @@ console.log('\nloading a file')
   check('the panel has a file input to drive', !!input)
   if (input) {
     await input.uploadFile(wav)
-    // Hashing, storing and decoding are all asynchronous.
-    await settle(1200)
+    await sampleShowing()
   }
 
   const drawn = await page.evaluate(() => {
@@ -173,8 +164,7 @@ console.log('\nit reaches the audio thread')
 {
   // Patch it to the mixer and play it: the meters are driven from the audio
   // thread, so a bar that moves is the sample arriving in the worklet.
-  await page.keyboard.press('KeyF')
-  await settle(FLIP_SETTLE)
+  await flipRack(page, true)
   const centre = (m, p) =>
     page.evaluate(
       (mod, port) => {
@@ -197,8 +187,7 @@ console.log('\nit reaches the audio thread')
     await page.mouse.up()
     await settle(200)
   }
-  await page.keyboard.press('KeyF')
-  await settle(FLIP_SETTLE)
+  await flipRack(page, false)
 
   // Its own Trigger button, so nothing else in the rack is sounding.
   const trigger = await page.evaluate(() => {
@@ -220,7 +209,15 @@ console.log('\nit reaches the audio thread')
   if (trigger) {
     await page.mouse.move(trigger.x, trigger.y)
     await page.mouse.down()
-    await settle(500)
+    await waitUntil(
+      page,
+      () =>
+        [...document.querySelectorAll('.strip-meter-fill')].some((e) => {
+          const m = /inset\(([\d.]+)%/.exec(e.style.clipPath || '')
+          return (m ? 1 - Number(m[1]) / 100 : 0) > 0.05
+        }),
+      { timeout: 3000 },
+    )
     const sounding = await fill()
     await page.mouse.up()
     check('playing it moves a meter', sounding.some((v) => v > 0.05), `[${sounding.map((v) => v.toFixed(2))}]`)
@@ -230,7 +227,7 @@ console.log('\nit reaches the audio thread')
 console.log('\nsurviving a reload')
 {
   await page.reload({ waitUntil: 'networkidle0' })
-  await settle(1500)
+  await sampleShowing()
 
   const back = await page.evaluate(() => {
     const path = document.querySelector('[data-module="smp1"] .sampler-trace')
@@ -306,7 +303,7 @@ console.log('\nexporting and importing the rack')
         }),
     )
     await page.reload({ waitUntil: 'networkidle0' })
-    await settle(600)
+    await waitUntil(page, () => document.querySelectorAll('.unit-id').length > 0)
 
     const wiped = await page.evaluate(() =>
       [...document.querySelectorAll('.unit-id')].map((e) => e.textContent),
@@ -317,7 +314,7 @@ console.log('\nexporting and importing the rack')
     check('the patch input takes a file', !!patchInput)
     if (patchInput) {
       await patchInput.uploadFile(bundle)
-      await settle(1500)
+      await sampleShowing()
     }
 
     const restored = await page.evaluate(() => {
@@ -335,9 +332,4 @@ console.log('\nexporting and importing the rack')
   }
 }
 
-console.log('\nproblems    :', problems.length ? problems : 'none')
-await browser.close()
-
-const ok = failures === 0 && problems.length === 0
-console.log(ok ? '\nPASS' : `\nFAIL (${failures} check(s))`)
-process.exit(ok ? 0 : 1)
+await finish()

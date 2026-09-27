@@ -1,10 +1,10 @@
 /**
  * What a level bar does with a number, shared by every panel that has one.
  *
- * The mixer drives nine bars from one loop and an oscillator drives its own,
- * so the loops stay where they are -- but the scale and the fall are policy,
- * not plumbing, and two meters in the same rack that disagreed about either
- * would be two meters you could not compare.
+ * The loop that draws them is `useFallingMeter`; the scale and the fall are
+ * here because they are policy, not plumbing, and two meters in the same
+ * rack that disagreed about either would be two meters you could not
+ * compare.
  */
 
 /** Quieter than this reads as silence, as it does on the scope. */
@@ -27,4 +27,13 @@ export function scale(amplitude: number) {
   const db = 20 * Math.log10(amplitude)
   if (db <= FLOOR_DB) return 0
   return db >= 0 ? 1 : 1 - db / FLOOR_DB
+}
+
+/**
+ * Show a bar at a fraction of its height. Clipped rather than scaled:
+ * scaling the fill would squash its gradient, so a bar at a tenth would be
+ * painted in the colour the top of the scale is meant to be reserved for.
+ */
+export function fillBar(el: HTMLElement | null | undefined, fraction: number) {
+  if (el) el.style.clipPath = `inset(${(1 - fraction) * 100}% 0 0 0)`
 }

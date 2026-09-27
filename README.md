@@ -1,7 +1,7 @@
 # Fresyn
 
 A browser-based modular synth lab for designing procedural game SFX, in the
-shape of a hardware rack.
+shape of a hardware rack. It runs at **https://fresyn.dblpl.us**.
 
 **New here? Read [MANUAL.md](MANUAL.md)** -- what every module does, and
 twenty-two tutorials that build a laser, a footstep, computer chatter, wind,
@@ -9,214 +9,112 @@ an explosion, a siren, a water drop, an engine, a power-up, a sync zap, a
 ricochet, a machine gun, an alien transmission, an arpeggio, a sci-fi door, a
 bell, a coin, rain, a fly, a struck pipe, a jet flyby and a charge-up.
 
-## Status
+What changed, and when, is in [CHANGELOG.md](CHANGELOG.md).
 
-Milestone 15: it comes out as audio. **Bounce song** renders the arrangement
-to a 24-bit stereo WAV faster than realtime, and **Bounce stems** writes one
-file per track instead -- which add back up to the mix exactly, because mute
-and solo apply and a silenced track gets no file rather than a file of
-silence. The bounce runs the same scheduler the transport does, so a note is
-on the sample it was on while you were listening.
+## Run it
 
-The one rule worth knowing: **a bounce is never shorter than the arrangement.**
-A bar with notes only in its first half is still a bar, and a file trimmed
-back to its last audible sample would no longer tile -- which for a loop is
-the whole job. What is trimmed is whatever hangs past the end, faded so the
-cut cannot click; a file that ends exactly on the arrangement gets no fade,
-because that point is the seam.
+Needs Node 20 or newer. The browser checks also need Chrome.
 
-Underneath both is `SongPlayer`, which plays a project with no AudioContext,
-no worklet and no DOM anywhere -- the class a game would run, and the class
-the bounce runs. Any block size gives the same samples, so the music in a game
-is the music you wrote rather than a second implementation of it, and a
-project file is a few kilobytes where the WAV is a few megabytes. Freeze is
-not here: it was only ever a way round a CPU wall nobody has hit, and it needs
-a song-position clock in the engine that the looping transport makes more
-awkward than it looks.
+```
+npm install
+npm run dev          # http://localhost:5173
+npm run build        # type-check, then a production build in dist/
+npm run deploy       # check:fast, build, then publish dist/ to Cloudflare Pages
+```
 
-Milestone 14: tracks, patterns and a playlist. A project now holds as many
-racks as it needs, one per track, and the track you pick in the list is the
-rack on the bench -- so a piece is built by designing a sound, writing a part
-for it, and adding another track to do it again. Patterns hold the parts for
-every track at once and are placed on a playlist bar by bar; the roll plays
-the pattern you are writing and the playlist plays the arrangement, so there
-is no mode to remember. Mute and solo work as they do on a desk, and the other
-tracks' notes sit faintly behind yours in the roll so a bass line can be
-written against a drum part rather than from memory.
+`deploy` runs the headless checks first and stops if any fail, so a broken
+DSP change cannot reach the live site by accident. It publishes with
+`wrangler`, which has to be logged in to the account that owns the `fresyn`
+Pages project.
 
-Underneath, the audio thread runs one graph per track and sums them: racks
-stay completely independent, a muted one keeps its clock and its delay tails
-so unmuting is in phase, and only the rack on the bench spends anything on
-scopes and meters. Saving is a project now -- the arrangement, every rack and
-all of their audio in one file, which is also the file a game would load.
-A rack on its own is still a patch, still a small readable file, and still
-what you send somebody when you mean "here is a sound".
+## The rack
 
-Milestone 13: the roll. A piano roll docks under the rack and plays whatever
-is on the bench, so the panel you are editing stays in front of you while the
-loop runs -- reach for the cutoff and you hear it on the next note instead of
-after a trip through a second window. Draw notes with a drag, set how hard
-they hit in the velocity lane, and pick the tempo, the length and the snap
-from the bar along the bottom. A rack with a Keyboard in it plays pitches; a
-rack without one plays its Trigger, which is the right way to write a rhythm
-for a coin or a footstep. The Keyboard grew a **Vel** jack to carry the other
-half of that, and its Octave switch now transposes a written pattern as well
-as a played one.
+The rack is yours to build: add and remove modules, reorder them, name a
+patch and it autosaves, export and import patches as JSON. A row of the rack
+holds one full-width panel or two half-width ones: the panels that need the
+room -- the oscillator, the keyboard, the sequencer, the mixer, the scope, the
+recorder and the like -- take a whole row, and the rest take half of one and
+pair up with whatever half panel is next to them. F flips the rack to drag
+cables on the back panel, and every edit recompiles and rewires the running
+graph in place, so it keeps playing while you work.
 
-Underneath it, the rack learned to be played by something other than a pair
-of hands. Events are queued against exact samples rather than posted at the
-next block boundary, so a note lands where it was written whatever the
-browser is doing, and the offline renderer runs the same queue -- which is
-what will make a bounced song sound like the one you approved. The arrangement
-saves alongside the racks in a project file.
+Knobs are dragged up and down, nudged with the mouse wheel for fine work --
+which leaves the page scrolling everywhere that is not a knob -- and reset by
+double-clicking. Shift makes either gesture five times finer. Tab moves the
+focus, and a focused knob, switch or jack takes the keys its kind of control
+is expected to take.
 
-Milestone 12: the jacks that were missing. The LFO's Rate can be patched, so
-a wobble can speed up or slow down -- an engine revving, a siren winding up --
-which is the thing its panel could not do. Drive, the Wavefolder and the
-Bitcrusher each take CV now: they were the only signal-path modules in the
-rack with nothing but an In, and the manual had been telling readers to put a
-VCA in front of the folder as a way around it. The Trigger takes a cable, so a
-clock through it in `once` mode is a fixed length at the clock's rate. The
-Envelope says when it has finished and offers its shape upside down, which is
-a whole CV Utility saved every time something has to duck rather than swell.
-And the Scope has a second input, drawn from the first one's trigger point so
-the two line up.
+Space holds the gate for the whole rack; a trigger button on a panel fires
+just that module. F flips the rack, and Ctrl+Z / Ctrl+Shift+Z step through
+history. On the back panel, drag between jacks to patch; drag out of a jack,
+click a cable, or right-click a jack, to unplug. A unit is dragged up and down
+the rack by the strip down its left edge, from either face; hovering one on
+the back reveals the buttons that move it a row or pull it out. The bar across
+the top is a panel of its own, bolted to the head of the rails: it stays put
+while the rack scrolls under it, and it carries the menus -- Project, Edit,
+Patch, Modules and View. A module chosen from the Modules menu arrives at the
+top of the rack, where the menu that added it is, rather than off the bottom
+of a rack that may be pages long.
 
-Milestone 11: a pitch is a note. The oscillator says which note it is
-sounding under its waveform window -- Octave included, since that is the note
-you hear rather than the one the knob is set to -- and its Pitch knob snaps to
-whole notes while Alt is held, steps a semitone a notch on Alt and the wheel,
-and takes a note typed into its readout. Twelve
-octaves on one knob cannot be tuned by eye: a fifth is seven semitones, which
-is 55 Hz at the bottom of that knob and 3.6 kHz at the top.
-
-The LFO gets the oscillator's waveform window too, sitting on top of its Shape
-buttons and scaled by its Depth -- which matters more there than on a voice
-you can hear, since the picture is the only account an LFO gives of itself. It
-cost no room at all: a switch is shorter than a knob, so the space above one
-was already empty.
-
-Milestone 10: the oscillator stops needing help to do ordinary work. Its own
-envelope now has three destinations rather than one -- level, pitch and width
--- so a laser is one module with nothing patched into it, and a PWM sweep
-needs no LFO. It has a Level knob and a meter of its own, so stacking two of
-them into a mixer is not a fight with the master fader. And its Pitch knob
-runs from 2 Hz to 12 kHz with an Octave switch beside it, which is a rumble at
-one end, a sparkle at the other, and a coarse-and-fine pair for tuning one
-oscillator against another.
-
-It also shows its work: beside the envelope graph there is now a window
-holding two cycles of the wave, drawn by running the oscillator itself, so
-Width is something you can see rather than a number to interpret. And it stops
-working when nothing can be heard -- at a gain of exactly zero, which is a
-one-shot voice between notes or a Level knob shut, it makes no samples at all.
-Eight idle voices cost 508 ms of work per ten seconds of audio before that and
-316 ms after.
-
-Milestone 9: the oscillator learns the other kind of FM. Its FM jack has a
-mode switch -- exponential, which moves the pitch in octaves and is what a
-keyboard or a falling envelope wants, and linear, which moves it in multiples
-of the Pitch knob and is what an audio-rate modulator wants. Linear FM leaves
-the average pitch exactly where it was tuned, so a second oscillator patched
-into it adds a fixed set of partials instead of a wobble: bells, chimes,
-clangs and the two-note coin every platform game has, neither of which this
-rack could make before. The frequency is free to pass through zero and run
-backwards, because stopping at zero folds the pitch back up again at exactly
-the index where the interesting part starts.
-
-Hard sync got the same attention underneath. The restart is now timed between
-samples and the step it leaves is corrected like any other discontinuity in
-the core, which is 13 dB less aliasing on every waveform and 30 dB on a sine.
-
-Milestone 8: utilities, and a way to see what you are doing. The CV utility
-gives the rack something it never had -- an attenuverter, so a modulation
-source can be inverted, scaled or offset before it reaches where it is going.
-A sample and hold gives four channels, each with its own clock and noise
-source, so a channel is a stepped random generator with nothing patched into
-it at all, and a slew limiter turns those steps into glides, a gate into an
-envelope, or a pitch into portamento. A
-scope shows the signal at any jack, as a triggered waveform or a log spectrum.
-
-Milestone 7: the oscillator has an envelope of its own -- a full DAHDSR with
-a trigger button on its panel and a graph of its shape -- available both as
-its own amplitude and on an Env jack for the rest of the rack. Modules with a
-trigger get their own button; the spacebar still fires everything.
-
-Milestone 6: render, listen, then save. A batch renders into a list you can
-play back and look at, keeping the ones that worked, so designing a sound no
-longer means a round trip through a file manager. Every edit is undoable.
-
-Every random source is seeded, so a render is reproducible, and a batch is the
-same patch under a series of known seeds -- eight footsteps that belong
-together rather than eight unrelated sounds. Kept takes download as WAV, or as
-a zip when there is more than one.
-
-The recorder is a rack module rather than a strip under the rack, and it is a
-tap rather than a stage: it takes whatever is patched to it, at the level it
-arrives, and patching one in cannot change what the rack sounds like.
-
-The rack itself is yours to build: add and remove modules, reorder them, name
-a patch and it autosaves, export and import patches as JSON. A row of the rack
-holds one full-width panel or two half-width ones: the seven that need the
-room -- oscillator, keyboard, sample and hold, sequencer, mixer, scope and
-recorder -- take a whole row, and the other seventeen take half of one and
-pair up with whatever half panel is next to them. The stock rack is a voice, a filter and an LFO abreast,
-and a console. F flips the
-rack to drag cables on the back panel, and every edit recompiles and rewires
-the running graph in place, so it keeps playing while you work. Twenty-four module
-types, including a 25-key keyboard, an 8:2 stereo mixer and a scope.
+The dock under the rack holds the music: a piano roll that plays whatever is
+on the bench, tracks with a rack each, patterns placed on a playlist, and a
+mix view. **Bounce song** and **Bounce stems** render the arrangement to WAV.
 
 The rack can be repainted. A *theme* is a family of colours and each one comes
 in dark and light -- Standard, the original studio grey and amber; Fall Cafe in
 oat milk, kraft paper and dried leaves, going to espresso and plum after
-closing; Neon Vice,
-whose pink and blue tubes keep their jobs in both modes; Mesa in sun-struck
-adobe, clay and sage; Terminal 80s, a green phosphor tube that becomes
-electric orange on sepia with the lights on; Halloween, pumpkin and witch
-purple, candy corn by day; True North, snow white between maple-red rack
-ears; Deep Sea, bioluminescence in the abyss and a reef by day; Arcade, a
+closing; Neon Vice, whose pink and blue tubes keep their jobs in both modes;
+Mesa in sun-struck adobe, clay and sage; Terminal 80s, a green phosphor tube
+that becomes electric orange on sepia with the lights on; Halloween, pumpkin
+and witch purple, candy corn by day; True North, snow white between maple-red
+rack ears; Deep Sea, bioluminescence in the abyss and a reef by day; Arcade, a
 black cabinet and its side art; Blueprint, white lines on drafting blue or
 pencil on graph paper; Winter Holiday, pine, cranberry and gold; Vaporwave,
-aqua over a pink-to-purple sunset; and Tube Amp, Tolex, chicken-head knobs
-and valve glow. The two are separate choices, so picking light does not drop you back into
-the standard palette. The change cross-fades and is remembered.
+aqua over a pink-to-purple sunset; and Tube Amp, Tolex, chicken-head knobs and
+valve glow. The two are separate choices, so picking light does not drop you
+back into the standard palette. The change cross-fades and is remembered.
+
+## Checks
 
 ```
-npm run dev              # http://localhost:5173
-npm run check:dsp        # compiler and graph engine, headless
-npm run check:browser    # worklet + offline render in a real browser
-npm run check:cables     # drives the cable UI in a real browser
-npm run check:input      # input capture, in a real browser
-npm run check:patch      # rack editing and the save format, headless
-npm run check:rack       # rack editing and persistence, in a real browser
-npm run check:scope      # the scope, read back off the canvas, in a browser
-npm run check:manual     # every patch the manual teaches, rendered, headless
-npm run check:modules    # audits every module in the catalogue, headless
-npm run check:theme      # every palette: tokens and contrast, headless
-npm run check:render     # offline render, WAV and zip, headless
-npm run check:export     # render, audition and save, in a real browser
+npm run check              # everything: the headless checks, then the browser ones
+npm run check:fast         # the headless checks only; what deploy runs
+npm run check:browser-all  # every browser suite, sharing one dev server
 ```
 
-Knobs are dragged up and down, nudged with the mouse wheel for fine work --
-which leaves the page scrolling everywhere that is not a knob -- and reset by
-double-clicking. Shift makes either gesture five times finer.
+The aggregates run every suite even after one fails and finish with a table
+of what passed and how long each took. Any one can be run on its own:
 
-Space holds the gate for the whole rack; a trigger button on a panel fires
-just that module. F flips the rack, and Ctrl+Z / Ctrl+Shift+Z step through
-history. On the back panel, drag between
-jacks to patch; drag out of a jack, click a cable, or right-click a jack, to
-unplug. A unit is dragged up and down the rack by the strip down its left edge, from
-either face; hovering one on the back reveals the buttons that move it a row
-or pull it out. The bar across the top is a panel of its
-own, bolted to the head of the rails: it stays put while the rack scrolls
-under it, and it carries the menus -- Project, Edit, Patch, Modules and View. A module
-chosen from the Modules menu arrives at the top of the rack, where the menu
-that added it is, rather than off the bottom of a rack that may be pages
-long.
+```
+# headless
+npm run check:dsp          # compiler and graph engine
+npm run check:patch        # rack editing and the save format
+npm run check:render       # offline render, WAV and zip
+npm run check:song         # the arrangement, scheduling, and SongPlayer
+npm run check:manual       # every patch the manual teaches, rendered
+npm run check:instruments  # every library instrument, built, played and in tune
+npm run check:modules      # audits every module in the catalogue
+npm run check:theme        # every palette: tokens, and contrast where it lands
 
-The browser checks need a dev server on port 5199 (`npm run dev -- --port
-5199`) and Chrome; set `CHROME_PATH` if it is not at the default Windows
-location.
+# in a real browser
+npm run check:browser      # the worklet, the meters, offline render, autosave
+npm run check:cables       # drags cables on the back panel
+npm run check:input        # the keys and the pointer the app claims
+npm run check:rack         # rack editing, the library, persistence, files
+npm run check:export       # render, audition and save takes
+npm run check:roll         # the music dock: notes, tracks, playlist, bounce
+npm run check:sampler      # a real WAV through the Sampler, and back out
+npm run check:scope        # the scope, read back off the canvas
+npm run check:tools        # search, bypass, copying, cable colours, shelves
+```
+
+The headless checks are TypeScript that imports the real DSP and patch code;
+`scripts/run-ts.mjs` bundles each with esbuild into `node_modules/.cache` and
+runs it. The browser suites share `scripts/harness.mjs`, which starts Vite in
+the same process on a free port, so no second terminal is needed. Set
+`DEV_URL` to point them at a server that is already running instead, and
+`CHROME_PATH` if Chrome is not where the harness looks for it (the usual
+install paths on Windows, macOS and Linux).
 
 ## Decisions
 
@@ -622,6 +520,8 @@ palette has been replaced.
 
 ```
 src/
+  main.tsx App.tsx app.css
+  theme.css            # every palette, as tokens on <html>
   patch/               # the patch as data; shared by UI and DSP
     defs.ts            # module catalogue: ports and knobs, declared once
     types.ts param.ts
@@ -630,54 +530,82 @@ src/
     serialize.ts       # the save format, and a defensive loader
     history.ts         # undo/redo, with coalescing
     storage.ts         # autosave, and project and patch files
+    fileAccess.ts      # files the app can write back to, like a desktop program
+    archive.ts bundle.ts   # a patch or project and its audio, in one zip
+    sampleRefs.ts      # which samples are still wanted, so the rest can go
+    build.ts           # the building blocks every shipped rack is written with
+    library.ts         # tutorial racks and templates to start from
+    instruments.ts     # off-the-shelf voices for the roll
+    myLibrary.ts       # the library's own shelves: saved and starred racks
+    knobHelp.ts        # what each knob does, read out of the manual
     defaultPatch.ts
   song/                # the arrangement; as free of the browser as patch/
     types.ts           # tracks, patterns, notes, placements; 960 ticks a beat
     schedule.ts        # a window of the song, as ticks and then as samples
     transport.ts       # the lookahead cursor, and where the playhead is
     edit.ts            # add, remove, place; the invariants nothing else keeps
+    noteEdit.ts        # edits to a group of notes, for the roll
+    normalize.ts       # the invariants a song holds however it arrived
     bind.ts            # what in a rack a track's notes are played on
+    chord.ts scale.ts  # the roll's chord tool, and its scales
     runtime.ts         # SongPlayer: a project, played with no browser at all,
                        # and every knob in it a game can turn
     serialize.ts project.ts   # a defensive reader, and the project file
   dsp/                 # audio thread; no DOM, no allocation in process()
     worklet.ts         # AudioWorkletProcessor entry, registers 'fresyn-voice'
+    protocol.ts        # the messages between the main thread and the worklet
     SongEngine.ts      # one graph per track, summed; the worklet is its shell
+    Console.ts         # the song desk: strips, shared effects, the limiter
     GraphEngine.ts     # steps the compiled graph one sample at a time
     modules/           # one file per module type, plus the type registry
     PolyBlepOsc.ts LadderFilter.ts Envelope.ts DcBlocker.ts Smoothed.ts Rng.ts
+    Biquad.ts DelayLine.ts Adaa.ts   # shared filter, delay and shaper parts
+    Rail.ts            # how far a signal may go anywhere a patch can grow it
+    Loudness.ts        # BS.1770 loudness, for the LUFS readout
+    samples.ts         # audio a patch plays but does not contain
   audio/
     AudioEngine.ts     # main-thread handle; React never touches AudioContext
     Transport.ts       # plays a song, off the audio thread's own clock
     render.ts          # offline render, and variation batches
     renderSong.ts      # bounce the arrangement, and one file per track
+    normalize.ts       # peak or loudness targets for what is written out
+    SampleLibrary.ts sampleStore.ts   # dropped files, decoded and kept
     wav.ts zip.ts      # 16/24-bit PCM, and a store-only zip writer
     waveform.ts        # peak envelopes for drawing a take
   input/               # browser input capture and key bindings
-  theme.css            # every palette, as tokens on <html>
+    InputManager.ts useInput.ts keyLabel.ts
   ui/                  # Knob, Switch, Control, ModulePanel, RackUnit
     theme.ts           # the theme catalogue, and where the choice is kept
     ThemeContext.ts    # the current appearance, and the cross-fade
-    ThemePicker.tsx    # the two appearance controls in the masthead
-    OscFace.tsx              # the oscillator's hand-laid-out panel
-    EnvelopeGraph.tsx envelopeShape.ts
+    palette.ts         # the hues a pattern or a track can be given
+    Menu.tsx ModuleSearch.tsx LibraryDialog.tsx RackIndex.tsx
+    OscFace.tsx LfoFace.tsx KeysFace.tsx SeqFace.tsx LadderFace.tsx
+    SvfFace.tsx MacroFace.tsx SamplerFace.tsx   # hand-laid-out panels
+    EnvelopeGraph.tsx envelopeShape.ts WaveGraph.tsx waveShape.ts
+    ResponseGraph.tsx        # a filter's curve, drawn from its own maths
     Jack.tsx BackPanel.tsx   # the reverse of a unit
     ScopeFace.tsx            # the scope's screen and its draw loop
     scopeDraw.ts fft.ts      # canvas drawing, and the transform behind it
-    EngineContext.ts         # the engine, for panels that show live audio
-    MixerFace.tsx            # channel strips, and the meter draw loop
-    MacroFace.tsx            # the macro's lanes, drawn and dragged
-    SvfFace.tsx              # the multimode filter and its response
+    EngineContext.ts SampleContext.ts
+    MixerFace.tsx MixView.tsx meter.ts   # the rack mixer, the song desk, meters
     UnitSpine.tsx            # the rack ear, and the drag handle
-    useRackDrag.ts           # reordering by dragging a unit
+    useRackDrag.ts rackLayout.ts   # dragging a unit, and how a row is shared
     Cables.tsx               # the cable layer, purely visual
     cableGeometry.ts         # curve maths and pointer hit-testing
-    SongDock.tsx             # the music drawer: transport, tracks, two views
+    SongDock.tsx             # the music drawer: transport, tracks, views
     PianoRoll.tsx rollDraw.ts  # the roll, and its canvas drawing
     Playlist.tsx TrackList.tsx # the arrangement grid, and the track strip
-scripts/               # verification harnesses
-  check-theme.mjs      # palette token coverage and contrast
+    ExportPanel.tsx TakeList.tsx   # the recorder's render and audition
+    TriggerButton.tsx PresetButton.tsx ConfirmButton.tsx KnobHelp.tsx
+    ErrorBoundary.tsx        # a panel that throws, contained
+scripts/               # verification
+  run-checks.mjs       # the aggregates: fast, browser, all
+  run-ts.mjs           # bundles a check-*.ts with esbuild, then runs it
+  harness.mjs          # what every browser suite shares: server, Chrome, waits
+  check-*.ts           # the headless checks
+  check-*.mjs          # the browser suites, and check-theme (headless)
 MANUAL.md              # the user manual, and the patches check:manual renders
+CHANGELOG.md           # what changed, newest first
 
 Modules: gate, osc, sampler, voice, keys, noise, dust, lfo, adsr, sh, drunk,
 clock, burst, seq, macro, slew, quant, cv, ladder, svf, formant, eq, drive,
@@ -691,8 +619,9 @@ scope, rec.
 2. ~~Patch graph: modules as data, topological sort, feedback cables.~~
 3. ~~Rack UI: Tab to flip to the back panel, drag cables.~~
 4. ~~Adding and removing modules; saving and loading patches.~~
-5. Module library: ~~S&H, slew, CV utilities, scope~~; ~~multi-mode filter~~,
-   waveshaper, bitcrusher, delay, ~~comb~~, resonator bank, reverb.
+5. ~~Module library: S&H, slew, CV utilities, scope; multi-mode filter,
+   waveshaper (Drive, Wavefolder), bitcrusher, delay, comb, resonator bank,
+   reverb (Space).~~
 6. Game-audio workflow -- the reason this exists:
    - ~~seeded RNG, so renders are reproducible~~
    - ~~batch variation renders, WAV export, zip~~

@@ -7,6 +7,12 @@
    above it. These themes differ in hue, not only in lightness, and a
    partial override is how a green rack ends up with one grey knob.
 
+   The one exception is the rack ear's ink. --spine-ink and
+   --spine-ink-faint are optional: app.css falls back to --ink-dim and
+   --ink-faint, and a palette declares them only when its ears are a
+   different weight from its panels and the panel's ink would sink into
+   them. check-theme knows this and measures whichever one will be used.
+
    Names say what a part is, not what colour it happens to be: --spine-top
    survives a theme that makes the rack ears sage, where --grey-dark would
    have become a lie.
@@ -21,7 +27,6 @@
   --panel: #23252b;
   --panel-edge: #15161a;
   --hairline: #2c2e35;
-  --hairline-dash: #34363e;
   --rule: #45474f;
 
   /* Against the panel: --ink-dim is about 7:1 and --ink-faint about 5:1.
@@ -72,8 +77,6 @@
   --shadow-hole: rgb(0 0 0 / 0.9);
 
   --field: #16171b;
-  --kbd: #101115;
-  --kbd-edge: #303239;
   --sunken: #000;
 
   --knob-track: #131419;
@@ -127,7 +130,6 @@
   --panel: #f2f2ef;
   --panel-edge: #b7b7b1;
   --hairline: #c9c9c2;
-  --hairline-dash: #c2c2ba;
   --rule: #b5b5ae;
 
   --ink: #23252b;
@@ -172,8 +174,6 @@
   --shadow-hole: rgb(0 0 0 / 0.55);
 
   --field: #fff;
-  --kbd: #fff;
-  --kbd-edge: #c9c9c2;
   --sunken: rgb(40 42 48 / 0.35);
 
   --knob-track: #d2d2cb;
@@ -233,7 +233,6 @@
   --panel: #f1ece1;
   --panel-edge: #b4a894;
   --hairline: #ccc2af;
-  --hairline-dash: #c2b7a2;
   --rule: #beb39e;
 
   --ink: #322620;
@@ -255,6 +254,7 @@
   --unit-shadow: rgb(70 52 44 / 0.16);
   --spine-top: #c5bb9c;
   --spine-bottom: #dbd3b9;
+  --spine-ink-faint: #6c5e50;
   --rear-top: #e6dfcf;
   --rear-bottom: #dcd4c1;
 
@@ -280,8 +280,6 @@
   --shadow-hole: rgb(0 0 0 / 0.5);
 
   --field: #fbf8f1;
-  --kbd: #fbf8f1;
-  --kbd-edge: #ccc2af;
   --sunken: rgb(70 52 44 / 0.3);
 
   --knob-track: #d8cfbb;
@@ -339,7 +337,6 @@
   --panel: #241c16;
   --panel-edge: #100c09;
   --hairline: #342a20;
-  --hairline-dash: #413427;
   --rule: #4a3b2c;
 
   --ink: #e9dcc2;
@@ -384,8 +381,6 @@
   --shadow-hole: rgb(0 0 0 / 0.9);
 
   --field: #1c1611;
-  --kbd: #130f0c;
-  --kbd-edge: #362a20;
   --sunken: #000;
 
   --knob-track: #130f0c;
@@ -437,7 +432,6 @@
   --panel: #2e0249;
   --panel-edge: #16012a;
   --hairline: #3d0761;
-  --hairline-dash: #4a0a74;
   --rule: #570a57;
 
   --ink: #f0e3fa;
@@ -488,8 +482,6 @@
   --shadow-hole: rgb(0 0 0 / 0.9);
 
   --field: #1c0230;
-  --kbd: #150124;
-  --kbd-edge: #3e0763;
   --sunken: #000;
 
   --knob-track: #170126;
@@ -545,7 +537,6 @@
   --panel: #edeef7;
   --panel-edge: #aeb0d6;
   --hairline: #c9cbe4;
-  --hairline-dash: #bfc1dc;
   --rule: #b4b6d4;
 
   --ink: #241f4d;
@@ -598,8 +589,6 @@
   --shadow-hole: rgb(20 15 50 / 0.5);
 
   --field: #fff;
-  --kbd: #fff;
-  --kbd-edge: #c3c5e0;
   --sunken: rgb(60 56 110 / 0.32);
 
   --knob-track: #d2d4ea;
@@ -653,7 +642,6 @@
   --panel: #fbebd6;
   --panel-edge: #c4a481;
   --hairline: #d6be9e;
-  --hairline-dash: #ccb392;
   --rule: #c8af8d;
 
   --ink: #2f211c;
@@ -701,8 +689,6 @@
   --shadow-hole: rgb(0 0 0 / 0.5);
 
   --field: #fffaf0;
-  --kbd: #fffaf0;
-  --kbd-edge: #d6be9e;
   --sunken: rgb(70 40 30 / 0.3);
 
   --knob-track: #e2d0af;
@@ -756,7 +742,6 @@
   --panel: #31211e;
   --panel-edge: #170f0d;
   --hairline: #47302b;
-  --hairline-dash: #543a33;
   --rule: #5c4038;
 
   --ink: #e0c097;
@@ -801,8 +786,6 @@
   --shadow-hole: rgb(0 0 0 / 0.9);
 
   --field: #231715;
-  --kbd: #1c1211;
-  --kbd-edge: #47302b;
   --sunken: #000;
 
   --knob-track: #1d1312;
@@ -858,7 +841,6 @@
   --panel: #0a1a10;
   --panel-edge: #030a06;
   --hairline: #17381f;
-  --hairline-dash: #1e4a2a;
   --rule: #255c33;
 
   --ink: #a8ffc0;
@@ -904,8 +886,6 @@
   --shadow-hole: rgb(0 0 0 / 0.9);
 
   --field: #06150c;
-  --kbd: #030d07;
-  --kbd-edge: #1c4629;
   --sunken: #000;
 
   --knob-track: #061209;
@@ -961,7 +941,6 @@
   --panel: #f2dfb6;
   --panel-edge: #bc9c64;
   --hairline: #d2b584;
-  --hairline-dash: #c8aa77;
   --rule: #c3a470;
 
   --ink: #351c02;
@@ -1006,8 +985,6 @@
   --shadow-hole: rgb(0 0 0 / 0.5);
 
   --field: #fff7e4;
-  --kbd: #fff7e4;
-  --kbd-edge: #d2b584;
   --sunken: rgb(80 45 5 / 0.34);
 
   --knob-track: #dcc493;
@@ -1064,7 +1041,6 @@
   --panel: #1f1726;
   --panel-edge: #0a070c;
   --hairline: #2e2338;
-  --hairline-dash: #3a2c46;
   --rule: #433352;
 
   --ink: #eee2cc;
@@ -1109,8 +1085,6 @@
   --shadow-hole: rgb(0 0 0 / 0.9);
 
   --field: #18121d;
-  --kbd: #120d16;
-  --kbd-edge: #2e2338;
   --sunken: #000;
 
   --knob-track: #120d16;
@@ -1163,7 +1137,6 @@
   --panel: #fff5e6;
   --panel-edge: #c9a98a;
   --hairline: #e6ceb0;
-  --hairline-dash: #dcc2a1;
   --rule: #d4b894;
 
   --ink: #2b1a3a;
@@ -1211,8 +1184,6 @@
   --shadow-hole: rgb(0 0 0 / 0.5);
 
   --field: #fffbf4;
-  --kbd: #fffbf4;
-  --kbd-edge: #e0c7a6;
   --sunken: rgb(60 30 70 / 0.3);
 
   --knob-track: #ead7ba;
@@ -1264,7 +1235,6 @@
   --panel: #ffffff;
   --panel-edge: #b9c3cc;
   --hairline: #d8dfe5;
-  --hairline-dash: #ccd4db;
   --rule: #c4ccd4;
 
   --ink: #1e2328;
@@ -1313,8 +1283,6 @@
   --shadow-hole: rgb(0 0 0 / 0.5);
 
   --field: #ffffff;
-  --kbd: #ffffff;
-  --kbd-edge: #d0d8df;
   --sunken: rgb(30 40 50 / 0.3);
 
   --knob-track: #dde3e8;
@@ -1365,7 +1333,6 @@
   --panel: #182026;
   --panel-edge: #080b0d;
   --hairline: #253038;
-  --hairline-dash: #2f3b44;
   --rule: #36444e;
 
   --ink: #e6edf1;
@@ -1412,8 +1379,6 @@
   --shadow-hole: rgb(0 0 0 / 0.9);
 
   --field: #121a1f;
-  --kbd: #0e1316;
-  --kbd-edge: #253038;
   --sunken: #000;
 
   --knob-track: #0e1316;
@@ -1467,7 +1432,6 @@
   --panel: #0b1a2b;
   --panel-edge: #02060b;
   --hairline: #14283d;
-  --hairline-dash: #1b3350;
   --rule: #203b5a;
 
   --ink: #d6f1ff;
@@ -1478,7 +1442,7 @@
   --accent-line: #5ff0f5;
   --accent-rgb: 95 240 245;
   --on-accent: #02161a;
-  --danger: #d62a6a;
+  --danger: #cf2966;
   --on-danger: #fff0f5;
 
   --unit-top: #10233a;
@@ -1512,8 +1476,6 @@
   --shadow-hole: rgb(0 0 0 / 0.9);
 
   --field: #081524;
-  --kbd: #050d18;
-  --kbd-edge: #14283d;
   --sunken: #000;
 
   --knob-track: #050d18;
@@ -1564,7 +1526,6 @@
   --panel: #f2fcfb;
   --panel-edge: #8cc2c8;
   --hairline: #cfe9ea;
-  --hairline-dash: #bfe0e2;
   --rule: #b3d8db;
 
   --ink: #0b2a3a;
@@ -1584,6 +1545,7 @@
   --unit-shadow: rgb(10 50 70 / 0.14);
   --spine-top: #7fd0d6;
   --spine-bottom: #a9e2e4;
+  --spine-ink-faint: #47697a;
   --rear-top: #eaf6f6;
   --rear-bottom: #dcefef;
 
@@ -1609,8 +1571,6 @@
   --shadow-hole: rgb(0 0 0 / 0.5);
 
   --field: #fbffff;
-  --kbd: #fbffff;
-  --kbd-edge: #bfe0e2;
   --sunken: rgb(10 50 70 / 0.3);
 
   --knob-track: #d2eaeb;
@@ -1662,7 +1622,6 @@
   --panel: #111116;
   --panel-edge: #000;
   --hairline: #1f1f28;
-  --hairline-dash: #2a2a36;
   --rule: #33333f;
 
   --ink: #f2f2ff;
@@ -1674,7 +1633,7 @@
   --accent-rgb: 255 240 77;
   --on-accent: #1a1500;
   --danger: #ff2a2a;
-  --on-danger: #fff;
+  --on-danger: #1a0000;
 
   --unit-top: #18181f;
   --unit-bottom: #111116;
@@ -1707,8 +1666,6 @@
   --shadow-hole: rgb(0 0 0 / 0.9);
 
   --field: #0c0c11;
-  --kbd: #050507;
-  --kbd-edge: #1f1f28;
   --sunken: #000;
 
   --knob-track: #050507;
@@ -1760,14 +1717,13 @@
   --panel: #ffffff;
   --panel-edge: #2a2a48;
   --hairline: #d9d4ee;
-  --hairline-dash: #cbc4e6;
   --rule: #c0b8e0;
 
   --ink: #14142b;
   --ink-dim: #3b3b5c;
   --ink-faint: #57577a;
 
-  --accent: #ff2e88;
+  --accent: #db2875;
   --accent-line: #c4005c;
   --accent-rgb: 255 46 136;
   --on-accent: #fff;
@@ -1807,8 +1763,6 @@
   --shadow-hole: rgb(0 0 0 / 0.5);
 
   --field: #ffffff;
-  --kbd: #ffffff;
-  --kbd-edge: #d0cae8;
   --sunken: rgb(20 20 43 / 0.3);
 
   --knob-track: #e0dcf1;
@@ -1861,7 +1815,6 @@
   --panel: #0f3470;
   --panel-edge: #061d42;
   --hairline: #2a5494;
-  --hairline-dash: #3a64a4;
   --rule: #4a74b4;
 
   --ink: #eef5ff;
@@ -1872,7 +1825,7 @@
   --accent-line: #ffffff;
   --accent-rgb: 255 255 255;
   --on-accent: #0a2a5c;
-  --danger: #d9412f;
+  --danger: #d5402e;
   --on-danger: #fff;
 
   --unit-top: #123b7c;
@@ -1906,8 +1859,6 @@
   --shadow-hole: rgb(0 10 30 / 0.85);
 
   --field: #0b2c60;
-  --kbd: #0a2a5c;
-  --kbd-edge: #2a5494;
   --sunken: #031433;
 
   --knob-track: #082453;
@@ -1959,7 +1910,6 @@
   --panel: #fbfcf8;
   --panel-edge: #a9b3a5;
   --hairline: #d7ddd2;
-  --hairline-dash: #c9d1c3;
   --rule: #c0c9ba;
 
   --ink: #2b2f33;
@@ -2004,8 +1954,6 @@
   --shadow-hole: rgb(0 0 0 / 0.5);
 
   --field: #ffffff;
-  --kbd: #ffffff;
-  --kbd-edge: #cfd6c9;
   --sunken: rgb(40 45 40 / 0.3);
 
   --knob-track: #dde3d7;
@@ -2057,7 +2005,6 @@
   --panel: #13271e;
   --panel-edge: #050d09;
   --hairline: #1e3a2d;
-  --hairline-dash: #274836;
   --rule: #2f523f;
 
   --ink: #f5ecd7;
@@ -2104,8 +2051,6 @@
   --shadow-hole: rgb(0 0 0 / 0.9);
 
   --field: #0e1f17;
-  --kbd: #0b1a14;
-  --kbd-edge: #1e3a2d;
   --sunken: #000;
 
   --knob-track: #0b1a14;
@@ -2157,7 +2102,6 @@
   --panel: #ffffff;
   --panel-edge: #b7c4be;
   --hairline: #d9e2de;
-  --hairline-dash: #cbd6d1;
   --rule: #c1cdc7;
 
   --ink: #13271e;
@@ -2204,8 +2148,6 @@
   --shadow-hole: rgb(0 0 0 / 0.5);
 
   --field: #ffffff;
-  --kbd: #ffffff;
-  --kbd-edge: #cfd9d4;
   --sunken: rgb(20 40 30 / 0.3);
 
   --knob-track: #dde5e1;
@@ -2258,7 +2200,6 @@
   --panel: #2a2050;
   --panel-edge: #0d0920;
   --hairline: #3b2f66;
-  --hairline-dash: #473a78;
   --rule: #524487;
 
   --ink: #f8e9ff;
@@ -2270,7 +2211,7 @@
   --accent-rgb: 141 255 243;
   --on-accent: #07201d;
   --danger: #ff4b6e;
-  --on-danger: #fff;
+  --on-danger: #1b1433;
 
   --unit-top: #30255a;
   --unit-bottom: #2a2050;
@@ -2305,8 +2246,6 @@
   --shadow-hole: rgb(0 0 0 / 0.9);
 
   --field: #1f173e;
-  --kbd: #1b1433;
-  --kbd-edge: #3b2f66;
   --sunken: #000;
 
   --knob-track: #140e2b;
@@ -2357,7 +2296,6 @@
   --panel: #fff5fb;
   --panel-edge: #d9a9cc;
   --hairline: #f2d6e8;
-  --hairline-dash: #ebc6de;
   --rule: #e3b8d4;
 
   --ink: #2a1650;
@@ -2377,6 +2315,7 @@
   --unit-shadow: rgb(90 40 110 / 0.14);
   --spine-top: #7ce8dc;
   --spine-bottom: #b9a3f5;
+  --spine-ink-faint: #644e91;
   --rear-top: #fbeaf4;
   --rear-bottom: #f4dcea;
 
@@ -2402,8 +2341,6 @@
   --shadow-hole: rgb(0 0 0 / 0.5);
 
   --field: #fffbfe;
-  --kbd: #fffbfe;
-  --kbd-edge: #ebc6de;
   --sunken: rgb(90 40 110 / 0.3);
 
   --knob-track: #f0d6e6;
@@ -2455,7 +2392,6 @@
   --panel: #1a1817;
   --panel-edge: #050404;
   --hairline: #2a2725;
-  --hairline-dash: #34302d;
   --rule: #3d3935;
 
   --ink: #efe6d2;
@@ -2500,8 +2436,6 @@
   --shadow-hole: rgb(0 0 0 / 0.9);
 
   --field: #141211;
-  --kbd: #0d0c0b;
-  --kbd-edge: #2a2725;
   --sunken: #000;
 
   --knob-track: #0d0c0b;
@@ -2553,7 +2487,6 @@
   --panel: #f6efe0;
   --panel-edge: #a89a7e;
   --hairline: #e3d8c3;
-  --hairline-dash: #d8cbb2;
   --rule: #cfc1a6;
 
   --ink: #2a2320;
@@ -2600,8 +2533,6 @@
   --shadow-hole: rgb(0 0 0 / 0.5);
 
   --field: #fdfaf2;
-  --kbd: #fdfaf2;
-  --kbd-edge: #d8cbb2;
   --sunken: rgb(50 35 25 / 0.3);
 
   --knob-track: #e2d6bf;

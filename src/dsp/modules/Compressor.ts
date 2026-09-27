@@ -1,4 +1,5 @@
 import { Smoothed } from '../Smoothed'
+import { tauStep } from '../util'
 import { DspModule } from './types'
 
 const P_THRESHOLD = 0
@@ -124,6 +125,7 @@ export class CompressorModule extends DspModule {
 /** One-pole coefficient reaching 1 - 1/e of the way in `seconds`. */
 function coeffFor(seconds: number, sampleRate: number) {
   const n = seconds * sampleRate
+  // Under a sample -- or NaN -- is no time at all: jump straight there.
   if (!(n > 1)) return 1
-  return 1 - Math.exp(-1 / n)
+  return tauStep(n)
 }

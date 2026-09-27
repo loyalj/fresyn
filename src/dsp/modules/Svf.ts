@@ -1,5 +1,6 @@
 import { DelayLine } from '../DelayLine'
 import { Smoothed } from '../Smoothed'
+import { expCv } from '../util'
 import { DspModule } from './types'
 
 const P_CUTOFF = 0
@@ -94,7 +95,7 @@ export class SvfModule extends DspModule {
     const x = slots[this.ins[IN_SIGNAL]]
     // Exponential CV, so a fixed amount moves the corner the same number of
     // octaves wherever the knob sits -- and 1.00 tracks a keyboard exactly.
-    let cutoff = this.cutoff.next() * Math.pow(2, slots[this.ins[IN_CV]] * this.cvAmount.next())
+    let cutoff = expCv(this.cutoff.next(), slots[this.ins[IN_CV]], this.cvAmount.next())
     const res = this.resonance.next()
 
     if (mode >= MODE_COMB_POS) {

@@ -1,3 +1,4 @@
+import { expCv, pulseSamples, tauDecay } from '../util'
 import { DspModule } from './types'
 
 const P_DENSITY = 0
@@ -10,9 +11,6 @@ const IN_DENSITY = 0
 
 const OUT_AUDIO = 0
 const OUT_TRIG = 1
-
-/** How long the Trig output stays high after each impulse. */
-const TRIG_SECONDS = 0.002
 
 /**
  * Impulses at random moments, rather than noise at every sample.
@@ -44,7 +42,8 @@ export class DustModule extends DspModule {
   private trigLength = 1
 
   prepare() {
-    this.trigLength = Math.max(1, Math.round(TRIG_SECONDS * this.ctx.sampleRate))
+    // How long Trig stays high after each impulse: the rack's usual pulse.
+    this.trigLength = pulseSamples(this.ctx.sampleRate)
   }
 
   process(slots: Float32Array) {
@@ -52,7 +51,7 @@ export class DustModule extends DspModule {
 
     // Exponential CV, like every rate in the rack: a fixed amount moves the
     // density by the same number of doublings wherever the knob sits.
-    const density = this.params[P_DENSITY] * Math.pow(2, slots[this.ins[IN_DENSITY]] * this.params[P_CV_AMOUNT])
+    const density = expCv(this.params[P_DENSITY], slots[this.ins[IN_DENSITY]], this.params[P_CV_AMOUNT])
     const chance = density / sr
 
     // Four draws every sample whether or not one fires, so the stream stays
@@ -75,7 +74,7 @@ export class DustModule extends DspModule {
     // After the sample goes out, so an impulse's first sample is its full
     // height and Spread at zero really is every one at full scale.
     const decay = this.params[P_DECAY]
-    this.env *= decay > 0 ? Math.exp(-1 / (decay * sr)) : 0
+    this.env *= decay > 0 ? tauDecay(decay * sr) : 0
 
     if (this.trigGap) {
       slots[this.outs[OUT_TRIG]] = 0

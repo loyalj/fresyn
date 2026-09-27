@@ -1281,10 +1281,17 @@ arriving instead of settling into a buzz.
 It is how a single sine becomes a bell, a bright metallic drone, or a tone no
 filter sweep can reach.
 
-**There is no CV jack, and it does not need one.** Folding depends on how hard
-the wave is driven into the rails, so a **VCA** in front of this module is
-already a Fold modulator — and an envelope through that VCA is the sweep the
-module exists for.
+**The Fold jack is the sweep the module exists for.** Patch an envelope into
+**Fold** and turn up **Fold Amt**, and the creases arrive as the envelope
+rises and smooth out again as it falls — at whatever level the wave came in,
+because the jack moves the fold rather than the volume. Fold Amt is in octaves,
+like every other CV here: 1.00 lets a full-scale envelope double the Fold
+setting, and a negative amount unfolds on the way up instead.
+
+A **VCA** in front of the module is the other way to do it, and still worth
+knowing. Folding depends on how hard the wave is driven into the rails, so a
+VCA there is a Fold modulator as well as a level control — which is what you
+want when the same envelope should also bring the sound in out of silence.
 
 **Sym rearranges rather than intensifies.** Because folding repeats, sliding
 the wave off centre lands it on different creases instead of distorting one

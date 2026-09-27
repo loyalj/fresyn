@@ -1,11 +1,12 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import type { Waveform } from '../dsp/PolyBlepOsc'
 import { formatNote } from '../patch/param'
 import type { ModuleDef } from '../patch/types'
-import { Control } from './Control'
 import { useEngine } from './EngineContext'
 import { EnvelopeGraph } from './EnvelopeGraph'
-import { FALL, scale } from './meter'
+import { FALL, fillBar, scale } from './meter'
+import { useFace } from './useFace'
+import { useFallingMeter } from './useFallingMeter'
 import { WaveGraph } from './WaveGraph'
 
 const TONE = ['pitch', 'octave', 'wave', 'width', 'fmAmount', 'fmMode', 'level']
@@ -36,34 +37,38 @@ interface Props {
  * what the shape is being done to.
  */
 export function OscFace({ def, moduleId, valueOf, onChange, faceExtra }: Props) {
-  const byId = Object.fromEntries(def.params.map((p) => [p.id, p]))
-  const render = (id: string) => (
-    <Control
-      key={id}
-      spec={byId[id]}
-      value={valueOf(id)}
-      onChange={(v) => onChange(id, v)}
-    />
-  )
+  const { spec, read, control } = useFace(def, valueOf, onChange)
 
   // Read off the catalogue rather than from a list of our own, so the picture
   // follows the switch even if the switch grows a position.
-  const wave = (byId.wave.steps?.[Math.round(valueOf('wave') ?? byId.wave.default)] ??
-    'saw') as Waveform
+  const wave = (spec.wave.steps?.[Math.round(read('wave'))] ?? 'saw') as Waveform
 
   // The note this is tuned to, Octave included -- which is the whole reason it
   // is reported here rather than under the Pitch knob. The knob knows what it
   // is set to; only the module knows what comes out, and at Octave +1 a knob
   // reading A2 is an oscillator sounding A3.
-  const octave = Math.round(valueOf('octave') ?? byId.octave.default)
-  const note = formatNote((valueOf('pitch') ?? byId.pitch.default) * Math.pow(2, octave))
+  const octave = Math.round(read('octave'))
+  const note = formatNote(read('pitch') * Math.pow(2, octave))
+
+  // Rebuilt only when one of its six numbers moves, so the graph's own memo
+  // holds while the other knobs on the panel turn.
+  const delay = read('delay')
+  const attack = read('attack')
+  const hold = read('hold')
+  const decay = read('decay')
+  const sustain = read('sustain')
+  const release = read('release')
+  const envelope = useMemo(
+    () => ({ delay, attack, hold, decay, sustain, release }),
+    [delay, attack, hold, decay, sustain, release],
+  )
 
   return (
     <div className="osc-face">
       <div className="osc-row">
-        <div className="controls">{TONE.map(render)}</div>
+        <div className="controls">{TONE.map(control)}</div>
         <div className="osc-wave">
-          <WaveGraph wave={wave} width={valueOf('width') ?? byId.width.default} />
+          <WaveGraph wave={wave} width={read('width')} />
           {/* Held open when there is no note to give, which below C0 there is
               not, so the row does not change height as the pitch crosses it. */}
           <span className="osc-wave-note" aria-hidden="true">{note || ' '}</span>
@@ -78,20 +83,11 @@ export function OscFace({ def, moduleId, valueOf, onChange, faceExtra }: Props) 
           <span className="osc-env-note">Env jack follows this shape</span>
         </div>
 
-        <EnvelopeGraph
-          params={{
-            delay: valueOf('delay') ?? byId.delay.default,
-            attack: valueOf('attack') ?? byId.attack.default,
-            hold: valueOf('hold') ?? byId.hold.default,
-            decay: valueOf('decay') ?? byId.decay.default,
-            sustain: valueOf('sustain') ?? byId.sustain.default,
-            release: valueOf('release') ?? byId.release.default,
-          }}
-        />
+        <EnvelopeGraph params={envelope} />
 
         <div className="controls osc-env-knobs">
-          {ENVELOPE.map(render)}
-          <div className="osc-amount">{DESTINATIONS.map(render)}</div>
+          {ENVELOPE.map(control)}
+          <div className="osc-amount">{DESTINATIONS.map(control)}</div>
         </div>
       </div>
     </div>
@@ -110,39 +106,15 @@ export function OscFace({ def, moduleId, valueOf, onChange, faceExtra }: Props) 
 function OscMeter({ moduleId }: { moduleId: string }) {
   const engine = useEngine()
   const bar = useRef<HTMLDivElement | null>(null)
-  /** The newest peak, consumed and cleared by the draw loop. */
-  const incoming = useRef(0)
-  /** What the bar is currently showing, which is what falls. */
-  const shown = useRef(0)
+  const feed = useFallingMeter(FALL, (_: 0, v) => fillBar(bar.current, v))
 
   useEffect(() => {
     if (!engine) return
     return engine.onLevels((levels) => {
       const next = levels[moduleId]
-      if (next) incoming.current = next[0]
+      if (next) feed(0, scale(next[0]))
     })
-  }, [engine, moduleId])
-
-  useEffect(() => {
-    let raf = 0
-    const tick = () => {
-      // Taken once. Left in place it would hold the bar up for good once the
-      // rack went quiet.
-      const target = scale(incoming.current)
-      incoming.current = 0
-
-      const fallen = shown.current - FALL
-      const v = target > fallen ? target : fallen > 0 ? fallen : 0
-      if (v !== shown.current) {
-        shown.current = v
-        const el = bar.current
-        if (el) el.style.clipPath = `inset(${(1 - v) * 100}% 0 0 0)`
-      }
-      raf = requestAnimationFrame(tick)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-  }, [])
+  }, [engine, moduleId, feed])
 
   return (
     <div className="osc-meter level-meter" aria-hidden="true">

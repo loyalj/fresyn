@@ -1,3 +1,5 @@
+import { clamp } from './util'
+
 /**
  * The response taken off the ladder, as a weight on each stage output.
  *
@@ -205,8 +207,4 @@ function stageGain(cutoff: number, invSampleRate: number, nyquist: number) {
 function div(a: number, b: number, c: number, d: number): [number, number] {
   const m = c * c + d * d
   return [(a * c + b * d) / m, (b * c - a * d) / m]
-}
-
-function clamp(v: number, lo: number, hi: number) {
-  return v < lo ? lo : v > hi ? hi : v
 }

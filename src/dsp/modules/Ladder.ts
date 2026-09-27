@@ -1,5 +1,6 @@
 import { LadderFilter } from '../LadderFilter'
 import { Smoothed } from '../Smoothed'
+import { expCv } from '../util'
 import { DspModule } from './types'
 
 const P_CUTOFF = 0
@@ -43,8 +44,7 @@ export class LadderModule extends DspModule {
 
     // Exponential CV, so a fixed amount shifts the cutoff by the same number
     // of octaves wherever the knob happens to sit.
-    const cv = slots[this.ins[IN_CV]] * this.cvAmount.next()
-    const cutoff = this.cutoff.next() * Math.pow(2, cv)
+    const cutoff = expCv(this.cutoff.next(), slots[this.ins[IN_CV]], this.cvAmount.next())
 
     slots[this.outs[0]] = this.filter.process(
       slots[this.ins[IN_SIGNAL]],

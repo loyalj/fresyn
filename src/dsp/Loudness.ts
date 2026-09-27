@@ -14,7 +14,22 @@
  * run it on the audio thread.
  */
 
-/** One second-order section, direct form I. */
+/**
+ * One second-order section, direct form I.
+ *
+ * There is another biquad in the rack -- `Section`, in `Biquad.ts`, which the
+ * EQ and the console use -- and this one is kept apart from it on purpose.
+ * The two compute the same filter but not the same numbers: direct form I
+ * sums five products at once from the last two inputs and outputs, where the
+ * transposed form carries two running partial sums, and floating point rounds
+ * the two differently. Moving the K-weighting across would shift every
+ * loudness reading by a rounding error, and a reading is not only shown: it
+ * sets the gain a bounce is normalised by, so every exported file would stop
+ * being bit-for-bit what it was. `Section` also clears itself on a NaN,
+ * which a measurement has no use for -- a NaN going in should come out as a
+ * NaN reading, not as a quietly plausible one. Twenty lines is a fair price
+ * for a meter that reads what it always read.
+ */
 class Biquad {
   private x1 = 0
   private x2 = 0

@@ -1,6 +1,6 @@
 import type { Waveform } from '../dsp/PolyBlepOsc'
 import type { ModuleDef } from '../patch/types'
-import { Control } from './Control'
+import { useFace } from './useFace'
 import { WaveGraph } from './WaveGraph'
 
 interface Props {
@@ -33,32 +33,18 @@ interface Props {
  * 200.
  */
 export function LfoFace({ def, valueOf, onChange, faceExtra }: Props) {
-  const byId = Object.fromEntries(def.params.map((p) => [p.id, p]))
-  const shape = (byId.shape.steps?.[Math.round(valueOf('shape') ?? byId.shape.default)] ??
-    'sine') as Waveform
-
-  const render = (id: string) => (
-    <Control
-      key={id}
-      spec={byId[id]}
-      value={valueOf(id)}
-      onChange={(v) => onChange(id, v)}
-    />
-  )
+  const { spec, read, control } = useFace(def, valueOf, onChange)
+  const shape = (spec.shape.steps?.[Math.round(read('shape'))] ?? 'sine') as Waveform
 
   return (
     <div className="controls lfo-face">
-      {render('rate')}
+      {control('rate')}
       <div className="lfo-shape">
-        <WaveGraph
-          wave={shape}
-          width={valueOf('width') ?? byId.width.default}
-          scale={valueOf('depth') ?? byId.depth.default}
-        />
-        {render('shape')}
+        <WaveGraph wave={shape} width={read('width')} scale={read('depth')} />
+        {control('shape')}
       </div>
-      {render('width')}
-      {render('depth')}
+      {control('width')}
+      {control('depth')}
       {faceExtra}
     </div>
   )

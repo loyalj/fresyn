@@ -9,40 +9,19 @@
  * the only check worth making is whether a trace of the right shape reached
  * the screen.
  *
- * Needs `npm run dev -- --port 5199` in another terminal.
- * Point CHROME_PATH at a Chromium build if the default is wrong.
+ * Starts its own dev server (see harness.mjs); set DEV_URL to use a running
+ * one, and CHROME_PATH if Chrome is not where the harness looks.
+ *
+ * The pauses after a key is tapped stay fixed on purpose: what is being
+ * waited for is the scope accumulating enough frames of a moving signal to
+ * judge its shape, and the first frame that shows anything is too early.
  */
-import puppeteer from 'puppeteer-core'
+import { check, finish, flipRack, open, settle, waitUntil } from './harness.mjs'
 
-const CHROME =
-  process.env.CHROME_PATH ||
-  'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'
-const URL = process.env.DEV_URL || 'http://localhost:5199/'
-const FLIP_SETTLE = 700
-
-const browser = await puppeteer.launch({
-  executablePath: CHROME,
-  headless: 'new',
-  args: ['--autoplay-policy=no-user-gesture-required', '--no-sandbox'],
-})
-const page = await browser.newPage()
 // Tall enough that the added unit and the oscillator are both on screen: a
 // drag can only reach jacks the pointer can actually travel between. The head
 // panel is part of that height, so this has room to spare over the rack.
-await page.setViewport({ width: 1200, height: 2200 })
-
-const problems = []
-page.on('console', (m) => {
-  if (m.type() === 'error' && !m.text().includes('favicon')) problems.push('console: ' + m.text())
-})
-page.on('pageerror', (e) => problems.push('pageerror: ' + e.message))
-
-let failures = 0
-const check = (name, ok, detail = '') => {
-  if (!ok) failures++
-  console.log(`  ${ok ? 'ok  ' : 'FAIL'}  ${name}${detail ? '  ' + detail : ''}`)
-}
-const settle = (ms = 200) => new Promise((r) => setTimeout(r, ms))
+const { page, url } = await open({ viewport: { width: 1200, height: 2200 } })
 
 const centreOf = (moduleId, portId) =>
   page.evaluate(
@@ -163,7 +142,7 @@ const peakX = () =>
     return null
   })
 
-await page.goto(URL, { waitUntil: 'networkidle0' })
+await page.goto(url, { waitUntil: 'networkidle0' })
 await page.evaluate(() => localStorage.clear())
 await page.reload({ waitUntil: 'networkidle0' })
 
@@ -260,7 +239,7 @@ const menuModules = async () => {
 }
 
   await addModule('Scope')
-  await settle(400)
+  await waitUntil(page, () => !!document.querySelector('canvas.scope-screen'))
 
   const ids = await page.evaluate(() =>
     [...document.querySelectorAll('.unit-face-front .unit-id')].map((e) => e.textContent),
@@ -306,8 +285,7 @@ console.log('\nwith nothing patched')
 // --- patch an oscillator into it -------------------------------------
 console.log('\nwith an oscillator patched in')
 {
-  await page.keyboard.press('KeyF')
-  await settle(FLIP_SETTLE)
+  await flipRack(page, true)
 
   const from = await centreOf('osc1', 'out')
   const to = await centreOf('scope1', 'in')
@@ -329,8 +307,7 @@ console.log('\nwith an oscillator patched in')
     )
   }
 
-  await page.keyboard.press('KeyF')
-  await settle(FLIP_SETTLE)
+  await flipRack(page, false)
 
   // The stock rack's oscillator comes up with its own envelope at full, so a
   // note decays to silence in under a second and there would be nothing left
@@ -413,8 +390,7 @@ console.log('\nwith a second signal on B')
   const empty = await traceB()
   check('nothing is drawn on B while it is empty', empty && empty.lit < 40, empty ? `${empty.lit} px` : '')
 
-  await page.keyboard.press('KeyF')
-  await settle(FLIP_SETTLE)
+  await flipRack(page, true)
 
   const from = await centreOf('lpf1', 'out')
   const to = await centreOf('scope1', 'in2')
@@ -436,8 +412,7 @@ console.log('\nwith a second signal on B')
     )
   }
 
-  await page.keyboard.press('KeyF')
-  await settle(FLIP_SETTLE)
+  await flipRack(page, false)
   await settle(600)
 
   const drawn = await traceB()
@@ -480,9 +455,4 @@ console.log('\nspectrum mode')
   )
 }
 
-console.log('\nproblems    :', problems.length ? problems : 'none')
-await browser.close()
-
-const ok = failures === 0 && problems.length === 0
-console.log(ok ? '\nPASS' : `\nFAIL (${failures} check(s))`)
-process.exit(ok ? 0 : 1)
+await finish()

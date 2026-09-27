@@ -1,4 +1,5 @@
 import { Envelope } from '../Envelope'
+import { pulseSamples } from '../util'
 import { DspModule, EdgeDetector } from './types'
 
 const P_ATTACK = 0
@@ -11,9 +12,6 @@ const IN_GATE = 0
 const OUT_LEVEL = 0
 const OUT_END = 1
 const OUT_INV = 2
-
-/** How long the End pulse stays up, matching the Burst's. */
-const END_SECONDS = 0.002
 
 /**
  * The standalone envelope: a gate in, a shape out, and two ways of saying
@@ -38,7 +36,7 @@ export class AdsrModule extends DspModule {
   private wasActive = false
   /** Samples of End pulse left to put out. */
   private ending = 0
-  private readonly endPulse = Math.max(1, Math.round(END_SECONDS * this.ctx.sampleRate))
+  private readonly endPulse = pulseSamples(this.ctx.sampleRate)
 
   process(slots: Float32Array) {
     // Parameters first: gateOn() branches on the stage lengths, so setting
