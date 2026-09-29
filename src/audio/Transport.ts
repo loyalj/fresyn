@@ -57,6 +57,8 @@ export class Transport {
   private startFrame = 0
   private startTick = 0
   private lastFrame = 0
+  /** When that frame was reported, on the page's clock, for `heardTick`. */
+  private lastWall = 0
   private tick = 0
   private unsubscribe?: () => void
   private listeners = new Set<(state: TransportState) => void>()
@@ -201,6 +203,30 @@ export class Transport {
   }
 
   /**
+   * The tick coming out of the speakers now, or null when nothing is playing.
+   *
+   * For a note played in: a key goes down against what is heard, and what
+   * is heard is behind what the audio thread last reported by the device's
+   * latency, and ahead of it by however long ago that report arrived. The
+   * reports come about every 33ms, so without the second part every note
+   * played in would land up to a frame late, and without the first a
+   * Bluetooth headset would put every take a tenth of a second early.
+   */
+  heardTick(now = performance.now()): number | null {
+    if (!this.playing || this.pending !== null) return null
+    const rate = this.engine.sampleRate
+    const m = this.engine.measure()
+    const lag = m ? m.base + m.output : 0
+    const frame = this.lastFrame + ((now - this.lastWall) / 1000 - lag) * rate
+    return playheadTick(frame, this.startFrame, this.startTick, this.song.tempo, rate, this.loop)
+  }
+
+  /** The loop the transport is going round, if any. */
+  get currentLoop(): Loop | null {
+    return this.loop
+  }
+
+  /**
    * Throw away what is queued and refill from where the playhead actually is.
    *
    * For a tempo change, which makes every queued frame wrong. The clock is
@@ -225,6 +251,7 @@ export class Transport {
   private advance(frame: number) {
     if (!this.playing) return
     this.lastFrame = frame
+    this.lastWall = performance.now()
 
     if (this.pending !== null) {
       this.startFrame = frame

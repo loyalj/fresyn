@@ -5,6 +5,7 @@ import type { PatchModule } from '../patch/types'
 import { noteTarget } from './bind'
 import type { Rack } from './project'
 import type { Scale } from './scale'
+import { PITCH_RANGE } from './types'
 
 /** MIDI 69 is A4, which is what puts C4 on 60. */
 const A4_MIDI = 69
@@ -122,6 +123,17 @@ function valueOf(rack: Rack, m: PatchModule, spec: ParamSpec): number {
 /** The MIDI note a track's bottom row sounds, fractional. */
 export const rowZero = (tuning: Tuning | null) =>
   tuning ? tuning.base + 12 * tuning.octave : UNTUNED_ROW_ZERO
+
+/**
+ * The row a MIDI note plays on a track: the row whose name is that note, so
+ * a controller's C4 is the C4 you hear on every track, whatever each one's
+ * patch is tuned to. Rounded to the nearest row for a patch tuned between
+ * notes, and held inside the rows there are.
+ */
+export function rowForMidi(midi: number, tuning: Tuning | null): number {
+  const row = Math.round(midi - rowZero(tuning))
+  return Math.min(PITCH_RANGE.high, Math.max(PITCH_RANGE.low, row))
+}
 
 /**
  * A note's name, from a MIDI note number: the nearest note, with its octave

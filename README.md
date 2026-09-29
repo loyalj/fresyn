@@ -58,7 +58,9 @@ of a rack that may be pages long.
 
 The dock under the rack holds the music: a piano roll that plays whatever is
 on the bench, tracks with a rack each, patterns placed on a playlist, and a
-mix view. **Bounce song** and **Bounce stems** render the arrangement to WAV.
+mix view. **Bounce song** and **Bounce stems** render the arrangement to WAV,
+FLAC, OGG Vorbis or MP3 at the rate you choose, and **Export MIDI** writes the
+notes.
 
 The rack can be repainted. A *theme* is a family of colours and each one comes
 in dark and light -- Standard, the original studio grey and amber; Fall Cafe in
@@ -528,7 +530,7 @@ src/
     compile.ts         # patch -> execution plan, with cycle detection
     edit.ts            # add, remove, reorder, connect, disconnect
     serialize.ts       # the save format, and a defensive loader
-    history.ts         # undo/redo, with coalescing
+    history.ts         # undo/redo, with coalescing, named steps, and jumps
     storage.ts         # autosave, and project and patch files
     fileAccess.ts      # files the app can write back to, like a desktop program
     archive.ts bundle.ts   # a patch or project and its audio, in one zip
@@ -545,6 +547,9 @@ src/
     transport.ts       # the lookahead cursor, and where the playhead is
     edit.ts            # add, remove, place; the invariants nothing else keeps
     noteEdit.ts        # edits to a group of notes, for the roll
+    record.ts          # notes played in while the song runs
+    range.ts           # insert, delete, clear, copy and paste bars
+    midi.ts            # the arrangement as a Standard MIDI File
     normalize.ts       # the invariants a song holds however it arrived
     bind.ts            # what in a rack a track's notes are played on
     chord.ts scale.ts  # the roll's chord tool, and its scales
@@ -570,10 +575,13 @@ src/
     renderSong.ts      # bounce the arrangement, and one file per track
     normalize.ts       # peak or loudness targets for what is written out
     SampleLibrary.ts sampleStore.ts   # dropped files, decoded and kept
-    wav.ts zip.ts      # 16/24-bit PCM, and a store-only zip writer
+    wav.ts zip.ts      # 16/24-bit PCM or 32-bit float, and a store-only zip writer
+    flac.ts            # a FLAC encoder: fixed predictors, Rice coding, stereo modes
+    encode.ts encoders.ts   # every export format; OGG and MP3 via wasm-media-encoders
     waveform.ts        # peak envelopes for drawing a take
   input/               # browser input capture and key bindings
     InputManager.ts useInput.ts keyLabel.ts
+    liveNotes.ts midi.ts   # notes played by hand, and MIDI controllers
   ui/                  # Knob, Switch, Control, ModulePanel, RackUnit
     theme.ts           # the theme catalogue, and where the choice is kept
     ThemeContext.ts    # the current appearance, and the cross-fade
@@ -594,6 +602,9 @@ src/
     cableGeometry.ts         # curve maths and pointer hit-testing
     SongDock.tsx             # the music drawer: transport, tracks, views
     PianoRoll.tsx rollDraw.ts  # the roll, and its canvas drawing
+    useNoteRecording.ts      # the roll's Rec button
+    HistoryPanel.tsx         # the undo history as a list to jump through
+    BounceDialog.tsx         # format, rate and depth for a bounce
     Playlist.tsx TrackList.tsx # the arrangement grid, and the track strip
     ExportPanel.tsx TakeList.tsx   # the recorder's render and audition
     TriggerButton.tsx PresetButton.tsx ConfirmButton.tsx KnobHelp.tsx

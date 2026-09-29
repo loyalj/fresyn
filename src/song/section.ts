@@ -224,8 +224,11 @@ export function sectionsFromMarkers(song: Song, markers: readonly { tick: number
     .filter((s) => s.length > 0)
 }
 
-/** Split every clip that runs across a tick, there. */
-function cutAt(song: Song, at: number): Song {
+/**
+ * Split every clip that runs across a tick, there. Changes nothing that is
+ * heard: a split clip plays exactly what the whole one did.
+ */
+export function cutAt(song: Song, at: number): Song {
   let out = song
   const patterns = new Map(song.patterns.map((p) => [p.id, p]))
   // From the end, so a split -- which puts its second half straight after

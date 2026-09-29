@@ -828,6 +828,75 @@ console.log('\npatterns and the playlist')
   await wait(400)
 }
 
+console.log('\npicking bars on the ruler')
+{
+  const BAR = 960 * 4
+  const bar = (i) =>
+    page.evaluate((n) => {
+      const r = document.querySelectorAll('.playlist-ruler .playlist-bar')[n].getBoundingClientRect()
+      return { left: r.left, width: r.width, y: r.top + r.height / 2 }
+    }, i)
+  const song = async () => (await stored()).song
+  const before = await song()
+  const sectionsBefore = (before.sections ?? []).length
+  // From the start of bar 2 to half way through bar 3.
+  const b2 = await bar(1)
+  const b3 = await bar(2)
+  await page.mouse.move(b2.left + 2, b2.y)
+  await page.mouse.down()
+  await page.mouse.move(b2.left + b2.width / 2, b2.y, { steps: 3 })
+  await page.mouse.move(b3.left + b3.width / 2, b3.y, { steps: 3 })
+  await page.mouse.up()
+  await wait(150)
+  const name = await page.evaluate(() => document.querySelector('.playlist-range-name')?.textContent)
+  check('dragging along the bar numbers picks whole bars', name === 'Bars 2–3', name)
+  check('and is not a click on a bar number', ((await song()).sections ?? []).length === sectionsBefore)
+  check('the bars are shown picked down every lane', (await page.$('.playlist-range')) !== null)
+
+  const clickRange = async (label) => {
+    await page.evaluate(
+      (l) => [...document.querySelectorAll('.playlist-range-tools .dock-toggle')].find((b) => b.textContent.trim() === l)?.click(),
+      label,
+    )
+    await edited()
+  }
+  const later = before.playlist.find((p) => p.tick >= 2 * BAR)
+  await clickRange('Insert')
+  const opened = await song()
+  check('Insert puts in two empty bars, moving what comes after',
+    opened.playlist.some((p) => p.pattern === later.pattern && p.tick === later.tick + 2 * BAR), JSON.stringify(opened.playlist))
+  await press('KeyZ', ['Control'])
+  check('and undoes', JSON.stringify((await song()).playlist) === JSON.stringify(before.playlist))
+
+  await clickRange('Duplicate')
+  check('Duplicate plays the bars twice', (await song()).playlist.length === before.playlist.length + 1, JSON.stringify((await song()).playlist))
+  check('and picks the copy', (await page.evaluate(() => document.querySelector('.playlist-range-name')?.textContent)) === 'Bars 4–5')
+  await press('KeyZ', ['Control'])
+
+  // Back on the first pick, from the keyboard this time. Measured again, in
+  // case the range's buttons moved anything.
+  const top = (await bar(1)).y
+  check('picking bars does not move the lanes', Math.abs(top - b2.y) < 1, `${b2.y} -> ${top}`)
+  await page.mouse.move(b2.left + 2, top)
+  await page.mouse.down()
+  await page.mouse.move(b3.left + b3.width / 2, top, { steps: 4 })
+  await page.mouse.up()
+  await wait(100)
+  await press('Delete', ['Control'])
+  const cut = await song()
+  check('Ctrl+Delete takes the bars out of the song', cut.playlist.length === before.playlist.length - 1, JSON.stringify(cut.playlist))
+  check('and lets go of them', (await page.$('.playlist-range')) === null)
+  await press('KeyZ', ['Control'])
+  check('which undoes like anything else', JSON.stringify((await song()).playlist) === JSON.stringify(before.playlist))
+
+  // A click on a bar number is still a click.
+  const b5 = await bar(4)
+  await page.mouse.click(b5.left + 3, b5.y)
+  await edited()
+  check('a plain click on a bar number still starts a section', ((await song()).sections ?? []).length === sectionsBefore + 1)
+  await press('KeyZ', ['Control'])
+}
+
 console.log('\nthe transport plays what is showing')
 {
   const meterFill = () =>
@@ -876,7 +945,22 @@ console.log('\nthe transport plays what is showing')
 
 console.log('\nbouncing it to a file')
 {
+  /** Set up the bounce sheet and press Bounce. */
+  const bounceAs = async (format, rate, depthOrQuality) => {
+    await waitUntil(page, () => !!document.querySelector('.bounce-sheet'))
+    await page.select('.bounce-sheet select[aria-label="Format"]', format)
+    await page.select('.bounce-sheet select[aria-label="Sample rate"]', String(rate))
+    if (depthOrQuality !== undefined) {
+      const which = format === 'ogg' || format === 'mp3' ? 'Quality' : 'Bit depth'
+      await page.select(`.bounce-sheet select[aria-label="${which}"]`, String(depthOrQuality))
+    }
+    await page.evaluate(() =>
+      [...document.querySelectorAll('.bounce-sheet .dock-toggle')].find((b) => b.textContent.trim() === 'Bounce').click(),
+    )
+  }
   check('the Bounce action is there', await pickMenu('Project', 'Bounce song...'))
+  check('and asks how to write it', await waitUntil(page, () => !!document.querySelector('.bounce-sheet')))
+  await bounceAs('wav', 48000, 24)
   const wav = await waitForDownload('.wav')
   check('a wav was written', !!wav, wav ? wav.split(/[\\/]/).pop() : 'nothing downloaded')
 
@@ -885,7 +969,7 @@ console.log('\nbouncing it to a file')
     check('it is a readable wav', !!info)
     if (info) {
       check('stereo', info.channels === 2, `${info.channels} channels`)
-      check('at the rate the rack runs at', info.rate === 48000, `${info.rate} Hz`)
+      check('at the rate asked for', info.rate === 48000, `${info.rate} Hz`)
       check('24-bit', info.bits === 24, `${info.bits} bits`)
       // Two patterns, one in bar one and one in bar three: three bars at
       // 120bpm is six seconds, and the file is never shorter than the
@@ -903,7 +987,84 @@ console.log('\nbouncing it to a file')
     check('and it is not silence', loudest > 200, `peak ${loudest}`)
   }
 
+  /** A downloaded file, decoded by the browser's own decoders at its own rate. */
+  const decode = (path, rate, against) =>
+    page.evaluate(
+      async (b64, rate, ref) => {
+        const bytes = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0)).buffer
+        const ctx = new OfflineAudioContext(2, 1, rate)
+        const a = await ctx.decodeAudioData(bytes(b64))
+        let peak = 0
+        for (let c = 0; c < a.numberOfChannels; c++) for (const v of a.getChannelData(c)) peak = Math.max(peak, Math.abs(v))
+        let diff = null
+        if (ref) {
+          const b = await ctx.decodeAudioData(bytes(ref))
+          diff = a.length === b.length ? 0 : Infinity
+          for (let c = 0; c < 2 && diff !== Infinity; c++) {
+            const x = a.getChannelData(c)
+            const y = b.getChannelData(c)
+            for (let i = 0; i < x.length; i++) diff = Math.max(diff, Math.abs(x[i] - y[i]))
+          }
+        }
+        return { channels: a.numberOfChannels, seconds: a.duration, rate: a.sampleRate, peak, diff }
+      },
+      readFileSync(path).toString('base64'),
+      rate,
+      against ? readFileSync(against).toString('base64') : null,
+    )
+
+  if (wav) {
+    const wavSeconds = readWav(wav)?.seconds ?? 0
+    check('FLAC is offered as well', await pickMenu('Project', 'Bounce song...'))
+    await bounceAs('flac', 48000, 24)
+    const flac = await waitForDownload('.flac')
+    check('a flac was written', !!flac)
+    if (flac) {
+      const d = await decode(flac, 48000, wav)
+      check('which the browser decodes', d.channels === 2 && Math.abs(d.seconds - wavSeconds) < 0.01, JSON.stringify(d))
+      check('to exactly the samples in the wav', d.diff === 0, `largest difference ${d.diff}`)
+      check('in a smaller file', statSync(flac).size < statSync(wav).size, `${statSync(flac).size} against ${statSync(wav).size}`)
+    }
+
+    check('OGG Vorbis too', await pickMenu('Project', 'Bounce song...'))
+    await bounceAs('ogg', 44100, 5)
+    const ogg = await waitForDownload('.ogg')
+    check('an ogg was written', !!ogg)
+    if (ogg) {
+      const d = await decode(ogg, 44100)
+      check('which the browser decodes, at the rate asked for', d.channels === 2 && Math.abs(d.seconds - wavSeconds) < 0.05, JSON.stringify(d))
+      check('with the music in it', d.peak > 0.01, `peak ${d.peak}`)
+      check('much smaller than the wav', statSync(ogg).size < statSync(wav).size / 5, `${statSync(ogg).size} bytes`)
+    }
+
+    check('and MP3', await pickMenu('Project', 'Bounce song...'))
+    await waitUntil(page, () => !!document.querySelector('.bounce-sheet'))
+    await page.select('.bounce-sheet select[aria-label="Format"]', 'mp3')
+    const offRates = await page.$$eval('.bounce-sheet select[aria-label="Sample rate"] option:disabled', (o) => o.map((x) => x.value))
+    check('an MP3 offers only the rates it can be written at', offRates.join() === '88200,96000', offRates.join())
+    await bounceAs('mp3', 48000, 8)
+    const mp3 = await waitForDownload('.mp3')
+    check('an mp3 was written', !!mp3)
+    if (mp3) {
+      const d = await decode(mp3, 48000)
+      // An MP3 carries encoder delay and padding, so it comes back a touch long.
+      check('which the browser decodes', d.channels === 2 && d.seconds >= wavSeconds - 0.01 && d.seconds < wavSeconds + 0.2, JSON.stringify(d))
+      check('with the music in it', d.peak > 0.01, `peak ${d.peak}`)
+    }
+
+    check('the arrangement exports as MIDI', await pickMenu('Project', 'Export MIDI...'))
+    const mid = await waitForDownload('.mid')
+    check('a midi file was written', !!mid)
+    if (mid) {
+      const b = readFileSync(mid)
+      check('a type 1 Standard MIDI File', b.toString('latin1', 0, 4) === 'MThd' && b.readUInt16BE(8) === 1, b.toString('latin1', 0, 4))
+      check('with a track for each track that plays, after the tempo track', b.readUInt16BE(10) === 3, String(b.readUInt16BE(10)))
+    }
+  }
+
   check('stems can be bounced too', await pickNested('Project', 'Bounce stems', 'Channel only (EQ, pan, fader)...'))
+  check('through the same sheet', await waitUntil(page, () => !!document.querySelector('.bounce-sheet')))
+  await bounceAs('wav', 48000, 24)
   const zip = await waitForDownload('.zip')
   check('a zip of stems was written', !!zip, zip ? zip.split(/[\\/]/).pop() : 'nothing downloaded')
   if (zip) {
@@ -1035,6 +1196,73 @@ console.log('\nthe Tools menu')
   check('and the menu goes back to its label, ready for the next', (await page.$eval(tools, (el) => el.value)) === '')
   await press('KeyZ', ['Control'])
   check('one Ctrl+Z takes it back', (await notesOf()).length === before.length)
+}
+
+console.log('\nrecording notes played in')
+{
+  // The Keyboard panel is the one input a headless browser has: a key goes
+  // down, is held, and comes up over the board, as a finger would.
+  const hold = async (n, ms) => {
+    await page.evaluate((i) => {
+      const key = document.querySelectorAll('[data-module="key1"] .keys-key')[i]
+      key.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, buttons: 1 }))
+    }, n)
+    await wait(ms)
+    await page.evaluate(() =>
+      document.querySelector('[data-module="key1"] .keys-board').dispatchEvent(new PointerEvent('pointerup', { bubbles: true })),
+    )
+  }
+  // Keys are listed naturals first, then sharps: 0 is C, 2 is E, 4 is G.
+  const before = await notesOf()
+  await page.click('.roll-rec')
+  await waitUntil(page, () => !!document.querySelector('.dock-play.on'))
+  check('Rec starts the loop playing', (await page.$('.dock-play.on')) !== null)
+  check('and lights while it records', (await page.$('.roll-rec.on')) !== null)
+  await wait(300)
+  await hold(2, 250)
+  await wait(150)
+  await hold(4, 400)
+  await wait(100)
+  await page.click('.roll-rec')
+  check('pressing it again stops recording', (await page.$('.roll-rec.on')) === null)
+  check('and leaves the loop playing', (await page.$('.dock-play.on')) !== null)
+  await page.click('.dock-play')
+  await edited()
+  const after = await notesOf()
+  const taken = after.slice(before.length)
+  check('what was played is written into the pattern', taken.length === 2 && taken[0].pitch === 4 && taken[1].pitch === 7,
+    JSON.stringify(taken))
+  check('each as long as it was held, near enough', taken.length === 2 && taken[1].length > taken[0].length,
+    taken.map((n) => n.length).join(', '))
+
+  // Quantize while recording, from the Quantize menu.
+  await page.click('.roll-split-more')
+  await waitUntil(page, () => !!document.querySelector('.context-menu'))
+  const items = await page.evaluate(() => [...document.querySelectorAll('.context-menu .menu-text')].map((e) => e.textContent.trim()))
+  check('the Quantize menu offers starts, ends, both and lengths',
+    ['Quantize starts', 'Quantize ends', 'Quantize starts and ends', 'Quantize lengths'].every((x) => items.includes(x)), items.join(' | '))
+  check('and a strength', items.some((x) => x.startsWith('Strength')))
+  await page.evaluate(() =>
+    [...document.querySelectorAll('.context-menu .menu-item')].find((e) => e.textContent.includes('Quantize while recording'))?.click(),
+  )
+  await wait(150)
+  await page.click('.roll-rec')
+  await waitUntil(page, () => !!document.querySelector('.dock-play.on'))
+  await wait(370)
+  await hold(0, 180)
+  await wait(80)
+  await page.click('.dock-play')
+  await edited()
+  const snapped = (await notesOf()).slice(after.length)
+  check('stopping the loop ends the take', (await page.$('.roll-rec.on')) === null)
+  check('a note played in with quantize on lands on the grid', snapped.length === 1 && snapped[0].tick % 240 === 0,
+    JSON.stringify(snapped))
+  // Put the menu back as it was.
+  await page.click('.roll-split-more')
+  await waitUntil(page, () => !!document.querySelector('.context-menu'))
+  await page.evaluate(() =>
+    [...document.querySelectorAll('.context-menu .menu-item')].find((e) => e.textContent.includes('Quantize while recording'))?.click(),
+  )
 }
 
 console.log('\nthe rack survives it')

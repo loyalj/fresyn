@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AudioEngine } from '../audio/AudioEngine'
 import { MODE_LATCH } from '../dsp/modules/Gate'
 import { defOf } from '../patch/defs'
@@ -13,7 +13,15 @@ export function useTriggers(
   trackId: string,
   patch: Patch,
   values: Readonly<Record<string, number>>,
+  /**
+   * Told of every gate opened or closed here, after it is sent: the news a
+   * recording roll listens for. Read through a ref, so a new function each
+   * render does not rebuild every key binding.
+   */
+  onGate?: (moduleId: string, open: boolean) => void,
 ) {
+  const told = useRef(onGate)
+  told.current = onGate
   /**
    * Triggers currently latched open, by module id.
    *
@@ -46,12 +54,16 @@ export function useTriggers(
     (moduleId: string) => {
       engine.gate(true, trackId, moduleId)
       void engine.start()
+      told.current?.(moduleId, true)
     },
     [engine, trackId],
   )
 
   const gateOff = useCallback(
-    (moduleId: string) => engine.gate(false, trackId, moduleId),
+    (moduleId: string) => {
+      engine.gate(false, trackId, moduleId)
+      told.current?.(moduleId, false)
+    },
     [engine, trackId],
   )
 

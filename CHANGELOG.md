@@ -4,6 +4,44 @@ What changed, newest first. The README says what Fresyn is now; this is how
 it got there. The older entries are the milestone notes that used to sit at
 the top of the README, moved here as they were written.
 
+## History list, recording, bar editing and more export formats
+
+**Edit → History** (**Ctrl+H**) lists every step of undo by name --
+"Add note", "Cutoff · lpf1", "Move section" -- and a click goes straight to
+any of them, back or forward. The names are worked out by comparing the
+document before and after each edit, so no edit has to remember to name
+itself. The panel floats beside the rack, and Ctrl+Z and Ctrl+Y still work
+while it is open.
+
+**Quantize** has a ▾ menu: quantize starts, ends, starts and ends, or
+lengths, at a strength from 25% to 100%. **● Rec** in the roll records notes
+played on the Keyboard panel, the track's Trigger or a MIDI controller at the
+playhead, with the audio device's latency taken out. **Quantize while
+recording** quantizes each note as it lands. **Edit → MIDI input** turns on
+Web MIDI: a controller key plays the row named for that note on the benched
+track.
+
+**Drag along the playlist's bar numbers** to pick any bars, whether or not a
+section covers them. Then **Insert** empty bars, **Delete** the bars and close
+the gap, **Clear** them, **Duplicate** them, or **Copy**, **Cut** and
+**Paste** them, from buttons or keys. Clips across an edge are split there,
+which you cannot hear, and sections grow, shrink or go with their bars.
+
+**Bounce song** and **Bounce stems** now open a sheet for format, sample
+rate and bit depth or quality: WAV (16, 24 or 32-bit float), FLAC (a new
+encoder in `src/audio/flac.ts`), OGG Vorbis and MP3. OGG and MP3 use the
+`wasm-media-encoders` package (libvorbis and LAME in WebAssembly), which
+loads the first time one is chosen. **Export MIDI** writes the arrangement as
+a type 1 Standard MIDI File, with notes as the pitches you hear.
+
+`check-patch` covers named steps and jumps. `check-song` covers edit names,
+quantize modes and strength, the recording arithmetic, MIDI parsing and
+mapping, and every range edit. `check-render` round-trips FLAC through a
+decoder that checks every CRC, and covers OGG, MP3 and MIDI files.
+`check-rack` drives the History list. `check-roll` records from the
+Keyboard panel, picks and edits bars on the ruler, and has Chrome decode a
+bounce in every format; the FLAC decodes to exactly the WAV's samples.
+
 ## Sections slide, and can take their music with them
 
 A section being dragged now follows the pointer. Dropped in empty time, it

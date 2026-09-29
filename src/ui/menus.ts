@@ -10,12 +10,17 @@ export interface MenuContext {
   saveProject: (saveAs?: boolean) => void
   bounceSong: () => void
   bounceStems: (mix: StemMix) => void
+  exportMidi: () => void
   /** A bounce or a save is running, and another would compete with it. */
   busy: boolean
   canUndo: boolean
   canRedo: boolean
   undo: () => void
   redo: () => void
+  historyOpen: boolean
+  toggleHistory: () => void
+  midiOn: boolean
+  toggleMidi: () => void
   canCopy: boolean
   canPaste: boolean
   copy: () => void
@@ -71,6 +76,8 @@ export function buildMenus(ctx: MenuContext): MenuDef[] {
             { kind: 'action', label: 'Raw rack output...', disabled: ctx.busy, onSelect: () => ctx.bounceStems('raw') },
           ],
         },
+        // The notes rather than the sound, for another DAW or a game's sequencer.
+        { kind: 'action', label: 'Export MIDI...', onSelect: ctx.exportMidi },
       ],
     },
     {
@@ -84,6 +91,8 @@ export function buildMenus(ctx: MenuContext): MenuDef[] {
           kind: 'action', label: 'Redo', shortcut: 'Ctrl+Shift+Z',
           disabled: !ctx.canRedo, onSelect: ctx.redo,
         },
+        // Every step as a list, for going back several at once.
+        { kind: 'toggle', label: 'History', shortcut: 'Ctrl+H', checked: ctx.historyOpen, onSelect: ctx.toggleHistory },
         { kind: 'separator' },
         {
           kind: 'action', label: 'Copy modules', shortcut: 'Ctrl+C',
@@ -94,6 +103,8 @@ export function buildMenus(ctx: MenuContext): MenuDef[] {
           disabled: !ctx.canPaste, onSelect: ctx.paste,
         },
         { kind: 'separator' },
+        // Beside the sound card, as the other thing plugged into this machine.
+        { kind: 'toggle', label: 'MIDI input', checked: ctx.midiOn, onSelect: ctx.toggleMidi },
         // Where preferences live in most programs. It is this machine's sound
         // card, so it belongs to no project.
         { kind: 'action', label: 'Audio settings...', onSelect: ctx.openAudioSettings },

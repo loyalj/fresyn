@@ -1,14 +1,15 @@
 import { useCallback } from 'react'
-import type { AudioEngine } from '../audio/AudioEngine'
 import type { StemMix } from '../audio/renderSong'
 import type { SampleLibrary } from '../audio/SampleLibrary'
 import type { Transport } from '../audio/Transport'
-import { encodeWav } from '../audio/wav'
 import { makeZip, type ZipEntry } from '../audio/zip'
 import { downloadBytes, slug } from '../patch/storage'
 import type { Rack } from '../song/project'
 import { songEnd } from '../song/schedule'
 import type { Song } from '../song/types'
+import { songToMidi } from '../song/midi'
+import { rowZero, tuningOf } from '../song/tuning'
+import type { BounceSettings } from '../ui/BounceDialog'
 import { progress, reason, warn, type SetNotice } from '../ui/notice'
 import { nextFrame } from './nextFrame'
 
@@ -16,7 +17,6 @@ interface Options {
   song: Song
   racks: Record<string, Rack>
   name: string
-  engine: AudioEngine
   samples: SampleLibrary
   transport: Transport
   setNotice: SetNotice
@@ -30,7 +30,7 @@ interface Options {
  * The renderer is fetched when a bounce is asked for rather than with the
  * page. It is a second copy of the whole DSP, and most sessions never bounce.
  */
-export function useBounce({ song, racks, name, engine, samples, transport, setNotice, runJob }: Options) {
+export function useBounce({ song, racks, name, samples, transport, setNotice, runJob }: Options) {
   /**
    * Bounce the arrangement to a file.
    *
@@ -38,7 +38,7 @@ export function useBounce({ song, racks, name, engine, samples, transport, setNo
    * be correct either way, but the two would be competing for the same thread
    * and the loop you were listening to would stutter for as long as it took.
    */
-  const bounceSong = useCallback(async () => {
+  const bounceSong = useCallback(async (settings: BounceSettings) => {
     if (songEnd(song) <= 0) {
       setNotice('Nothing on the playlist to bounce -- put a pattern in a bar first')
       return
@@ -47,23 +47,22 @@ export function useBounce({ song, racks, name, engine, samples, transport, setNo
       transport.stop()
       setNotice(progress('Bouncing...'))
       try {
-        const { renderSong } = await import('../audio/renderSong')
+        const [{ renderSong }, { encodeAudio }] = await Promise.all([
+          import('../audio/renderSong'),
+          import('../audio/encoders'),
+        ])
         const audio = await renderSong(song, racks, {
-          sampleRate: engine.sampleRate,
+          sampleRate: settings.sampleRate,
           samples: samples.bank(),
           onProgress: async (done) => {
             setNotice(progress(`Bouncing ${Math.round(done * 100)}%`))
             await nextFrame()
           },
         })
-        // 24-bit: a mix is more likely than a one-shot to be mastered or
-        // re-encoded afterwards, and the headroom costs a third of a file that
-        // is already small.
-        downloadBytes(
-          encodeWav([audio.left, audio.right], audio.sampleRate, 24) as BlobPart,
-          `${slug(name)}.wav`,
-          'audio/wav',
-        )
+        setNotice(progress(`Encoding ${settings.format.toUpperCase()}...`))
+        await nextFrame()
+        const file = await encodeAudio([audio.left, audio.right], audio.sampleRate, settings)
+        downloadBytes(file.bytes as BlobPart, `${slug(name)}.${file.extension}`, file.mime)
         setNotice(
           audio.peak > 1
             ? warn(`Bounced ${audio.seconds.toFixed(1)}s -- it clips at ${audio.peak.toFixed(2)}, so bring the levels down`)
@@ -73,7 +72,7 @@ export function useBounce({ song, racks, name, engine, samples, transport, setNo
         setNotice(warn(`Bounce failed: ${reason(err)}`))
       }
     })
-  }, [song, racks, name, engine, samples, transport, setNotice, runJob])
+  }, [song, racks, name, samples, transport, setNotice, runJob])
 
   /**
    * One file per track, so the mix can be rebuilt or re-balanced elsewhere --
@@ -81,7 +80,7 @@ export function useBounce({ song, racks, name, engine, samples, transport, setNo
    * alone, through its strip, or with its reverb and echo as well.
    */
   const bounceStems = useCallback(
-    async (stemMix: StemMix) => {
+    async (stemMix: StemMix, settings: BounceSettings) => {
       if (songEnd(song) <= 0) {
         setNotice('Nothing on the playlist to bounce -- put a pattern in a bar first')
         return
@@ -90,10 +89,13 @@ export function useBounce({ song, racks, name, engine, samples, transport, setNo
         transport.stop()
         setNotice(progress('Bouncing stems...'))
         try {
-          const { renderStems } = await import('../audio/renderSong')
+          const [{ renderStems }, { encodeAudio }] = await Promise.all([
+            import('../audio/renderSong'),
+            import('../audio/encoders'),
+          ])
           const stems = await renderStems(song, racks, {
             stemMix,
-            sampleRate: engine.sampleRate,
+            sampleRate: settings.sampleRate,
             samples: samples.bank(),
             onProgress: async (done) => {
               setNotice(progress(`Bouncing stems ${Math.round(done * 100)}%`))
@@ -106,10 +108,13 @@ export function useBounce({ song, racks, name, engine, samples, transport, setNo
           }
           // Numbered, so they sort into the order the tracks are in rather than
           // alphabetically -- which is the order anybody will want to line them up.
-          const entries: ZipEntry[] = stems.map((stem, i) => ({
-            name: `${String(i + 1).padStart(2, '0')} ${slug(stem.name)}.wav`,
-            data: encodeWav([stem.audio.left, stem.audio.right], stem.audio.sampleRate, 24),
-          }))
+          const entries: ZipEntry[] = []
+          for (const [i, stem] of stems.entries()) {
+            setNotice(progress(`Encoding stem ${i + 1} of ${stems.length}...`))
+            await nextFrame()
+            const file = await encodeAudio([stem.audio.left, stem.audio.right], stem.audio.sampleRate, settings)
+            entries.push({ name: `${String(i + 1).padStart(2, '0')} ${slug(stem.name)}.${file.extension}`, data: file.bytes })
+          }
           downloadBytes(makeZip(entries) as BlobPart, `${slug(name)}-stems.zip`, 'application/zip')
           setNotice(`Bounced ${stems.length} stem${stems.length === 1 ? '' : 's'}`)
         } catch (err) {
@@ -117,8 +122,24 @@ export function useBounce({ song, racks, name, engine, samples, transport, setNo
         }
       })
     },
-    [song, racks, name, engine, samples, transport, setNotice, runJob],
+    [song, racks, name, samples, transport, setNotice, runJob],
   )
 
-  return { bounceSong, bounceStems }
+  /**
+   * The arrangement as a MIDI file, for another DAW or a game's own
+   * sequencer. Instant, and nothing is rendered: it is the notes.
+   */
+  const exportMidi = useCallback(() => {
+    if (songEnd(song) <= 0) {
+      setNotice('Nothing on the playlist to export -- put a pattern in a bar first')
+      return
+    }
+    // Each track's rows as the notes they sound, read off its own rack.
+    const zeros = new Map(song.tracks.map((t) => [t.id, racks[t.id] ? rowZero(tuningOf(racks[t.id])) : rowZero(null)]))
+    const file = songToMidi(song, { name, noteOf: (track, row) => (zeros.get(track) ?? rowZero(null)) + row })
+    downloadBytes(file as BlobPart, `${slug(name)}.mid`, 'audio/midi')
+    setNotice(`Exported ${slug(name)}.mid`)
+  }, [song, racks, name, setNotice])
+
+  return { bounceSong, bounceStems, exportMidi }
 }

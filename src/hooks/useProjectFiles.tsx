@@ -56,7 +56,7 @@ interface Options {
   patchName: string
   engine: AudioEngine
   samples: SampleLibrary
-  commitDoc: (next: (doc: Doc) => Doc) => void
+  commitDoc: (next: (doc: Doc) => Doc, key?: string, label?: string) => void
   breakCoalesce: () => void
   applyPatch: (next: Patch, trackName: string, preset?: Record<string, number>) => void
   setSelected: (id: string) => void
@@ -199,7 +199,7 @@ export function useProjectFiles({
 
       breakCoalesce()
       const loaded = fillRacks(result.song, result.racks)
-      commitDoc(() => ({ name: result.name, song: result.song, racks: loaded }))
+      commitDoc(() => ({ name: result.name, song: result.song, racks: loaded }), undefined, `Open ${result.name}`)
       setSelected(result.song.tracks[0]?.id ?? BENCH_TRACK)
       setPatternId(result.song.patterns[0]?.id ?? 'main')
       setNotice(

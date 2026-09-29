@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Transport } from '../audio/Transport'
+import type { LiveNotes } from '../input/liveNotes'
 import { loadPrefs, savePrefs } from '../patch/storage'
 import {
   arpeggiateNotes,
@@ -21,6 +22,7 @@ import {
   strumNotes,
   transposeNotes,
   type Edited,
+  type QuantizeWhat,
 } from '../song/noteEdit'
 import { chordById, chordPitches, CHORDS } from '../song/chord'
 import {
@@ -55,7 +57,9 @@ import {
   type RollOverlay,
   type RollView,
 } from './rollDraw'
+import { ContextMenu, type MenuItem } from './Menu'
 import { useAppearance } from './ThemeContext'
+import { useNoteRecording } from './useNoteRecording'
 
 /**
  * Rows, bottom and top: the full range, well past the Keyboard's own two
@@ -144,6 +148,30 @@ const TOOLS = [
   ['random', 'Randomize pitch'],
 ] as const
 type Tool = (typeof TOOLS)[number][0]
+/** What Quantize can move, in the order its menu lists them. */
+const QUANTIZE_WHAT: [QuantizeWhat, string][] = [
+  ['start', 'Starts'],
+  ['end', 'Ends'],
+  ['both', 'Starts and ends'],
+  ['length', 'Lengths'],
+]
+const QUANTIZE_STRENGTHS = [1, 0.75, 0.5, 0.25]
+/** How Quantize is set up, remembered with the other preferences. */
+export interface QuantizeSetup {
+  what: QuantizeWhat
+  strength: number
+  /** Notes played in while recording are quantized as they land. */
+  onInput: boolean
+}
+const DEFAULT_QUANTIZE: QuantizeSetup = { what: 'start', strength: 1, onInput: false }
+const loadQuantize = (): QuantizeSetup => {
+  const q = loadPrefs().quantize
+  return {
+    what: QUANTIZE_WHAT.some(([id]) => id === q?.what) ? q!.what : DEFAULT_QUANTIZE.what,
+    strength: QUANTIZE_STRENGTHS.includes(q?.strength ?? NaN) ? q!.strength : DEFAULT_QUANTIZE.strength,
+    onInput: q?.onInput === true,
+  }
+}
 /** The same notes in any order, so a transform that only shuffled the list is not an edit. */
 const sameSet = (a: readonly Note[], b: readonly Note[]) => {
   const order = (x: Note, y: Note) => x.tick - y.tick || x.pitch - y.pitch || x.length - y.length || x.velocity - y.velocity
@@ -187,6 +215,10 @@ interface Props {
   /** Called once per gesture, when it is let go. */
   onChange: (notes: Note[]) => void
   transport: Transport
+  /** Notes being played by hand, which the Rec button writes in. */
+  live: LiveNotes
+  /** Write one played-in note into the pattern; see `useNoteRecording`. */
+  onRecord: (note: Note, take: string) => void
   /**
    * The pattern's swing, to draw it as it sounds; absent draws the written
    * grid. Only ever the drawing: the notes handed back are on the grid.
@@ -300,6 +332,8 @@ export function PianoRoll({
   playOffset,
   onChange,
   transport,
+  live,
+  onRecord,
 }: Props) {
   const appearance = useAppearance()
   const hostRef = useRef<HTMLDivElement>(null)
@@ -1312,11 +1346,57 @@ export function PianoRoll({
     const sel = [...overlay.current.selected].filter((i) => i < list.length)
     return sel.length ? sel : list.map((_, i) => i)
   }
+  const [quant, setQuantState] = useState(loadQuantize)
+  const setQuant = (next: QuantizeSetup) => {
+    setQuantState(next)
+    savePrefs({ quantize: next })
+  }
+  /** Where the Quantize menu is open, if it is. */
+  const [quantMenu, setQuantMenu] = useState<{ x: number; y: number } | null>(null)
   const quantize = () => {
     const list = notesRef.current
-    const out = quantizeNotes(list, targets(), grid, lengthTicks)
+    const out = quantizeNotes(list, targets(), grid, lengthTicks, quant)
     if (!sameNotes(out.notes, list)) commit({ ...out, selected: [...overlay.current.selected] })
   }
+  const quantizeItems: MenuItem[] = [
+    ...QUANTIZE_WHAT.map(([id, name]): MenuItem => ({
+      kind: 'toggle',
+      label: `Quantize ${name.toLowerCase()}`,
+      checked: quant.what === id,
+      onSelect: () => setQuant({ ...quant, what: id }),
+    })),
+    { kind: 'separator' },
+    {
+      kind: 'submenu',
+      label: `Strength ${Math.round(quant.strength * 100)}%`,
+      items: QUANTIZE_STRENGTHS.map((k): MenuItem => ({
+        kind: 'toggle',
+        label: `${Math.round(k * 100)}%`,
+        checked: quant.strength === k,
+        onSelect: () => setQuant({ ...quant, strength: k }),
+      })),
+    },
+    { kind: 'separator' },
+    {
+      kind: 'toggle',
+      label: 'Quantize while recording',
+      checked: quant.onInput,
+      onSelect: () => setQuant({ ...quant, onInput: !quant.onInput }),
+    },
+  ]
+  const recording = useNoteRecording({
+    live,
+    transport,
+    track,
+    lengthTicks,
+    zero: Number.isFinite(playOffset) ? playOffset : 0,
+    quantize: quant.onInput && !snapOff ? { grid, what: quant.what, strength: quant.strength } : undefined,
+    onRecord,
+  })
+  const quantTitle =
+    `Snap the ${quant.what === 'start' ? 'starts' : quant.what === 'end' ? 'ends' : quant.what === 'both' ? 'starts and ends' : 'lengths'}` +
+    ` of the selected notes to the grid${quant.strength < 1 ? `, ${Math.round(quant.strength * 100)}% of the way` : ''}` +
+    ' (every note, if none are selected)'
   const humanize = () => {
     const list = notesRef.current
     const timing = Math.min(HUMANIZE_TICKS, grid / 6)
@@ -1353,13 +1433,40 @@ export function PianoRoll({
     <div className="roll">
       <div className="roll-tools">
         <button
-          className="dock-toggle"
-          onClick={quantize}
-          title="Snap the starts of the selected notes to the grid (every note, if none are selected)"
+          className={`dock-toggle roll-rec${recording.armed ? ' on' : ''}`}
+          onClick={() => recording.toggle(Number.isFinite(playOffset) ? playOffset : 0)}
+          aria-pressed={recording.armed}
+          title={
+            recording.armed
+              ? 'Stop recording (the loop keeps playing)'
+              : 'Record: play the Keyboard, a Trigger or a MIDI controller and the notes are written in at the playhead'
+          }
           type="button"
         >
-          Quantize
+          ● Rec
         </button>
+        <span className="roll-split">
+          <button className="dock-toggle" onClick={quantize} title={quantTitle} type="button">
+            Quantize
+          </button>
+          <button
+            className="dock-toggle roll-split-more"
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect()
+              setQuantMenu(quantMenu ? null : { x: r.left, y: r.bottom + 2 })
+            }}
+            aria-label="Quantize settings"
+            aria-haspopup="menu"
+            aria-expanded={quantMenu !== null}
+            title="What Quantize moves, how far, and whether it quantizes as you record"
+            type="button"
+          >
+            ▾
+          </button>
+        </span>
+        {quantMenu && (
+          <ContextMenu x={quantMenu.x} y={quantMenu.y} items={quantizeItems} onClose={() => setQuantMenu(null)} />
+        )}
         <button
           className="dock-toggle"
           onClick={humanize}

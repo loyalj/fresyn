@@ -167,6 +167,7 @@ and read the tutorial when you want to know why it works.
 | Turn the rack around | **F** (unless a Trigger is on F, which then plays) |
 | Undo | **Ctrl+Z** |
 | Redo | **Ctrl+Shift+Z** or **Ctrl+Y** |
+| Go back (or on) several steps at once | **Ctrl+H** or **Edit → History**, then click a step |
 | Save the project | **Ctrl+S**; **Ctrl+Shift+S** to save as a new file |
 | Open a project | **Ctrl+O** |
 | Patch a cable | Drag from one jack to another (back panel) |
@@ -1915,6 +1916,30 @@ them holds the rest:
 What a tool made is left selected when there was a selection, so two can be
 run on the same notes one after the other: Arpeggiate, then Humanize.
 
+**The ▾ beside Quantize sets what it moves and how far.** Starts (the
+default) keeps each note's length. **Ends** puts the ends on the grid and
+leaves the starts, **Starts and ends** does both, and **Lengths** rounds each
+note to a whole number of grid steps. **Strength** moves each note only part
+of the way to its line: at 50% a note 60 ticks late ends up 30 ticks late,
+which tightens a played part without making it sound typed in.
+
+**Record by playing.** Press **● Rec** and the loop starts. Every note you
+play on the track is written into the pattern where you played it, once you
+let go of the key. You can play the Keyboard panel, the track's Trigger (its
+key or its button), or a MIDI controller. Press Rec again to stop recording
+and leave the loop running, or stop the loop to end the take. Playing the
+same note in the same place on the next pass replaces it rather than doubling
+it. Timing is measured against what you hear, so the delay of your audio
+device is taken out. Turn on **Quantize while recording** in the ▾ menu and
+each note is quantized as it lands, using the grid, mode and strength set
+there.
+
+**MIDI controllers**: turn on **Edit → MIDI input** (the browser asks first).
+A key plays the row with that note's name on the track on the bench, so C4 on
+the controller is the C4 you hear whatever the patch is tuned to, and it
+plays at the velocity you hit it. Controllers plugged in later are picked up
+as they arrive.
+
 **With no Keyboard, every note fires the Trigger.** The rows mean nothing and
 what you are writing is a rhythm, which is the right way to play a coin, a
 laser or a footstep. Velocity still counts: it comes out of the Trigger's
@@ -1992,6 +2017,7 @@ tinted with it, so you can see which bars belong to it.
 | × on a section | Removes the section. **Its music stays** |
 | Right-click a section | Loop, rename, colour, duplicate, split at a bar, remove, or delete it with its music |
 | Click a bar number | Splits the section over it there, or starts one |
+| Drag along the bar numbers | Picks those bars, for the edits under **Editing bars** below |
 
 **Moving a section moves its music.** Drop it between two others and the
 song opens up there to take it and closes up where it came from. A clip that
@@ -2011,6 +2037,31 @@ name.
 
 Projects saved before sections had lengths open with each old marker as a
 section running to the next.
+
+### Editing bars
+
+**Drag along the bar numbers to pick bars** — any bars, whether or not a
+section covers them. The picked bars are shaded down every lane, because
+what you do to them happens to every track at once. **Shift+click** a bar
+number to stretch the pick out to it. With snap off or finer than a bar, the
+pick follows the snap.
+
+| With bars picked | What it does |
+| --- | --- |
+| **Insert** (Insert key) | Puts in as many empty bars before them, and moves the rest of the song later |
+| **Delete** (Ctrl+Delete) | Takes the bars out and closes the song up |
+| **Clear** (Delete) | Empties the bars and leaves the space |
+| **Duplicate** (Ctrl+D) | Puts a copy straight after them and picks the copy, so pressing it again repeats the bars again |
+| **Copy** / **Cut** (Ctrl+C / Ctrl+X) | Holds the bars for pasting; Cut also takes them out |
+| **Paste** (Ctrl+V) | Puts the held bars in before the picked ones, opening the song up to fit them |
+
+A clip that crosses the edge of a pick is split there first, which you cannot
+hear, so only what is inside the pick changes. Sections go with the bars
+they label: bars put in inside a section make it longer, bars taken out make
+it shorter, and a section with all its bars taken out goes too. A section
+inside copied bars is pasted as a section with a name of its own. The keys
+work when the playlist has the keyboard and no clips are picked; clicking a
+lane lets go of the picked bars.
 
 **ROLL plays the pattern; SONG plays the arrangement.** Which view is showing
 decides what the transport does, so there is no third button to forget about.
@@ -2086,7 +2137,8 @@ first save asks where, and after that each save updates the same file, as does
 saving a project you opened. **Save project as...** (**Ctrl+Shift+S**) always
 asks. Other browsers download a new copy on every save.
 **New project** starts again from one stock track. **Bounce song...** and
-**Bounce stems...** render it to audio. A project file is also the one a game
+**Bounce stems...** render it to audio as WAV, FLAC, OGG or MP3, and **Export
+MIDI...** writes its notes. A project file is also the one a game
 would load: everything needed to play the music is in it, and none of it needs
 a browser.
 
@@ -2134,9 +2186,30 @@ existed sounds exactly as it did.
 
 ### Bouncing it out
 
-**Project → Bounce song...** renders the arrangement to a WAV, faster than
-realtime and with nothing waiting for a speaker. It comes out stereo, 24-bit,
-at the rate the rack is running at.
+**Project → Bounce song...** renders the arrangement to a file, faster than
+realtime and with nothing waiting for a speaker. It asks first how to write
+it, and remembers your answer for next time:
+
+| Format | What it is for |
+| --- | --- |
+| **WAV** | Uncompressed, at 16-bit, 24-bit or 32-bit float. Every DAW and engine reads it |
+| **FLAC** | Lossless, at 16 or 24-bit, and usually half the size of the WAV or less. It decodes back to exactly the same samples |
+| **OGG Vorbis** | Small and lossy, at a quality from q3 (about 112 kbps) to q10. What Unity, Godot and most web games stream music from |
+| **MP3** | Small and lossy, V6 to V0, and plays anywhere. Written at 44.1 or 48 kHz only |
+
+**Sample rate** is 44.1, 48, 88.2 or 96 kHz, whatever the rack runs at: the
+bounce renders at the rate you pick instead of converting afterwards. 32-bit
+float is the one choice that keeps anything past full scale instead of
+clipping it. OGG and MP3 are written by the standard encoders (libvorbis and
+LAME), which load the first time you choose one.
+
+**Project → Export MIDI...** writes the arrangement's notes as a Standard
+MIDI File, for another DAW or a game's own sequencer. It is a type 1 file
+with a track per track, the tempo, the time signature and a marker for each
+section. Each note is written as the note you hear, so C4 in the roll is
+MIDI note 60 whatever the patch is tuned to. What goes in is what plays:
+clips repeat and cut notes off, swing is applied, and muted tracks are left
+out.
 
 **It is the same arithmetic that plays it.** The bounce runs the same
 scheduler the transport does, and notes land on exactly the samples they
@@ -2151,8 +2224,8 @@ does, faded so the cut cannot click; end exactly on the arrangement and there
 is no fade at all, because that point is the seam.
 
 **Project → Bounce stems** writes one file per track instead, zipped and
-numbered in track order, and asks what each stem should carry of its channel
-on the Mix view:
+numbered in track order, in any of the formats above. Choose what each stem
+should carry of its channel on the Mix view:
 
 - **Channel only**: through its EQ, pan and fader, as it sits in the mix.
 - **Channel and sends**: that, and its own share of the Space and the Delay.
@@ -3723,7 +3796,8 @@ Work down this list; it is roughly in order of likelihood.
 4. **Is the filter shut?** A Cutoff down at 20 Hz removes essentially
    everything. Turn it up and see if the sound returns.
 5. **Did a cable pop out?** Patching into an occupied input silently unplugs
-   what was there. **Ctrl+Z** steps back through every edit.
+   what was there. **Ctrl+Z** steps back through every edit, and **Ctrl+H**
+   lists them by name so you can jump straight to the one before it went quiet.
 6. **Is the envelope firing?** Patch an Envelope's Out to a Scope. If the trace
    stays flat when you press Space, its Gate input is not connected.
 7. **Is Sustain doing what you expect?** With Sustain at 0.00 a long Decay has

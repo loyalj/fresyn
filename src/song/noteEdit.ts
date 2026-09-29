@@ -188,22 +188,61 @@ export function notesIn(
 }
 
 /**
- * Starts snapped to the nearest grid line, lengths kept. The ends are left
- * alone on purpose: a note's length is how it was played, and quantizing it
- * as well turns a legato line into a row of identical blocks.
+ * What a quantize moves.
+ *
+ * - `start`: starts onto the grid, lengths kept. The default, and the one to
+ *   reach for: a note's length is how it was played, and quantizing that as
+ *   well turns a legato line into a row of identical blocks.
+ * - `end`: ends onto the grid, starts kept -- for lining up where a part
+ *   lets go without touching where it lands.
+ * - `both`: starts and ends onto the grid, each on its own line.
+ * - `length`: lengths rounded to a whole number of grid steps, starts kept.
+ */
+export type QuantizeWhat = 'start' | 'end' | 'both' | 'length'
+
+export interface QuantizeOptions {
+  what?: QuantizeWhat
+  /**
+   * How far towards the grid, 0..1. 1 is all the way; a half moves each note
+   * half the distance, which tightens a played part without flattening it
+   * into a typed one.
+   */
+  strength?: number
+}
+
+/**
+ * Notes snapped to the grid: see `QuantizeWhat` for which part of them, and
+ * `strength` for how far. Nothing is ever pushed off the end of the pattern
+ * or shortened to nothing.
  */
 export function quantizeNotes(
   notes: readonly Note[],
   selected: readonly number[],
   grid: number,
   lengthTicks: number,
+  { what = 'start', strength = 1 }: QuantizeOptions = {},
 ): Edited {
   const out = [...notes]
+  const k = clamp(strength, 0, 1)
+  const toward = (from: number, to: number) => Math.round(from + (to - from) * k)
+  const last = Math.max(0, lengthTicks - grid)
   for (const i of selected) {
     const n = out[i]
     if (!n) continue
-    const tick = clamp(Math.round(n.tick / grid) * grid, 0, Math.max(0, lengthTicks - grid))
-    out[i] = { ...n, tick, length: Math.max(1, Math.min(n.length, lengthTicks - tick)) }
+    const end = n.tick + n.length
+    const onGrid = clamp(Math.round(n.tick / grid) * grid, 0, last)
+    const tick = what === 'start' || what === 'both' ? toward(n.tick, onGrid) : n.tick
+    let length = n.length
+    if (what === 'end' || what === 'both') {
+      // The nearest line to the end, but never at or before the start's own
+      // line: an end that rounds back onto its start takes the line after.
+      const from = what === 'both' ? onGrid : Math.floor(n.tick / grid) * grid
+      const target = Math.max(from + grid, Math.round(end / grid) * grid)
+      length = toward(end, target) - tick
+    } else if (what === 'length') {
+      length = toward(n.length, Math.max(grid, Math.round(n.length / grid) * grid))
+    }
+    out[i] = { ...n, tick, length: Math.max(1, Math.min(length, lengthTicks - tick)) }
   }
   return { notes: out, selected: [...selected] }
 }

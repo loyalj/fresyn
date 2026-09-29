@@ -34,7 +34,8 @@
   },
   "dependencies": {
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "wasm-media-encoders": "^0.7.0"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",

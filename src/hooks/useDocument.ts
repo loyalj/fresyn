@@ -1,12 +1,13 @@
 import { useCallback, useRef, useState } from 'react'
 import { defaultPatch } from '../patch/defaultPatch'
 import { initialValues, reconcileValues } from '../patch/edit'
-import { commit, initHistory, redo, undo, type History } from '../patch/history'
+import { commit, initHistory, jumpTo, redo, undo, type History } from '../patch/history'
 import { loadLocalProject } from '../patch/storage'
 import type { Patch } from '../patch/types'
 import { setPatternNotes } from '../song/edit'
 import type { Rack } from '../song/project'
 import { BENCH_TRACK, benchSong, type Song } from '../song/types'
+import { describeEdit } from './describeEdit'
 
 /** Edits to the same control inside this window fold into one undo step. */
 const COALESCE_MS = 600
@@ -93,14 +94,28 @@ export function useDocument(initialDoc: Doc) {
    * to coalesce is decided out here rather than inside the updater, because
    * StrictMode runs updaters twice and the second pass would see its own
    * timestamp and reach a different answer.
+   *
+   * `label` names the step in the History list; without one it is worked
+   * out from what changed (see `describeEdit`).
    */
-  const commitDoc = useCallback((next: (doc: Doc) => Doc, key?: string) => {
+  const commitDoc = useCallback((next: (doc: Doc) => Doc, key?: string, label?: string) => {
     const now = Date.now()
+    // A recorded take folds however long the gaps between its notes: a take
+    // is one step of undo, and its key is new for every take.
     const fold =
-      key !== undefined && key === coalesceKey.current && now - coalesceAt.current < COALESCE_MS
+      key !== undefined &&
+      key === coalesceKey.current &&
+      (key.startsWith('take:') || now - coalesceAt.current < COALESCE_MS)
     coalesceKey.current = key ?? null
     coalesceAt.current = now
-    setHistory((h) => commit(h, next(h.present), fold))
+    setHistory((h) => {
+      const doc = next(h.present)
+      if (doc === h.present) return h
+      // A folded step is named from where the gesture began, so a drag
+      // that moved five notes is not called after its last pixel.
+      const from = fold && h.past.length ? h.past[h.past.length - 1] : h.present
+      return commit(h, doc, fold, label ?? describeEdit(from, doc))
+    })
   }, [])
 
   /**
@@ -198,6 +213,12 @@ export function useDocument(initialDoc: Doc) {
     setHistory(redo)
   }, [])
 
+  /** Straight to a step in the History list, however far back or on. */
+  const goToStep = useCallback((index: number) => {
+    coalesceKey.current = null
+    setHistory((h) => jumpTo(h, index))
+  }, [])
+
   return {
     history,
     name,
@@ -220,5 +241,6 @@ export function useDocument(initialDoc: Doc) {
     setNotes,
     stepBack,
     stepForward,
+    goToStep,
   }
 }

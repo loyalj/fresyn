@@ -1,6 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AudioEngine } from '../audio/AudioEngine'
 import type { Transport } from '../audio/Transport'
+import type { LiveNotes } from '../input/liveNotes'
+import { addRecorded } from '../song/record'
 import { loadPrefs, savePrefs } from '../patch/storage'
 import type { NoteTarget } from '../song/bind'
 import type { Tuning } from '../song/tuning'
@@ -9,6 +11,7 @@ import {
   firstPlacement,
   setMeter,
   setPatternLength,
+  setPatternNotes,
   setPatternSwing,
   updatePattern,
   soloTrack,
@@ -76,6 +79,8 @@ const OFF_GRID = PPQ / 4
 
 interface Props {
   transport: Transport
+  /** Notes being played by hand, for the roll's Rec button. */
+  live: LiveNotes
   /** The project's name: what Save project and the bounces are called. */
   projectName: string
   onProjectName: (name: string) => void
@@ -145,6 +150,7 @@ const NEW_PATTERN = '__new'
  */
 export const SongDock = memo(function SongDock({
   transport,
+  live,
   projectName,
   onProjectName,
   song,
@@ -593,6 +599,15 @@ export const SongDock = memo(function SongDock({
               playOffset={inContext ? (placedAt ?? Infinity) : 0}
               onChange={setMine}
               transport={transport}
+              live={live}
+              onRecord={(note, take) =>
+                // Against the pattern as it stands when the note lands, and
+                // under the take's key, so a take is one step of undo.
+                onEdit((s) => {
+                  const p = s.patterns.find((x) => x.id === patternId)
+                  return p ? setPatternNotes(s, patternId, addRecorded(p.notes, note)) : s
+                }, take)
+              }
               swing={showSwing ? pattern.swing : undefined}
             />
           ) : (

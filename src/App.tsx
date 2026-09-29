@@ -20,6 +20,8 @@ import { useStableActions } from './hooks/useStableActions'
 import { useTakes } from './hooks/useTakes'
 import { useTriggers } from './hooks/useTriggers'
 import { useInput } from './input/useInput'
+import { LiveNotes } from './input/liveNotes'
+import { useMidiInput } from './input/midi'
 import { defOf } from './patch/defs'
 import { defaultPatch } from './patch/defaultPatch'
 import { sampleIdsIn, sampleIdsInLocalStorage } from './patch/sampleRefs'
@@ -45,10 +47,10 @@ import {
   type ModuleClip,
   type PortRef,
 } from './patch/edit'
-import { canRedo, canUndo } from './patch/history'
+import { canRedo, canUndo, steps } from './patch/history'
 import { loadDock, saveDock, saveLocalProject, loadPrefs, savePrefs } from './patch/storage'
 import { noteTarget, type NoteTarget } from './song/bind'
-import { tuningOf } from './song/tuning'
+import { rowForMidi, tuningOf } from './song/tuning'
 import { songEnd } from './song/schedule'
 import { sectionAt } from './song/section'
 import {
@@ -84,6 +86,9 @@ import { RackIndex } from './ui/RackIndex'
 import { rackShares } from './ui/rackLayout'
 import { RackUnit, type RackActions } from './ui/RackUnit'
 import { AudioSettingsDialog } from './ui/AudioSettingsDialog'
+import { HistoryPanel } from './ui/HistoryPanel'
+import { BounceDialog } from './ui/BounceDialog'
+import type { StemMix } from './audio/renderSong'
 import { SongDock } from './ui/SongDock'
 import { ThemeContext, useAppearanceState } from './ui/ThemeContext'
 import { UnitSpine } from './ui/UnitSpine'
@@ -156,7 +161,11 @@ export default function App() {
     setNotes,
     stepBack,
     stepForward,
+    goToStep,
   } = useDocument(initialDoc)
+  /** The History list is showing. A view, so not saved with anything. */
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const toggleHistory = useCallback(() => setHistoryOpen((o) => !o), [])
 
   // What the benched Keyboard plays, to name the roll's rows and the panel's
   // keys by. Kept by its three numbers, so turning any other knob in the
@@ -875,7 +884,7 @@ export default function App() {
         // track and leaves every note where it was.
         song: updateTrack(doc.song, trackId, { name: trackName }),
         racks: { ...doc.racks, [trackId]: { patch: next, values } },
-      }))
+      }), undefined, `Load ${trackName}`)
     },
     [commitDoc, breakCoalesce, trackId],
   )
@@ -897,9 +906,70 @@ export default function App() {
     setNotice,
     runJob,
   })
-  const bounce = useBounce({ song, racks, name, engine, samples, transport, setNotice, runJob })
+  const bounce = useBounce({ song, racks, name, samples, transport, setNotice, runJob })
+  /** The bounce sheet, open on the whole mix or a kind of stems. */
+  const [bounceOpen, setBounceOpen] = useState<'song' | StemMix | null>(null)
   const { recorder } = useTakes({ engine, samples, trackId, patchName, patch, values, setNotice })
-  const triggers = useTriggers(engine, trackId, patch, values)
+  /**
+   * Notes played by hand, as they are played, for the roll to record. The
+   * Keyboard panel, a Trigger and a MIDI controller all report here.
+   */
+  const liveNotes = useMemo(() => new LiveNotes(), [])
+  /** The key a Keyboard press is about to open the gate for; see `gate`. */
+  const pressedKey = useRef<number | null>(null)
+  /** What the panel is holding, to say which note let go. */
+  const heldPanel = useRef<{ track: string; pitch: number } | null>(null)
+  const triggers = useTriggers(engine, trackId, patch, values, (moduleId, open) => {
+    // Only the module the track's notes are played on is a note: the rest of
+    // a rack's Triggers fire things inside the patch.
+    const target = targets.get(trackId)
+    if (!target || target.module !== moduleId) return
+    if (open) {
+      const pitch = target.kind === 'note' ? (pressedKey.current ?? Math.round(values[`${moduleId}.note`] ?? 0)) : 0
+      pressedKey.current = null
+      heldPanel.current = { track: trackId, pitch }
+      liveNotes.emit({ kind: 'on', track: trackId, pitch, velocity: 1, source: 'panel' })
+    } else if (heldPanel.current) {
+      liveNotes.emit({ kind: 'off', ...heldPanel.current, velocity: 0, source: 'panel' })
+      heldPanel.current = null
+    }
+  })
+
+  /**
+   * MIDI controllers, when switched on from the Edit menu. A key plays the
+   * row named for the note it is, on the track on the bench -- so C4 on the
+   * controller is the C4 you hear whatever the patch is tuned to.
+   */
+  const [midiOn, setMidiOn] = useState(() => loadPrefs().midi === true)
+  const midiHeld = useRef(new Map<number, { track: string; pitch: number }>())
+  const midi = useMidiInput(midiOn, (m) => {
+    if (m.kind === 'on') {
+      const pitch = rowForMidi(m.note, tuning)
+      midiHeld.current.set(m.note, { track: trackId, pitch })
+      transport.preview(trackId, pitch, m.velocity)
+      liveNotes.emit({ kind: 'on', track: trackId, pitch, velocity: Math.round(m.velocity * 100) / 100, source: 'midi' })
+      return
+    }
+    const held = midiHeld.current.get(m.note)
+    if (!held) return
+    midiHeld.current.delete(m.note)
+    transport.release(held.track, held.pitch)
+    liveNotes.emit({ kind: 'off', ...held, velocity: 0, source: 'midi' })
+  })
+  // Said once, when it changes: which controllers were found, or why not.
+  useEffect(() => {
+    if (midi.state === 'ready') {
+      setNotice(
+        midi.devices.length
+          ? `MIDI: listening to ${midi.devices.join(', ')}`
+          : 'MIDI is on, but no controller is connected -- plug one in and it is picked up',
+      )
+    } else if (midi.state === 'unsupported') {
+      setNotice(warn('This browser has no MIDI: try Chrome or Edge'))
+    } else if (midi.state === 'denied') {
+      setNotice(warn(`MIDI was not allowed: ${midi.error}`))
+    }
+  }, [midi])
 
   /**
    * No confirmation step any more. It used to be a button on the bar, where a
@@ -916,7 +986,7 @@ export default function App() {
       name: 'Untitled',
       song,
       racks: { [BENCH_TRACK]: { patch, values: initialValues(patch) } },
-    }))
+    }), undefined, 'New project')
     setSelected(BENCH_TRACK)
     setPatternId(song.patterns[0].id)
     setNotice('Started a new project -- Ctrl+Z to undo')
@@ -1034,7 +1104,8 @@ export default function App() {
   useInput({
     // A cap waiting for a key needs the keyboard to itself, or the key being
     // assigned would fire whatever it is already bound to on the way past.
-    suspended: menuOpen || libraryOpen || audioOpen || search !== null || triggers.listening !== null,
+    suspended:
+      menuOpen || libraryOpen || audioOpen || bounceOpen !== null || search !== null || triggers.listening !== null,
     bindings: [
       { code: FLIP_KEY, onDown: flip },
       ...triggers.triggerKeys,
@@ -1044,8 +1115,8 @@ export default function App() {
       { code: 'KeyS', ctrl: true, onDown: () => void files.saveProject() },
       { code: 'KeyS', ctrl: true, shift: true, onDown: () => void files.saveProject(true) },
       { code: 'KeyO', ctrl: true, onDown: () => void files.pickProject() },
-      // The rack's copy and paste stand aside while the roll has the keyboard:
-      // there, the same keys copy notes.
+      // The rack's copy and paste stand aside while the roll or the playlist
+      // has the keyboard: there, the same keys copy notes, or bars.
       { code: 'KeyC', ctrl: true, onDown: () => rackHasKeys() && copyPicked() },
       { code: 'KeyV', ctrl: true, onDown: () => rackHasKeys() && pasteClip() },
       {
@@ -1060,6 +1131,8 @@ export default function App() {
       { code: 'KeyZ', ctrl: true, onDown: stepBack },
       { code: 'KeyZ', ctrl: true, shift: true, onDown: stepForward },
       { code: 'KeyY', ctrl: true, onDown: stepForward },
+      // Taken from the browser, whose own Ctrl+H opens its page history.
+      { code: 'KeyH', ctrl: true, onDown: toggleHistory },
     ],
   })
 
@@ -1095,6 +1168,8 @@ export default function App() {
       rack.start(id, e)
     },
     gate: (id, open, ahead) => {
+      // The key goes to the recorder with the gate, through `useTriggers`.
+      if (open && typeof ahead?.note === 'number') pressedKey.current = ahead.note
       // Sent now rather than with the next render's sync, so they arrive
       // before the gate does: the audio thread takes messages in order. The
       // sync afterwards finds them already sent and sends nothing.
@@ -1166,13 +1241,21 @@ export default function App() {
     newProject: onNew,
     openProject: () => void files.pickProject(),
     saveProject: (saveAs) => void files.saveProject(saveAs),
-    bounceSong: () => void bounce.bounceSong(),
-    bounceStems: (mix) => void bounce.bounceStems(mix),
+    bounceSong: () => setBounceOpen('song'),
+    bounceStems: (mix) => setBounceOpen(mix),
+    exportMidi: bounce.exportMidi,
     busy: busy !== null,
     canUndo: canUndo(history),
     canRedo: canRedo(history),
     undo: stepBack,
     redo: stepForward,
+    historyOpen,
+    toggleHistory,
+    midiOn,
+    toggleMidi: () => {
+      setMidiOn(!midiOn)
+      savePrefs({ midi: !midiOn })
+    },
     canCopy: picked.size > 0,
     canPaste: hasClip,
     copy: copyPicked,
@@ -1374,6 +1457,23 @@ export default function App() {
           />
         )}
 
+        {bounceOpen && (
+          <BounceDialog
+            what={bounceOpen}
+            onClose={() => setBounceOpen(null)}
+            onBounce={(settings) => {
+              const what = bounceOpen
+              setBounceOpen(null)
+              if (what === 'song') void bounce.bounceSong(settings)
+              else void bounce.bounceStems(what, settings)
+            }}
+          />
+        )}
+
+        {historyOpen && (
+          <HistoryPanel {...steps(history)} onJump={goToStep} onClose={() => setHistoryOpen(false)} />
+        )}
+
         {search && (
           <ModuleSearch
             cable={search.cable?.anchorKind}
@@ -1455,6 +1555,7 @@ export default function App() {
         <ThemeContext.Provider value={appearance}>
           <SongDock
             transport={transport}
+            live={liveNotes}
             projectName={name}
             onProjectName={setProjectName}
             song={song}
@@ -1528,10 +1629,11 @@ function freshModule(patch: Patch, type: string): PatchModule {
 }
 
 /**
- * Whether a rack shortcut should act, rather than the roll's: the roll takes
- * the same keys for notes while it has the keyboard.
+ * Whether a rack shortcut should act, rather than the dock's: the roll takes
+ * the same keys for notes while it has the keyboard, and the playlist takes
+ * copy and paste for bars.
  */
 function rackHasKeys() {
   const active = document.activeElement
-  return !(active instanceof Element && active.closest('.roll'))
+  return !(active instanceof Element && active.closest('.roll, .playlist'))
 }

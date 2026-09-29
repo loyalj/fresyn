@@ -15,6 +15,16 @@ import {
   trimClip,
 } from '../song/clip'
 import { playlistBars } from '../song/edit'
+import {
+  clearTime,
+  copyTime,
+  deleteTime,
+  duplicateTime,
+  insertTime,
+  pasteTime,
+  type TickRange,
+  type TimeClip,
+} from '../song/range'
 import { addSection, sectionAt, sectionOver, sectionsOf, splitSection } from '../song/section'
 import { clipHits, clipRepeats } from '../song/schedule'
 import { barTicks, beatTicks, type Pattern, type Placement, type Song } from '../song/types'
@@ -61,6 +71,15 @@ const ZOOM_MAX = 480
 /** Lanes shown past the last one used, so there is always an empty one to paint in. */
 const SPARE_LANES = 2
 const MIN_LANES = 4
+
+/**
+ * A stretch of the song copied or cut, for pasting. The session's, like the
+ * roll's clipboard, so bars copied in one project paste into the next.
+ */
+let timeClip: TimeClip | null = null
+
+/** How far the pointer goes along the ruler before a press is a drag, in pixels. */
+const RANGE_DRAG_PX = 4
 
 /** A pointer on the timeline, in ticks across and lanes down. */
 interface Point {
@@ -154,6 +173,16 @@ export function Playlist({
   const headRef = useRef<HTMLDivElement>(null)
 
   const [picked, setPicked] = useState<number[]>([])
+  /**
+   * The bars chosen by dragging along the ruler, across every lane: what the
+   * range buttons and keys act on. Independent of the clips picked.
+   */
+  const [range, setRange] = useState<TickRange | null>(null)
+  const [hasTimeClip, setHasTimeClip] = useState(timeClip !== null)
+  /** A drag along the ruler, from where it was pressed. */
+  const rangeDrag = useRef<{ anchor: number; x0: number; moved: boolean } | null>(null)
+  /** Set when a ruler drag ends, so the click that follows is not a bar click too. */
+  const swallowClick = useRef(false)
   // An undo can take clips away from under a selection; what is left of it
   // is what counts.
   const selected = picked.filter((i) => i < song.playlist.length)
@@ -277,6 +306,8 @@ export function Playlist({
     const p = pointAt(e)
     const ctrl = e.ctrlKey || e.metaKey
     e.currentTarget.setPointerCapture(e.pointerId)
+    // Working on clips lets go of the bars chosen on the ruler.
+    setRange(null)
 
     if (e.button === 2) {
       setDrag({ kind: 'erase', hit: index === null ? [] : [index] })
@@ -420,6 +451,95 @@ export function Playlist({
     }
   }
 
+  /** The bars under a stretch of the ruler, out to whole snap steps either way. */
+  const rangeOver = (a: number, b: number): TickRange => {
+    const step = snapTicks || BEAT
+    const from = Math.max(0, Math.floor(Math.min(a, b) / step) * step)
+    const to = Math.max(from + step, Math.ceil(Math.max(a, b) / step) * step)
+    return { from, to }
+  }
+  const onRulerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    // A drag that ended without a click after it leaves nothing to swallow.
+    swallowClick.current = false
+    if (e.button !== 0) return
+    const tick = pointAt(e).tick
+    // Shift stretches the range there is out to the press.
+    const anchor = e.shiftKey && range ? (tick < range.from ? range.to : range.from) : tick
+    rangeDrag.current = { anchor, x0: e.clientX, moved: e.shiftKey }
+    if (e.shiftKey) {
+      setRange(rangeOver(anchor, tick))
+      setPicked([])
+    }
+  }
+  const onRulerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = rangeDrag.current
+    if (!d) return
+    // Let go somewhere else before it was a drag: nothing is held any more.
+    if (e.buttons === 0) {
+      rangeDrag.current = null
+      return
+    }
+    if (!d.moved && Math.abs(e.clientX - d.x0) < RANGE_DRAG_PX) return
+    // Held only once it is a drag: taken on the press, it would take the
+    // click from the bar number too.
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.setPointerCapture(e.pointerId)
+    // Picking bars lets go of any clips picked, so the keys act on the bars.
+    if (!d.moved) setPicked([])
+    d.moved = true
+    setRange(rangeOver(d.anchor, pointAt(e).tick))
+  }
+  const onRulerUp = () => {
+    const d = rangeDrag.current
+    rangeDrag.current = null
+    if (d?.moved) {
+      swallowClick.current = true
+      claimKeyboard(scrollRef.current)
+    }
+  }
+
+  /** The range buttons' and keys' edits. Each keeps the range on what it made. */
+  const rangeLen = range ? range.to - range.from : 0
+  const rangeActions = {
+    insert: () => range && onEdit((s) => insertTime(s, range.from, rangeLen)),
+    remove: () => {
+      if (!range) return
+      onEdit((s) => deleteTime(s, range))
+      setRange(null)
+    },
+    clear: () => range && onEdit((s) => clearTime(s, range)),
+    duplicate: () => {
+      if (!range) return
+      onEdit((s) => duplicateTime(s, range))
+      setRange({ from: range.to, to: range.to + rangeLen })
+    },
+    copy: () => {
+      if (!range) return
+      timeClip = copyTime(song, range)
+      setHasTimeClip(timeClip !== null)
+    },
+    cut: () => {
+      if (!range) return
+      timeClip = copyTime(song, range)
+      setHasTimeClip(timeClip !== null)
+      onEdit((s) => deleteTime(s, range))
+      setRange(null)
+    },
+    paste: () => {
+      const clip = timeClip
+      if (!range || !clip) return
+      onEdit((s) => pasteTime(s, range.from, clip))
+      setRange({ from: range.from, to: range.from + clip.length })
+    },
+  }
+  const barOf = (tick: number) => Math.floor(tick / BAR) + 1
+  const rangeName = range
+    ? range.from % BAR === 0 && range.to % BAR === 0
+      ? rangeLen === BAR
+        ? `Bar ${barOf(range.from)}`
+        : `Bars ${barOf(range.from)}–${barOf(range.to - 1)}`
+      : `${+(rangeLen / BEAT).toFixed(2)} beats from bar ${barOf(range.from)}`
+    : ''
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     // Keys typed into a marker's name are the name's.
     if (e.target !== e.currentTarget || dragRef.current) return
@@ -429,8 +549,21 @@ export function Playlist({
     if (ctrl && key.toLowerCase() === 'a') {
       setPicked(song.playlist.map((_, i) => i))
     } else if (key === 'Escape') {
+      if (!selected.length && range) setRange(null)
       setPicked([])
       handled = false
+    } else if (!selected.length && range) {
+      // With no clips picked, the keys act on the bars chosen on the ruler.
+      const k = key.toLowerCase()
+      if (key === 'Delete' || key === 'Backspace') {
+        if (ctrl) rangeActions.remove()
+        else rangeActions.clear()
+      } else if (key === 'Insert') rangeActions.insert()
+      else if (ctrl && k === 'd') rangeActions.duplicate()
+      else if (ctrl && k === 'c') rangeActions.copy()
+      else if (ctrl && k === 'x') rangeActions.cut()
+      else if (ctrl && k === 'v') rangeActions.paste()
+      else handled = false
     } else if (!selected.length) {
       handled = false
     } else if (key === 'Delete' || key === 'Backspace') {
@@ -556,8 +689,37 @@ export function Playlist({
           <button className="playlist-zoom" onClick={() => setBarPx(barPx * 1.5)} title="Zoom in (Ctrl+wheel)" aria-label="Zoom in" type="button">
             +
           </button>
+          {range && (
+            <div className="playlist-range-tools" role="group" aria-label="Range">
+              <span className="playlist-range-name">{rangeName}</span>
+              <button className="dock-toggle" onClick={rangeActions.insert} title="Put in as many empty bars before these, moving the rest of the song later (Insert)" type="button">
+                Insert
+              </button>
+              <button className="dock-toggle" onClick={rangeActions.remove} title="Take these bars out of the song and close the gap (Ctrl+Delete)" type="button">
+                Delete
+              </button>
+              <button className="dock-toggle" onClick={rangeActions.clear} title="Empty these bars and leave the space (Delete)" type="button">
+                Clear
+              </button>
+              <button className="dock-toggle" onClick={rangeActions.duplicate} title="Put a copy of these bars straight after them (Ctrl+D)" type="button">
+                Duplicate
+              </button>
+              <button className="dock-toggle" onClick={rangeActions.copy} title="Copy these bars (Ctrl+C)" type="button">
+                Copy
+              </button>
+              <button className="dock-toggle" onClick={rangeActions.cut} title="Copy these bars and take them out (Ctrl+X)" type="button">
+                Cut
+              </button>
+              <button className="dock-toggle" onClick={rangeActions.paste} disabled={!hasTimeClip} title="Put the copied bars in here, before these (Ctrl+V)" type="button">
+                Paste
+              </button>
+              <button className="track-remove" onClick={() => setRange(null)} title="Let go of these bars (Esc)" aria-label="Let go of the range" type="button">
+                ×
+              </button>
+            </div>
+          )}
           <span className="playlist-hint">
-            Click paints · drag edges to trim · Ctrl+click splits · right-click deletes · Shift+drag copies · Alt ignores snap
+            Drag the bar numbers to pick bars · click paints · drag edges to trim · Ctrl+click splits · right-click deletes · Shift+drag copies · Alt ignores snap
           </span>
         </div>
 
@@ -586,7 +748,18 @@ export function Playlist({
               onEdit={onEdit}
             />
 
-            <div className="playlist-ruler">
+            <div
+              className="playlist-ruler"
+              onPointerDown={onRulerDown}
+              onPointerMove={onRulerMove}
+              onPointerUp={onRulerUp}
+              onPointerCancel={() => (rangeDrag.current = null)}
+              onClickCapture={(e) => {
+                if (!swallowClick.current) return
+                swallowClick.current = false
+                e.stopPropagation()
+              }}
+            >
               <span className="playlist-label" />
               {Array.from({ length: bars }, (_, i) => {
                 const tick = i * BAR
@@ -616,6 +789,13 @@ export function Playlist({
                   </button>
                 )
               })}
+              {range && (
+                <span
+                  className="playlist-range-mark"
+                  style={{ left: `calc(var(--label-w) + ${range.from * ppt}px)`, width: rangeLen * ppt }}
+                  aria-hidden="true"
+                />
+              )}
             </div>
 
             <div className="playlist-lanes" style={{ height: lanes * LANE_H }}>
@@ -641,6 +821,13 @@ export function Playlist({
                   if (place) onOpenPattern(place.pattern)
                 }}
               >
+                {range && (
+                  <div
+                    className="playlist-range"
+                    style={{ left: range.from * ppt, width: rangeLen * ppt }}
+                    aria-hidden="true"
+                  />
+                )}
                 {/* Each section tints the lanes under it, so it is plain which
                     bars go with it when it is moved. */}
                 {sectionsOf(song).map((x) => (

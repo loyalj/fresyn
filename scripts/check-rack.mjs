@@ -1297,6 +1297,61 @@ console.log('\nundo and redo')
   await flipRack(page, false)
 }
 
+// --- the History list ------------------------------------------------
+console.log('\nthe History list')
+{
+  const labels = () =>
+    page.evaluate(() => [...document.querySelectorAll('.history-step .history-label')].map((e) => e.textContent))
+  const current = () => page.evaluate(() => document.querySelector('.history-step.current .history-label')?.textContent)
+
+  const before = await unitCount()
+  // Three steps to walk back through: remove two units, then a third.
+  for (let i = 0; i < 3; i++) {
+    await page.evaluate(() => document.querySelector('.unit-flip .unit-remove')?.click())
+    await unitsBecome(before - 1 - i)
+  }
+
+  check('Edit > History opens the list', await pick('Edit', 'History'))
+  await waitUntil(page, () => !!document.querySelector('.history-panel'))
+  const names = await labels()
+  check('the list starts where the session did', names[0] === 'Opened', names[0])
+  check('each step is named for what it did', names.slice(-3).every((n) => n.startsWith('Remove ')), names.slice(-3).join(' | '))
+  check('the last step is the one you are on', (await current()) === names.at(-1))
+
+  // Straight back three steps in one click.
+  const three = await page.evaluate((n) => {
+    const rows = [...document.querySelectorAll('.history-step')]
+    rows[rows.length - 1 - n].click()
+    return rows.length
+  }, 3)
+  await unitsBecome(before)
+  check('clicking a step three back undoes all three at once', (await unitCount()) === before)
+  check('the steps ahead are still listed, dimmed', (await labels()).length === three &&
+    (await page.evaluate(() => document.querySelectorAll('.history-step.undone').length)) === 3)
+
+  // Forward again to the middle of them.
+  await page.evaluate(() => [...document.querySelectorAll('.history-step.undone')][1].click())
+  await unitsBecome(before - 2)
+  check('clicking a dimmed step redoes up to it', (await unitCount()) === before - 2)
+
+  // Ctrl+Z still works with the list up, and the list follows it.
+  await page.keyboard.down('Control')
+  await page.keyboard.press('KeyZ')
+  await page.keyboard.up('Control')
+  await unitsBecome(before - 1)
+  check('Ctrl+Z moves the list along with it',
+    (await page.evaluate(() => document.querySelectorAll('.history-step.undone').length)) === 2)
+
+  // Put everything back and close it.
+  await page.evaluate(() => [...document.querySelectorAll('.history-step')].at(-4).click())
+  await unitsBecome(before)
+  await page.keyboard.down('Control')
+  await page.keyboard.press('KeyH')
+  await page.keyboard.up('Control')
+  await waitUntil(page, () => !document.querySelector('.history-panel'))
+  check('Ctrl+H closes it', !(await page.$('.history-panel')))
+}
+
 // --- persistence -----------------------------------------------------
 console.log('\nsurviving a reload')
 {

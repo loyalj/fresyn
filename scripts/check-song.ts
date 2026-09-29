@@ -83,9 +83,16 @@ import {
 } from '../src/song/noteEdit'
 import { degreesBetween, inScale, nearestInScale, stepInScale } from '../src/song/scale'
 import { chordById, chordPitches } from '../src/song/chord'
-import { midiName, midiNameCents, rowZero, scaleForRows, tuningOf } from '../src/song/tuning'
+import { midiName, midiNameCents, rowForMidi, rowZero, scaleForRows, tuningOf } from '../src/song/tuning'
+import { clearTime, copyTime, deleteTime, duplicateTime, insertTime, pasteTime } from '../src/song/range'
+import { addRecorded, MIN_RECORDED, patternTick, recordedNote, spanTicks } from '../src/song/record'
+import { parseMidi } from '../src/input/midi'
 import { parseSong } from '../src/song/serialize'
-import { barTicks, beatTicks, PITCH_RANGE, PPQ, type Song } from '../src/song/types'
+import { describeEdit } from '../src/hooks/describeEdit'
+import { defaultPatch } from '../src/patch/defaultPatch'
+import { initialValues as rackValues } from '../src/patch/edit'
+import { barTicks, beatTicks, benchSong, PITCH_RANGE, PPQ, type Song } from '../src/song/types'
+import { defOf } from '../src/patch/defs'
 /** The Keyboard's own reach, for the checks about what happens at an edge. */
 const TWO_OCTAVES = { low: 0, high: 24 }
 
@@ -1653,6 +1660,25 @@ console.log('\nquantize, humanize and the key')
   const triplet = quantizeNotes([n(330, 0)], [0], PPQ / 3, BAR)
   check('onto a triplet grid as well', triplet.notes[0].tick === 320, `got ${triplet.notes[0].tick}`)
 
+  const half = quantizeNotes([n(G + 60, 0, 200)], [0], G, BAR, { strength: 0.5 })
+  check('a half-strength quantize moves a note half way to the line', half.notes[0].tick === G + 30, `got ${half.notes[0].tick}`)
+  check('at no strength it moves nothing',
+    quantizeNotes([n(G + 60, 0, 200)], [0], G, BAR, { strength: 0 }).notes[0].tick === G + 60)
+  const ends = quantizeNotes([n(G + 30, 0, 200)], [0], G, BAR, { what: 'end' })
+  check('end quantize puts the end on a line and leaves the start',
+    ends.notes[0].tick === G + 30 && (ends.notes[0].tick + ends.notes[0].length) % G === 0,
+    `${ends.notes[0].tick}+${ends.notes[0].length}`)
+  const stub = quantizeNotes([n(G + 10, 0, 30)], [0], G, BAR, { what: 'end' })
+  check('an end that would round back onto its start takes the next line instead',
+    stub.notes[0].tick + stub.notes[0].length === 2 * G, `${stub.notes[0].tick}+${stub.notes[0].length}`)
+  const both = quantizeNotes([n(G - 20, 0, G + 50)], [0], G, BAR, { what: 'both' })
+  check('start-and-end quantize lands both on lines',
+    both.notes[0].tick === G && both.notes[0].length === G, `${both.notes[0].tick}+${both.notes[0].length}`)
+  const lens = quantizeNotes([n(G + 17, 0, 400), n(0, 2, 40)], [0, 1], G, BAR, { what: 'length' })
+  check('length quantize rounds lengths to whole steps and keeps starts',
+    lens.notes[0].tick === G + 17 && lens.notes[0].length === 2 * G && lens.notes[1].length === G,
+    lens.notes.map((x) => `${x.tick}+${x.length}`).join(' '))
+
   let seed = 7
   const random = () => ((seed = (seed * 16807) % 2147483647) / 2147483647)
   const grid = [n(0, 0), n(G, 0), n(2 * G, 0), n(3 * G, 0)]
@@ -2432,6 +2458,134 @@ console.log('\nthe roll\'s tools')
   const others = [n(0, 9), ...chord]
   const onlyPicked = strumNotes(others, [1, 2, 3], 30, false)
   check('a tool leaves the notes it was not given alone', onlyPicked.notes[0].pitch === 9 && onlyPicked.notes[0].tick === 0)
+}
+
+console.log('\nediting a range of bars')
+{
+  const BAR = PPQ * 4
+  // A two-bar pattern played from bar 1 and bar 5, under a section on each.
+  const base: Song = {
+    tempo: 120,
+    tracks: [{ id: 't', name: 'T', patch: 't', gain: 1 }],
+    patterns: [{ id: 'p', name: 'P', length: 2 * BAR, notes: [0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({ track: 't', tick: i * PPQ, length: 240, pitch: i, velocity: 1 })) }],
+    playlist: [{ pattern: 'p', tick: 0 }, { pattern: 'p', tick: 4 * BAR }],
+    sections: [{ tick: 0, length: 2 * BAR, name: 'A' }, { tick: 4 * BAR, length: 2 * BAR, name: 'B' }],
+  }
+  const heard = (s: Song, from = 0, to = 12 * BAR) =>
+    songEventTicks(s, from, to).filter((e) => e.kind === 'on').map((e) => `${e.tick}:${e.pitch}`).join(' ')
+
+  const opened = insertTime(base, 3 * BAR, BAR)
+  check('empty bars put in between clips move everything after them', opened.playlist[1].tick === 5 * BAR)
+  check('and the sections after them', opened.sections![1].tick === 5 * BAR && opened.sections![0].tick === 0)
+  check('with nothing played in the new bars', heard(opened, 3 * BAR, 4 * BAR) === '')
+  const mid = insertTime(base, BAR, BAR)
+  check('bars put in across a clip split it, and what it plays moves with its half',
+    heard(mid, 0, BAR) === heard(base, 0, BAR) && heard(mid, 2 * BAR, 3 * BAR) === heard(base, BAR, 2 * BAR).split(' ').map((x) => {
+      const [t, p] = x.split(':')
+      return `${Number(t) + BAR}:${p}`
+    }).join(' '), heard(mid, 0, 3 * BAR))
+  check('and a section across them grows round them', mid.sections![0].length === 3 * BAR)
+  check('taking the same bars back out is the song it was', heard(deleteTime(mid, { from: BAR, to: 2 * BAR })) === heard(base))
+
+  const gone = deleteTime(base, { from: BAR, to: 5 * BAR })
+  check('deleting a range closes the song up behind it', gone.playlist.every((p) => p.tick < 2 * BAR) && heard(gone, 0, BAR) === heard(base, 0, BAR))
+  check('what was after it plays sooner by its length', heard(gone, BAR, 2 * BAR) === heard(base, 5 * BAR, 6 * BAR).split(' ').map((x) => {
+    const [t, p] = x.split(':')
+    return `${Number(t) - 4 * BAR}:${p}`
+  }).join(' '))
+  check('sections lose the bars that went', gone.sections!.map((s) => `${s.name}:${s.tick}+${s.length}`).join() === `A:0+${BAR},B:${BAR}+${BAR}`,
+    JSON.stringify(gone.sections))
+  check('and one with all its bars gone goes too', deleteTime(base, { from: 3 * BAR, to: 7 * BAR }).sections!.length === 1)
+
+  const cleared = clearTime(base, { from: BAR, to: 5 * BAR })
+  check('clearing a range empties it and moves nothing', heard(cleared, BAR, 5 * BAR) === '' && heard(cleared, 5 * BAR, 6 * BAR) === heard(base, 5 * BAR, 6 * BAR))
+  check('clearing empty bars is no edit', clearTime(base, { from: 2 * BAR, to: 4 * BAR }) === base)
+
+  const twice = duplicateTime(base, { from: 0, to: 2 * BAR })
+  check('duplicating a range plays it twice running', heard(twice, 2 * BAR, 4 * BAR) === heard(base, 0, 2 * BAR).split(' ').map((x) => {
+    const [t, p] = x.split(':')
+    return `${Number(t) + 2 * BAR}:${p}`
+  }).join(' '))
+  check('the copy of a section in it gets a name of its own', twice.sections!.map((s) => s.name).join() === 'A,A 2,B', twice.sections!.map((s) => s.name).join())
+  check('and what came after moves over', twice.sections![2].tick === 6 * BAR)
+
+  const held = copyTime(base, { from: BAR, to: 2 * BAR })!
+  const pasted = pasteTime(base, 8 * BAR, held)
+  check('a copied range pastes in elsewhere, opening the song up there', heard(pasted, 8 * BAR, 9 * BAR) === heard(base, BAR, 2 * BAR).split(' ').map((x) => {
+    const [t, p] = x.split(':')
+    return `${Number(t) + 7 * BAR}:${p}`
+  }).join(' '))
+  check('a loop across inserted bars grows with them', insertTime({ ...base, loop: { from: 0, to: 4 * BAR } }, BAR, BAR).loop?.to === 5 * BAR)
+  check('an empty range is no edit', deleteTime(base, { from: BAR, to: BAR }) === base && insertTime(base, BAR, 0) === base)
+}
+
+console.log('\nrecording notes played in')
+{
+  const L = PPQ * 4
+  const loop = { from: 0, to: L }
+  check('a note held over the seam lasts to the end and on from the top', spanTicks(L - 100, 50, loop) === 150)
+  check('without a loop time only goes forward', spanTicks(500, 400, null) === 0)
+  check('a song tick becomes a tick in the pattern', patternTick(L + 240, L, L) === 240)
+  check('and nothing outside the bars the pattern is played over', patternTick(L - 10, L, L) === null && patternTick(2 * L, L, L) === null)
+
+  const held = { start: 250, pitch: 7, velocity: 0.6 }
+  const plain = recordedNote('t', held, 700, 0, L, loop)
+  check('a released key is a note where it went down, as long as it was held',
+    plain?.tick === 250 && plain.length === 450 && plain.pitch === 7 && plain.velocity === 0.6, JSON.stringify(plain))
+  const tap = recordedNote('t', held, 251, 0, L, loop)
+  check('a tap is never too short to see', tap?.length === MIN_RECORDED, String(tap?.length))
+  const over = recordedNote('t', { ...held, start: L - 120 }, 300, 0, L, loop)
+  check('a note held over the seam is cut at the end, not wrapped', over?.tick === L - 120 && over.length === 120, JSON.stringify(over))
+  const snapped = recordedNote('t', held, 700, 0, L, loop, { grid: PPQ / 4, what: 'start', strength: 1 })
+  check('quantize on input lands it on the grid as it is written', snapped?.tick === 240 && snapped.length === 450, JSON.stringify(snapped))
+  const halfway = recordedNote('t', held, 700, 0, L, loop, { grid: PPQ / 4, what: 'start', strength: 0.5 })
+  check('at the strength asked for', halfway?.tick === 245, JSON.stringify(halfway))
+  const inSong = recordedNote('t', { ...held, start: 2 * L + 480 }, 2 * L + 960, 2 * L, L, { from: 2 * L, to: 3 * L })
+  check('a pattern heard in the song records against its own start', inSong?.tick === 480, JSON.stringify(inSong))
+
+  const a = { track: 't', tick: 240, length: 100, pitch: 7, velocity: 0.5 }
+  const twice = addRecorded(addRecorded([], a), { ...a, velocity: 0.9 })
+  check('playing the same note again on the next pass replaces it', twice.length === 1 && twice[0].velocity === 0.9)
+  check('a different note beside it is added', addRecorded([a], { ...a, pitch: 9 }).length === 2)
+
+  check('a MIDI note on is read with its velocity',
+    JSON.stringify(parseMidi([0x93, 60, 127])) === JSON.stringify({ kind: 'on', note: 60, velocity: 1 }))
+  check('a note on at velocity zero is a release', parseMidi([0x90, 60, 0])?.kind === 'off')
+  check('so is a note off', parseMidi([0x80, 61, 40])?.kind === 'off' && parseMidi([0x80, 61, 40])?.note === 61)
+  check('anything else is not a note', parseMidi([0xb0, 1, 64]) === null && parseMidi([0xf8]) === null)
+  check('a controller key plays the row named for it', rowForMidi(60, { source: 'o', base: 48, octave: 0 }) === 12)
+  check('with the Keyboard octave counted', rowForMidi(60, { source: 'o', base: 48, octave: 1 }) === 0)
+  check('an untuned track still has a C4', rowForMidi(60, null) === 48)
+  check('and nothing lands outside the rows', rowForMidi(127, { source: 'o', base: 0, octave: -3 }) === PITCH_RANGE.high)
+}
+
+console.log('\nthe History list names each edit')
+{
+  const patch = defaultPatch()
+  const base = { name: 'P', song: benchSong(), racks: { bench: { patch, values: rackValues(patch) } } }
+  const withNotes = (notes: Song['patterns'][0]['notes']) => ({
+    ...base,
+    song: setPatternNotes(base.song, 'main', notes),
+  })
+  const note = { track: 'bench', tick: 0, length: 240, pitch: 0, velocity: 0.8 }
+  const one = withNotes([note])
+  check('a drawn note is called one', describeEdit(base, one) === 'Add note', describeEdit(base, one))
+  const moved = withNotes([{ ...note, tick: 240 }])
+  check('a dragged note is a move', describeEdit(one, moved) === 'Move note', describeEdit(one, moved))
+  check('the lane is velocity', describeEdit(one, withNotes([{ ...note, velocity: 0.3 }])) === 'Velocity · note')
+  check('deleting says how many', describeEdit(withNotes([note, note, note]), base) === 'Delete 3 notes')
+  const m = patch.modules[0]
+  const spec = defOf(m.type).params[0]
+  const knob = { ...base, racks: { bench: { patch, values: { ...base.racks.bench.values, [`${m.id}.${spec.id}`]: 0.123 } } } }
+  check('a knob is named with its module', describeEdit(base, knob) === `${spec.label} · ${m.id}`, describeEdit(base, knob))
+  const lost = { ...base, racks: { bench: { patch: { ...patch, modules: patch.modules.slice(1) }, values: base.racks.bench.values } } }
+  check('a removed module is named by kind', describeEdit(base, lost) === `Remove ${defOf(m.type).name}`, describeEdit(base, lost))
+  check('the tempo says what it is now', describeEdit(base, { ...base, song: { ...base.song, tempo: 128 } }) === 'Tempo 128')
+  const split = {
+    ...base,
+    song: { ...base.song, playlist: [{ pattern: 'main', tick: 0, length: 960 }, { pattern: 'main', tick: 960, offset: 960, length: 2880 }] },
+  }
+  check('a split clip is a split', describeEdit(base, split) === 'Split clip', describeEdit(base, split))
 }
 
 console.log(failures === 0 ? '\nall good\n' : `\n${failures} failed\n`)

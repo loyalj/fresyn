@@ -37,6 +37,8 @@ import {
   commit,
   HISTORY_LIMIT,
   initHistory,
+  jumpTo,
+  steps,
   redo,
   undo,
 } from '../src/patch/history'
@@ -132,6 +134,26 @@ console.log('\nundo history')
   for (let i = 1; i <= HISTORY_LIMIT + 25; i++) deep = commit(deep, i)
   check('history is capped', deep.past.length === HISTORY_LIMIT, String(deep.past.length))
   check('the newest steps are the ones kept', deep.past[deep.past.length - 1] === HISTORY_LIMIT + 24)
+  check('and their names are dropped with them', deep.labels.length === deep.past.length)
+
+  // The History list: every step named, and any of them one move away.
+  let named = initHistory('a')
+  for (const [v, l] of [['b', 'one'], ['c', 'two'], ['d', 'three'], ['e', 'four']] as const) {
+    named = commit(named, v, false, l)
+  }
+  const list = steps(named)
+  check('every step is listed with its name', list.labels.join() === 'Opened,one,two,three,four', list.labels.join())
+  check('the list says where you are', list.current === 4)
+  const far = jumpTo(named, 1)
+  check('a jump lands on the step asked for', far.present === 'b' && far.label === 'one')
+  check('a jump back is as many undos', JSON.stringify(far) === JSON.stringify(undo(undo(undo(named)))))
+  check('a jump keeps every step', steps(far).labels.join() === list.labels.join())
+  check('a jump forward is as many redos', JSON.stringify(jumpTo(far, 3)) === JSON.stringify(redo(redo(far))))
+  check('jumping to where you are is a no-op', jumpTo(named, 4) === named)
+  check('a jump past either end stops at it', jumpTo(named, -5).present === 'a' && jumpTo(far, 99).present === 'e')
+  const folded2 = commit(commit(named, 'f', false, 'drag'), 'g', true)
+  check('a folded edit keeps the name of the gesture', folded2.label === 'drag')
+  check('an edit after a jump drops the steps ahead', steps(commit(far, 'z', false, 'new')).labels.length === 3)
 }
 
 // --- round trip ------------------------------------------------------

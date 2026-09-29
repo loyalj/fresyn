@@ -20,6 +20,53 @@ import { triggerPatch } from '../src/patch/defaultPatch'
 import { defOf } from '../src/patch/defs'
 import { initialValues } from '../src/patch/edit'
 import type { Patch } from '../src/patch/types'
+import { encodeFlac } from '../src/audio/flac'
+import { encodeLossy } from '../src/audio/encode'
+import { createMp3Encoder, createOggEncoder } from 'wasm-media-encoders'
+import { songToMidi, varLen } from '../src/song/midi'
+import { PPQ, type Song } from '../src/song/types'
+import { decodeFlac } from './flacDecode'
+
+/** Enough of a MIDI file reader to see what was written: every event, with its absolute tick. */
+function readMidi(file: Uint8Array) {
+  const v = new DataView(file.buffer, file.byteOffset, file.byteLength)
+  const format = v.getUint16(8)
+  const count = v.getUint16(10)
+  const division = v.getUint16(12)
+  let at = 14
+  const tracks: { tick: number; status?: number; meta?: number; data: number[] }[][] = []
+  for (let t = 0; t < count; t++) {
+    const len = v.getUint32(at + 4)
+    let i = at + 8
+    const end = i + len
+    const events: { tick: number; status?: number; meta?: number; data: number[] }[] = []
+    let tick = 0
+    const vlq = () => {
+      let n = 0
+      for (;;) {
+        const b = file[i++]
+        n = n * 128 + (b & 0x7f)
+        if (!(b & 0x80)) return n
+      }
+    }
+    while (i < end) {
+      tick += vlq()
+      const status = file[i++]
+      if (status === 0xff) {
+        const type = file[i++]
+        const n = vlq()
+        events.push({ tick, meta: type, data: [...file.subarray(i, i + n)] })
+        i += n
+      } else {
+        events.push({ tick, status, data: [file[i], file[i + 1]] })
+        i += 2
+      }
+    }
+    tracks.push(events)
+    at = end
+  }
+  return { format, division, tracks }
+}
 
 let failures = 0
 
@@ -231,6 +278,115 @@ console.log('\nzip writing')
   check('every entry reads back byte for byte', recovered === files.length, `${recovered}/${files.length}`)
 
   check('an empty archive is still valid', makeZip([]).length === 22)
+}
+
+console.log('\nflac encoding')
+{
+  // Music-like: two tones with a little noise, different in each ear.
+  let seed = 3
+  const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647) * 2 - 1
+  const tone = (n: number, pan: number) =>
+    Float32Array.from({ length: n }, (_, i) => 0.4 * Math.sin(i * 0.031) * pan + 0.2 * Math.sin(i * 0.0047) + 0.01 * rand())
+  const quantized = (c: Float32Array, full: number) => Int32Array.from(c, (v) => Math.round(Math.max(-1, Math.min(1, v)) * full))
+  const exact = (a: Int32Array, b: Int32Array) => a.length === b.length && a.every((v, i) => v === b[i])
+
+  for (const depth of [16, 24] as const) {
+    const full = depth === 16 ? 32767 : 8388607
+    for (const n of [10, 4096, 10000]) {
+      const left = tone(n, 1)
+      const right = tone(n, 0.3)
+      const file = encodeFlac([left, right], 48000, depth)
+      let back
+      try {
+        back = decodeFlac(file)
+      } catch (e) {
+        check(`${depth}-bit, ${n} frames: decodes`, false, String(e))
+        continue
+      }
+      check(`${depth}-bit, ${n} frames: every sample comes back exactly`,
+        back.sampleRate === 48000 && back.bitDepth === depth && back.totalSamples === n &&
+          exact(back.pcm[0], quantized(left, full)) && exact(back.pcm[1], quantized(right, full)))
+    }
+  }
+  const n = 48000
+  const song = [tone(n, 1), tone(n, 0.8)]
+  const flac = encodeFlac(song, 48000, 16)
+  const wav = encodeWav(song, 48000, 16)
+  check('a FLAC of music is much smaller than the WAV', flac.length < wav.length * 0.7, `${flac.length} against ${wav.length}`)
+  const silent = encodeFlac([new Float32Array(n), new Float32Array(n)], 44100, 16)
+  check('silence costs almost nothing', silent.length < 2000, `${silent.length} bytes`)
+  const loud = Float32Array.from({ length: 5000 }, (_, i) => (i % 2 ? 1.5 : -1.5))
+  const clipped = decodeFlac(encodeFlac([loud], 96000, 24))
+  check('past full scale is clamped, as the WAV writer does', clipped.pcm[0].every((v) => Math.abs(v) === 8388607) && clipped.channels === 1)
+  const same2 = tone(9000, 1)
+  check('identical channels code as mid and side and still come back', exact(decodeFlac(encodeFlac([same2, same2], 48000, 16)).pcm[1], quantized(same2, 32767)))
+}
+
+console.log('\nogg and mp3 encoding')
+{
+  const n = 48000
+  const tone = Float32Array.from({ length: n }, (_, i) => 0.5 * Math.sin((2 * Math.PI * 440 * i) / 48000))
+  const hot = Float32Array.from(tone, (v) => v * 3)
+  const ogg = encodeLossy(await createOggEncoder(), [tone, hot], 48000, 'ogg', 5)
+  const ascii = (b: Uint8Array, at: number, len: number) => String.fromCharCode(...b.subarray(at, at + len))
+  check('an OGG starts with an Ogg page', ascii(ogg, 0, 4) === 'OggS', ascii(ogg, 0, 4))
+  check('holding a Vorbis stream', ascii(ogg, 29, 6) === 'vorbis', JSON.stringify(ascii(ogg, 28, 8)))
+  check('much smaller than the WAV of it', ogg.length < n * 4 * 0.2 && ogg.length > 1000, `${ogg.length} bytes`)
+  const worse = encodeLossy(await createOggEncoder(), [tone, hot], 48000, 'ogg', 0)
+  check('and quality trades against size', worse.length < ogg.length, `${worse.length} at q0 against ${ogg.length} at q5`)
+  const mp3 = encodeLossy(await createMp3Encoder(), [tone, tone], 44100, 'mp3', 8)
+  const sync = mp3.findIndex((b, i) => b === 0xff && (mp3[i + 1] & 0xe0) === 0xe0)
+  check('an MP3 is MPEG audio frames', sync >= 0 && sync < 1024, `first frame at ${sync}`)
+  check('of a sensible size', mp3.length > 2000 && mp3.length < n * 4 * 0.3, `${mp3.length} bytes`)
+}
+
+console.log('\nmidi export')
+{
+  const BAR = PPQ * 4
+  const song: Song = {
+    tempo: 100,
+    meter: { beats: 3, unit: 4 },
+    tracks: [
+      { id: 'a', name: 'Lead', patch: 'a', gain: 1 },
+      { id: 'b', name: 'Bass', patch: 'b', gain: 1 },
+      { id: 'm', name: 'Muted', patch: 'm', gain: 1, mute: true },
+    ],
+    patterns: [
+      {
+        id: 'p',
+        name: 'P',
+        length: BAR,
+        notes: [
+          { track: 'a', tick: 0, length: 480, pitch: 12, velocity: 1 },
+          { track: 'a', tick: 480, length: 480, pitch: 14, velocity: 0.5 },
+          { track: 'b', tick: 0, length: BAR * 2, pitch: 0, velocity: 0.8 },
+          { track: 'm', tick: 0, length: 100, pitch: 0, velocity: 0.8 },
+        ],
+      },
+    ],
+    playlist: [{ pattern: 'p', tick: 0 }, { pattern: 'p', tick: BAR }],
+    sections: [{ tick: 0, length: BAR, name: 'Intro' }],
+  }
+  const file = songToMidi(song, { name: 'Tune', noteOf: (_track, row) => 48 + row })
+  const midi = readMidi(file)
+  check('a type 1 file at the song\'s own ticks', midi.format === 1 && midi.division === PPQ)
+  check('a conductor track and one for every track that plays', midi.tracks.length === 3, String(midi.tracks.length))
+  const meta = (t: number, type: number) => midi.tracks[t].filter((e) => e.meta === type)
+  const tempo = meta(0, 0x51)[0]?.data
+  check('the tempo is written', !!tempo && (tempo[0] << 16 | tempo[1] << 8 | tempo[2]) === 600000)
+  check('and the meter', meta(0, 0x58)[0]?.data.slice(0, 2).join() === '3,2')
+  check('and the sections as markers', new TextDecoder().decode(new Uint8Array(meta(0, 0x06)[0]?.data ?? [])) === 'Intro')
+  check('tracks are named', new TextDecoder().decode(new Uint8Array(meta(1, 0x03)[0]?.data ?? [])) === 'Lead')
+  const ons = midi.tracks[1].filter((e) => e.status !== undefined && (e.status & 0xf0) === 0x90)
+  check('every note played is there, clips and all', ons.length === 4, String(ons.length))
+  check('as the note it sounds', ons[0].data[0] === 60 && ons[1].data[0] === 62)
+  check('at its velocity', ons[0].data[1] === 127 && ons[1].data[1] === 64)
+  check('at its tick', ons.map((e) => e.tick).join() === `0,480,${BAR},${BAR + 480}`, ons.map((e) => e.tick).join())
+  const bass = midi.tracks[2]
+  const bassOff = bass.find((e) => e.status !== undefined && (e.status & 0xf0) === 0x80)
+  check('a note held past its clip is cut where the clip ends', bassOff?.tick === BAR, String(bassOff?.tick))
+  check('each track on its own channel', ((ons[0].status ?? 0) & 0x0f) !== ((bass[1]?.status ?? bass.find((e) => e.status !== undefined)!.status!) & 0x0f))
+  check('a variable-length number is seven bits a byte', varLen(0).join() === '0' && varLen(127).join() === '127' && varLen(128).join() === '129,0' && varLen(0x0fffffff).join() === '255,255,255,127')
 }
 
 console.log(failures === 0 ? '\nall clear' : `\n${failures} check(s) failed`)

@@ -152,6 +152,12 @@ export interface Prefs {
   /** Whether hidden tracks are listed after all. */
   showHiddenTracks?: boolean
   chord?: { id: string; inversion: number }
+  /** How the roll's Quantize is set up: what it moves, how far, and whether it quantizes a take. */
+  quantize?: { what: 'start' | 'end' | 'both' | 'length'; strength: number; onInput: boolean }
+  /** How the last bounce was written: format, rate, depth, lossy quality. */
+  bounce?: { format: 'wav' | 'flac' | 'ogg' | 'mp3'; sampleRate: number; bitDepth: number; quality: number }
+  /** Whether MIDI controllers are listened to. Off until asked for: the browser asks the person first. */
+  midi?: boolean
   cableColors?: 'signal' | 'module'
   compact?: boolean
   knobHelp?: boolean

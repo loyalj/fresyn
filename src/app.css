@@ -16,6 +16,8 @@
   --z-ghost: 20;
   /* Messages: over the dock and the rack, under the menus. */
   --z-notices: 25;
+  /* Above the dock it floats beside, under the menus that may open over it. */
+  --z-history: 26;
   --z-menu: 30;
   --z-context-menu: 40;
   /* Sheets take the whole window; a preset sheet opens from inside one. */
@@ -2882,6 +2884,36 @@ body {
 
 .roll-tools-key { margin-left: 8px; }
 
+/* Recording lights the danger colour, the one every recorder uses for it,
+   and pulses so a take left running is noticed. */
+.roll-rec.on {
+  color: var(--on-danger);
+  background: var(--danger);
+  border-color: var(--danger);
+  box-shadow: none;
+  animation: roll-rec-pulse 1.2s ease-in-out infinite;
+}
+.roll-rec.on:hover { color: var(--on-danger); }
+
+@keyframes roll-rec-pulse {
+  50% { opacity: 0.7; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .roll-rec.on { animation: none; }
+}
+
+/* A button and its settings, sat together as one control. */
+.roll-split { display: inline-flex; }
+.roll-split > .dock-toggle:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.roll-split-more {
+  padding-left: 5px;
+  padding-right: 5px;
+  border-left-width: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
 .roll-tools-hint {
   margin-left: auto;
   font-size: 10px;
@@ -3293,8 +3325,52 @@ body {
 }
 
 .playlist-ruler {
+  position: relative;
   display: flex;
   align-items: stretch;
+  /* The lane-number column's width, for the range drawn over the numbers. */
+  --label-w: 30px;
+}
+
+/* The bars picked on the ruler: a band over the numbers, and a wash down
+   every lane, since a range is all of the song's tracks at once. */
+.playlist-range-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgb(var(--accent-rgb) / 0.35);
+  border-left: 1px solid var(--accent-line);
+  border-right: 1px solid var(--accent-line);
+  pointer-events: none;
+}
+
+.playlist-range {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 1;
+  background: rgb(var(--accent-rgb) / 0.1);
+  border-left: 1px dashed var(--accent-line);
+  border-right: 1px dashed var(--accent-line);
+  pointer-events: none;
+}
+
+.playlist-range-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+/* No taller than the snap and zoom beside them, so the lanes do not jump
+   down when a range is picked. */
+.playlist-range-tools .dock-toggle { height: 18px; padding: 0 6px; line-height: 16px; }
+
+.playlist-range-name {
+  color: var(--accent-line);
+  font-variant-numeric: tabular-nums;
+  margin-right: 2px;
+  white-space: nowrap;
 }
 
 /* A bar's number sits on its line, where a clip snapped to it starts. */
@@ -3906,8 +3982,114 @@ button.playlist-bar:hover { border-color: var(--rule); color: var(--ink); }
   color: var(--accent-line);
 }
 
+.sheet.bounce-sheet { width: min(460px, 100%); }
+.bounce-actions { display: flex; gap: 6px; }
+
 .audio-problem { margin: 0; font-size: 12px; line-height: 1.5; color: var(--danger); }
 
 @media (max-width: 480px) {
   .audio-field { grid-template-columns: 1fr; gap: 6px; }
+}
+
+/* --- history ---------------------------------------------------------- */
+
+/* A panel floating in the corner under the masthead, not a sheet: the rack
+   and the roll stay in reach and in view, since watching them change is how
+   you find the step you want. */
+.history-panel {
+  position: fixed;
+  top: 64px;
+  right: 16px;
+  z-index: var(--z-history);
+  display: flex;
+  flex-direction: column;
+  width: min(280px, calc(100vw - 32px));
+  max-height: min(460px, calc(100vh - var(--dock-h, 44px) - 88px));
+  background: var(--unit-top);
+  border: 1px solid var(--panel-edge);
+  border-radius: 5px;
+  box-shadow: 0 16px 40px var(--unit-shadow), 0 0 0 1px var(--sunken) inset;
+}
+
+.history-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.history-head h2 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.history-count {
+  font-size: 11px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.history-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.history-step {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  color: var(--ink-dim);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.history-step:hover,
+.history-step:focus-visible {
+  color: var(--ink);
+  background: var(--control-hover);
+}
+
+.history-step.current {
+  color: var(--ink);
+  border-color: var(--accent-line);
+  background: rgb(var(--accent-rgb) / 0.12);
+}
+
+/* Undone, and still there to redo until the next edit. */
+.history-step.undone { color: var(--ink-faint); font-style: italic; }
+
+.history-index {
+  flex: none;
+  min-width: 2.5ch;
+  text-align: right;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.history-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-foot {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--ink-faint);
+  border-top: 1px solid var(--hairline);
 }
