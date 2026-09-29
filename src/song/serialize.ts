@@ -1,17 +1,21 @@
 import { normalizeSong } from './normalize'
+import { sectionsFromMarkers } from './section'
 import { SCALES } from './scale'
 import {
   DEFAULT_CONSOLE,
+  cleanSwing,
   DEFAULT_STRIP,
   PPQ,
   type Console,
   type Eq3,
-  type Marker,
+  type Folder,
+  type Section,
   type Note,
   type Pattern,
   type Placement,
   type Song,
   type Strip,
+  type Swing,
   type Track,
 } from './types'
 
@@ -42,6 +46,27 @@ export function parseSong(input: unknown): Song | null {
       ...(t.solo === true ? { solo: true as const } : {}),
       ...hue(t.color),
       ...stripFrom(t.strip),
+      ...(str(t.folder) ? { folder: str(t.folder) } : {}),
+      ...(t.hidden === true ? { hidden: true as const } : {}),
+      ...(t.pinned === true ? { pinned: true as const } : {}),
+    })
+  }
+
+  // Folders, read like tracks. A track filed in one that did not survive is
+  // taken out of it by the rules below.
+  const folders: Folder[] = []
+  for (const raw of asArray(data.folders)) {
+    const f = raw as Record<string, unknown>
+    const id = str(f.id)
+    if (!id || folders.some((x) => x.id === id)) continue
+    folders.push({
+      id,
+      name: str(f.name) || 'Folder',
+      gain: num(f.gain, 1, 0, 1),
+      ...hue(f.color),
+      ...(f.mute === true ? { mute: true } : {}),
+      ...(f.solo === true ? { solo: true } : {}),
+      ...(f.collapsed === true ? { collapsed: true } : {}),
     })
   }
 
@@ -73,6 +98,7 @@ export function parseSong(input: unknown): Song | null {
       length: num(p.length, PPQ * 4, 1, Number.MAX_SAFE_INTEGER),
       notes,
       ...hue(p.color),
+      ...swingOf(p.swing),
     })
   }
 
@@ -81,7 +107,11 @@ export function parseSong(input: unknown): Song | null {
   for (const raw of asArray(data.playlist)) {
     const item = raw as Record<string, unknown>
     if (!ids.has(str(item.pattern))) continue
-    playlist.push({ pattern: str(item.pattern), tick: num(item.tick, 0, 0, Number.MAX_SAFE_INTEGER) })
+    const place: Placement = { pattern: str(item.pattern), tick: num(item.tick, 0, 0, Number.MAX_SAFE_INTEGER) }
+    if (typeof item.lane === 'number') place.lane = num(item.lane, 0, 0, 255)
+    if (typeof item.offset === 'number') place.offset = num(item.offset, 0, 0, Number.MAX_SAFE_INTEGER)
+    if (typeof item.length === 'number') place.length = num(item.length, PPQ * 4, 1, Number.MAX_SAFE_INTEGER)
+    playlist.push(place)
   }
 
   const song: Song = {
@@ -90,6 +120,7 @@ export function parseSong(input: unknown): Song | null {
     patterns,
     playlist,
   }
+  if (folders.length) song.folders = folders
 
   const loop = data.loop
   if (typeof loop === 'object' && loop !== null) {
@@ -109,14 +140,27 @@ export function parseSong(input: unknown): Song | null {
     if (!(beats === 4 && unit === 4)) song.meter = { beats, unit }
   }
 
-  const markers: Marker[] = []
-  for (const raw of asArray(data.markers)) {
-    const m = raw as Record<string, unknown>
-    const tick = num(m.tick, -1, -1, Number.MAX_SAFE_INTEGER)
-    if (tick < 0 || markers.some((x) => x.tick === tick)) continue
-    markers.push({ tick, name: str(m.name) || 'Section' })
+  const sections: Section[] = []
+  for (const raw of asArray(data.sections)) {
+    const s = raw as Record<string, unknown>
+    const tick = num(s.tick, -1, -1, Number.MAX_SAFE_INTEGER)
+    const length = num(s.length, 0, 0, Number.MAX_SAFE_INTEGER)
+    if (tick < 0 || !(length > 0)) continue
+    sections.push({ tick, length, name: str(s.name) || 'Section', ...hue(s.color) })
   }
-  if (markers.length) song.markers = markers.sort((a, b) => a.tick - b.tick)
+  // A file from before sections had lengths kept markers, each running to the
+  // next. Read as the sections they were drawn as.
+  if (!sections.length) {
+    const markers: { tick: number; name: string }[] = []
+    for (const raw of asArray(data.markers)) {
+      const m = raw as Record<string, unknown>
+      const tick = Math.round(num(m.tick, -1, -1, Number.MAX_SAFE_INTEGER))
+      if (tick < 0 || markers.some((x) => x.tick === tick)) continue
+      markers.push({ tick, name: str(m.name) || 'Section' })
+    }
+    sections.push(...sectionsFromMarkers(song, markers))
+  }
+  if (sections.length) song.sections = sections
 
   const desk = consoleFrom(data.console)
   if (desk) song.console = desk
@@ -206,6 +250,13 @@ function consoleFrom(v: unknown): Console | null {
 /** A colour, as the field to spread in: nothing at all when there is none. */
 const hue = (v: unknown): { color?: number } =>
   typeof v === 'number' && Number.isFinite(v) ? { color: ((Math.round(v) % 360) + 360) % 360 } : {}
+
+const swingOf = (v: unknown): { swing?: Swing } => {
+  if (typeof v !== 'object' || v === null) return {}
+  const s = v as Record<string, unknown>
+  const swing = cleanSwing(s.amount, s.step)
+  return swing ? { swing } : {}
+}
 
 function num(v: unknown, fallback: number, lo: number, hi: number) {
   if (typeof v !== 'number' || !Number.isFinite(v)) return fallback

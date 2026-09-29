@@ -1749,6 +1749,29 @@ body {
   background: var(--control-hover);
 }
 
+/* "+3 more": the rest of a file's warnings, opened in place. */
+.notice-more {
+  padding: 0;
+  font: inherit;
+  color: var(--ink-dim);
+  text-decoration: underline;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.notice-more:hover { color: var(--ink); }
+
+.notice-details {
+  max-height: 40vh;
+  margin: 6px 0 0;
+  padding-left: 16px;
+  overflow-y: auto;
+  color: var(--ink-dim);
+}
+
+.notice-details li + li { margin-top: 2px; }
+
 @keyframes notice-in {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: none; }
@@ -1798,6 +1821,19 @@ body {
   color: var(--on-danger);
   background: var(--danger);
   border-color: var(--danger);
+}
+
+/* A touch screen has no hover to go looking with: the buttons were there,
+   invisible, and a tap near the corner of a unit could remove it. Shown
+   whenever the back is, and big enough to be meant. */
+@media (hover: none) {
+  .unit-controls { opacity: 1; gap: 6px; }
+
+  .unit-controls button {
+    width: 30px;
+    height: 30px;
+    font-size: 12px;
+  }
 }
 
 /* Still used by the take list, which has its own way out. */
@@ -2552,6 +2588,22 @@ body {
 
 .keys-key:last-of-type { border-right: 0; }
 
+/* A C's name, at the foot of its key: the note it plays, not its place. */
+.keys-key {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.keys-key-name {
+  padding-bottom: 3px;
+  font-size: 8px;
+  line-height: 1;
+  color: var(--key-black);
+  opacity: 0.7;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+
 .keys-key.sharp {
   position: absolute;
   top: 0;
@@ -2687,6 +2739,7 @@ body {
 .dock-group {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
@@ -2781,7 +2834,10 @@ body {
 }
 
 .dock-field input,
-.dock-field select {
+.dock-field select,
+/* The Tools menu sits among the buttons with no label of its own: its first
+   option is its label. */
+.roll-tools-menu {
   font: inherit;
   font-size: 11px;
   letter-spacing: normal;
@@ -2833,6 +2889,15 @@ body {
   white-space: nowrap;
 }
 
+/* Where the row names come from: the note the bottom key sounds, and the
+   module it was read from. */
+.roll-tools-tuning {
+  font-size: 10px;
+  color: var(--ink-faint);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 /* What is left is the canvas's, and it is measured from here. */
 .roll-area {
   flex: 1;
@@ -2871,7 +2936,7 @@ body {
 
 .tracks {
   flex: none;
-  width: 248px;
+  width: 272px;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -2926,7 +2991,11 @@ body {
   border-radius: 2px;
 }
 
-.track-name:focus {
+/* A field only while it is being renamed (see NameField). Before that it
+   is the track's label: a click picks the track, a double-click renames. */
+.track-name[readonly] { cursor: default; }
+
+.track-name.editing {
   background: var(--field);
   border-color: var(--accent-line);
   outline: none;
@@ -2939,6 +3008,24 @@ body {
   width: 42px;
   flex: none;
   accent-color: var(--accent);
+}
+
+/* The roll's swing: a short slider, what it is set to, and which steps. */
+.swing-field { gap: 6px; }
+
+/* Not a text box, which is what every other input in the dock's bar is. */
+.dock-field .swing-amount {
+  width: 72px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  accent-color: var(--accent);
+}
+
+.swing-readout {
+  min-width: 3.2em;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
 }
 
 /* The level as a desk prints it, beside the slider that sets it. */
@@ -2969,7 +3056,9 @@ body {
 .track.colored { box-shadow: inset 3px 0 0 hsl(var(--track-h) 62% 55%); }
 
 .track-flag,
-.track-remove {
+.track-remove,
+.track-more,
+.track-fold {
   flex: none;
   width: 17px;
   height: 17px;
@@ -3010,6 +3099,92 @@ body {
 
 .track-add:hover { color: var(--ink); }
 
+/* --- finding, filing and pinning tracks ---------------------------------- */
+
+.tracks-find { display: flex; gap: 4px; }
+.tracks-search {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 10px;
+  padding: 3px 6px;
+  color: var(--ink);
+  background: var(--field);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+}
+.tracks-search:focus { outline: none; border-color: var(--accent-line); }
+.tracks-hidden {
+  flex: none;
+  font: inherit;
+  font-size: 9px;
+  padding: 0 6px;
+  color: var(--ink-dim);
+  background: var(--control);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+  cursor: pointer;
+}
+.tracks-hidden:hover { color: var(--ink); }
+.tracks-hidden.on { color: var(--ink); border-color: var(--accent-line); }
+
+.tracks-foot { display: flex; gap: 4px; }
+.tracks-foot .track-add { flex: 1; }
+
+/* Under the pinned band. */
+.tracks-rule {
+  flex: none;
+  height: 1px;
+  margin: 2px 4px;
+  background: var(--accent-line);
+  opacity: 0.5;
+}
+.tracks-none { padding: 8px; font-size: 10px; color: var(--ink-faint); text-align: center; }
+
+.track-more { font-size: 11px; }
+.track-more:hover,
+.track-fold:hover { color: var(--ink); }
+.track-fold { background: transparent; border-color: transparent; font-size: 10px; }
+.track-pin { flex: none; font-size: 9px; color: var(--accent-line); }
+
+/* A folder's own row: a header over its tracks, which sit indented under it. */
+.track-folder {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 4px 3px 2px;
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+  background: var(--control);
+}
+.track-folder .swatch { width: 11px; height: 11px; }
+.track-folder .track-name { font-weight: 600; }
+.track-folder.colored { box-shadow: inset 3px 0 0 hsl(var(--track-h) 62% 55%); }
+.track-folder.silent { opacity: 0.45; }
+/* A track being dragged would land in this folder. */
+.track-folder.drop { border-color: var(--accent-line); background: rgb(var(--accent-rgb) / 0.18); }
+.track-count {
+  flex: none;
+  min-width: 14px;
+  font-size: 9px;
+  text-align: center;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+.track.in-folder { margin-left: 12px; }
+/* Listed only because hidden tracks were asked for. */
+.track.hidden-track .track-name { font-style: italic; color: var(--ink-dim); }
+
+/* A strip on the desk says which folder its track is filed in. */
+.mix-folder {
+  display: block;
+  font-size: 8px;
+  font-weight: 400;
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* The roll and the playlist both take whatever the track list leaves. */
 .roll,
 .playlist-pane {
@@ -3018,14 +3193,75 @@ body {
   height: 100%;
 }
 
-/* The playlist over its add button, laid out as the track list is. */
+/* The patterns down the left, the lanes beside them. */
 .playlist-pane {
+  display: flex;
+  gap: 6px;
+}
+
+/* The pattern picker, over its add button, laid out as the track list is. */
+.playlist-patterns {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 170px;
+  flex: none;
+  min-height: 0;
+}
+.playlist-patterns-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--recess-edge);
+  border-radius: 3px;
+  background: var(--recess);
+}
+
+.playlist-main {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
+.playlist-main > .playlist { flex: 1; min-height: 0; }
 
-.playlist-pane > .playlist { flex: 1; min-height: 0; }
+.playlist-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--ink-dim);
+  min-width: 0;
+}
+.playlist-snap { display: flex; align-items: center; gap: 4px; }
+.playlist-snap select { font: inherit; font-size: 10px; }
+.playlist-zoom {
+  width: 20px;
+  height: 18px;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--ink-dim);
+  background: var(--control);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+  cursor: pointer;
+}
+.playlist-zoom:hover { color: var(--ink); }
+.playlist-hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-faint);
+}
 
 .playlist {
   overflow: auto;
@@ -3033,40 +3269,40 @@ body {
   border-radius: 3px;
   background: var(--recess);
 }
+/* It takes the keyboard while the pointer is over it, as the roll does, and
+   shows it the same way: by its border, not by a ring. */
+.playlist:focus { outline: none; }
+.playlist:focus-visible { border-color: var(--accent-line); }
 
 .playlist-grid {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 4px;
+  padding: 0 4px 4px 0;
   min-width: max-content;
 }
 
-/* Rides over the cells rather than between them, so it is not interrupted by
-   the gaps in the grid. */
-.playlist-head {
-  position: absolute;
-  top: 0;
-  bottom: 0;
+/* The lane numbers and the corner over them stay put while the lanes scroll
+   sideways under them. */
+.playlist-grid .playlist-label,
+.playlist-lane-labels {
+  position: sticky;
   left: 0;
-  width: 1px;
-  background: var(--accent-line);
-  pointer-events: none;
-  display: none;
+  z-index: 3;
+  background: var(--recess);
 }
 
-.playlist-ruler,
-.playlist-row {
+.playlist-ruler {
   display: flex;
   align-items: stretch;
-  gap: 2px;
 }
 
+/* A bar's number sits on its line, where a clip snapped to it starts. */
 .playlist-bar {
-  width: 26px;
+  width: var(--bar-w);
   flex: none;
-  text-align: center;
+  overflow: hidden;
+  text-align: left;
   font-size: 9px;
   color: var(--ink-faint);
 }
@@ -3076,7 +3312,7 @@ body {
 .playlist-bar.strong { color: var(--ink-dim); }
 
 .playlist-label {
-  width: 150px;
+  width: 30px;
   flex: none;
   text-align: left;
   font: inherit;
@@ -3094,45 +3330,152 @@ body {
 
 button.playlist-label:hover { color: var(--ink); }
 
-/* The pattern the roll is writing into. The two views agree about which one
-   that is, so switching to Song and back lands where you left off. */
-.playlist-row.on .playlist-label {
+/* A row of the pattern picker. */
+.playlist-pattern {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  flex: none;
+  padding: 0 2px 0 4px;
+  font-size: 10px;
+  color: var(--ink-dim);
+  border: 1px solid transparent;
+  border-radius: 2px;
+}
+.playlist-pattern:hover { color: var(--ink); }
+
+/* The pattern the roll is writing into, and the one a click paints. The two
+   views agree about which one that is. */
+.playlist-pattern.on {
   color: var(--ink);
   border-color: var(--accent-line);
+  background: rgb(var(--accent-rgb) / 0.1);
 }
 
-.playlist-cell {
-  width: 26px;
-  height: 20px;
+/* --- lanes and clips ---------------------------------------------------- */
+
+.playlist-lanes {
+  display: flex;
+}
+.playlist-lane-labels {
+  width: 30px;
   flex: none;
-  padding: 0;
-  background: var(--field);
-  border: 1px solid var(--panel-edge);
+  display: flex;
+  flex-direction: column;
+}
+.playlist-lane-label {
+  height: var(--lane-h);
+  flex: none;
+  box-sizing: border-box;
+  line-height: var(--lane-h);
+  font-size: 9px;
+  text-align: center;
+  color: var(--ink-faint);
+  border-top: 1px solid var(--recess-edge);
+}
+/* The timeline proper. The lines are drawn by the background -- a lane's
+   edge, a bar, and fainter, a beat -- so a thousand bars cost no elements. */
+.playlist-layer {
+  position: relative;
+  flex: none;
+  background-image:
+    linear-gradient(to bottom, var(--recess-edge) 1px, transparent 1px),
+    linear-gradient(to right, var(--panel-edge) 1px, transparent 1px),
+    linear-gradient(to right, color-mix(in srgb, var(--panel-edge) 40%, transparent) 1px, transparent 1px);
+  background-size: 100% var(--lane-h), var(--bar-w) 100%, var(--beat-w) 100%;
+  cursor: copy;
+  touch-action: none;
+}
+
+.playlist-clip {
+  position: absolute;
+  height: calc(var(--lane-h) - 2px);
+  margin-top: 1px;
+  box-sizing: border-box;
+  overflow: hidden;
+  background: rgb(var(--accent-rgb) / 0.35);
+  border: 1px solid var(--accent-line);
   border-radius: 2px;
-  cursor: pointer;
+  color: var(--ink);
+  cursor: grab;
+}
+.playlist-clip.colored {
+  background: hsl(var(--pat-h) 62% 55% / 0.45);
+  border-color: hsl(var(--pat-h) 62% 42%);
+}
+.playlist-clip.picked {
+  outline: 2px solid var(--ink);
+  outline-offset: -1px;
+  z-index: 1;
+}
+.playlist-clip.erasing { opacity: 0.25; }
+
+.playlist-clip-name {
+  position: absolute;
+  top: 0;
+  left: 3px;
+  right: 3px;
+  font-size: 9px;
+  line-height: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+.playlist-clip-notes {
+  position: absolute;
+  top: 10px;
+  left: 0;
+  width: 100%;
+  height: calc(100% - 12px);
+  fill: currentColor;
+  opacity: 0.8;
+  pointer-events: none;
+}
+/* Where the pattern starts over, inside a clip drawn longer than it. */
+.playlist-clip-notes .seam {
+  stroke: currentColor;
+  stroke-opacity: 0.45;
+  stroke-dasharray: 2 2;
+}
+/* The trim handles: the clip's two ends. */
+.playlist-clip-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: ew-resize;
+}
+.playlist-clip-edge[data-edge='start'] { left: 0; }
+.playlist-clip-edge[data-edge='end'] { right: 0; }
+.playlist-clip-edge:hover { background: rgb(var(--accent-rgb) / 0.5); }
+
+.playlist-marquee {
+  position: absolute;
+  border: 1px dashed var(--accent-line);
+  background: rgb(var(--accent-rgb) / 0.1);
+  pointer-events: none;
 }
 
-.playlist-cell:hover { border-color: var(--accent-line); }
-
-.playlist-cell.filled {
-  background: var(--accent);
-  border-color: var(--accent-line);
-}
-
-/* A pattern longer than a bar fills several cells; only the first gets a
-   left edge, so the run reads as one block rather than as three. */
-.playlist-cell.filled:not(.start) {
-  border-left-color: var(--accent);
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
+.playlist-head {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  z-index: 2;
+  background: var(--accent-line);
+  pointer-events: none;
+  display: none;
 }
 
 /* --- sections ----------------------------------------------------------- */
 
-.playlist-markers {
+.playlist-sections {
   display: flex;
   align-items: stretch;
-  gap: 2px;
+  padding-top: 4px;
   margin-bottom: 3px;
 }
 
@@ -3144,68 +3487,66 @@ button.playlist-label:hover { color: var(--ink); }
   cursor: default;
 }
 
-/* One bar's worth of the strip. Empty, it is where a marker would go. */
-.playlist-marker-slot {
+/* The strip the sections sit on. Empty strip is where a new one is drawn. */
+.playlist-section-layer {
   position: relative;
-  width: 26px;
-  height: 18px;
   flex: none;
-  padding: 0;
-  background: transparent;
-  border: 1px dashed transparent;
+  height: 20px;
+  cursor: copy;
+  touch-action: none;
   border-radius: 2px;
-  cursor: pointer;
 }
-button.playlist-marker-slot:hover { border-color: var(--rule); }
-button.playlist-marker-slot:hover::after {
-  content: '+';
-  color: var(--ink-faint);
-  font-size: 11px;
-}
+.playlist-section-layer:hover { background: rgb(var(--accent-rgb) / 0.04); }
 
-/* A marker spans its section, so its name has the room. The 28px is a cell
-   and the gap after it. */
-.playlist-marker,
-.playlist-marker-edit {
+.playlist-section {
   position: absolute;
-  z-index: 1;
   top: 0;
-  left: 0;
-  height: 18px;
-  width: calc(var(--span, 1) * 28px - 2px);
-}
-.playlist-marker {
-  font: inherit;
-  font-size: 10px;
-  text-align: left;
+  height: 20px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
   padding: 0 6px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 10px;
   color: var(--ink-dim);
   background: var(--control);
   border: 1px solid var(--panel-edge);
   border-left: 3px solid var(--accent-line);
   border-radius: 2px;
-  cursor: pointer;
+  cursor: grab;
+  overflow: hidden;
 }
-.playlist-marker:hover { color: var(--ink); }
-/* The last marker has no next one to run to, so it is as wide as its name,
-   and at least as wide as what is arranged after it. */
-.playlist-marker-slot.last .playlist-marker {
-  width: max-content;
-  min-width: calc(var(--span, 1) * 28px - 2px);
-  max-width: 180px;
+.playlist-section:hover { color: var(--ink); }
+.playlist-section.colored {
+  border-left-color: hsl(var(--sec-h) 62% 50%);
+  background: hsl(var(--sec-h) 62% 50% / 0.18);
 }
-.playlist-marker.on {
+/* The section being looped. */
+.playlist-section.on {
   color: var(--ink);
   background: rgb(var(--accent-rgb) / 0.22);
   border-color: var(--accent-line);
 }
-.playlist-marker-edit { display: flex; gap: 2px; min-width: 110px; }
-.playlist-marker-edit input {
+/* Being dragged somewhere else in the song. */
+.playlist-section.lifted { opacity: 0.45; cursor: grabbing; z-index: 1; }
+/* In hand over empty time: it goes where it is drawn, music and all. */
+.playlist-section.sliding {
+  z-index: 1;
+  cursor: grabbing;
+  border-color: var(--accent-line);
+  box-shadow: 0 2px 8px var(--unit-shadow);
+}
+
+.playlist-section-name {
   flex: 1;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.playlist-section-rename {
+  flex: 1;
+  min-width: 60px;
   font: inherit;
   font-size: 10px;
   padding: 0 4px;
@@ -3214,50 +3555,91 @@ button.playlist-marker-slot:hover::after {
   border: 1px solid var(--accent-line);
   border-radius: 2px;
 }
-.playlist-marker-delete {
+
+/* Takes the label away, never the music. Shown on hover, so a strip of
+   sections is not a strip of crosses. */
+.playlist-section-remove {
   flex: none;
-  width: 18px;
-  font: inherit;
-  font-size: 12px;
-  line-height: 1;
+  width: 14px;
+  height: 14px;
+  margin-left: 2px;
   padding: 0;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
   color: var(--ink-dim);
-  background: var(--control);
-  border: 1px solid var(--panel-edge);
+  background: transparent;
+  border: none;
   border-radius: 2px;
   cursor: pointer;
+  visibility: hidden;
+}
+.playlist-section:hover .playlist-section-remove { visibility: visible; }
+.playlist-section-remove:hover { color: var(--ink); background: var(--field); }
+
+.playlist-section-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: ew-resize;
+}
+.playlist-section-edge[data-edge='start'] { left: 0; }
+.playlist-section-edge[data-edge='end'] { right: 0; }
+.playlist-section-edge:hover { background: rgb(var(--accent-rgb) / 0.5); }
+
+/* A section being drawn out, and where a dragged one would land. */
+.playlist-section-ghost {
+  position: absolute;
+  top: 0;
+  height: 20px;
+  box-sizing: border-box;
+  border: 1px dashed var(--accent-line);
+  background: rgb(var(--accent-rgb) / 0.12);
+  border-radius: 2px;
+  pointer-events: none;
+}
+.playlist-section-drop {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 3px;
+  margin-left: -1px;
+  background: var(--accent-line);
+  border-radius: 2px;
+  pointer-events: none;
 }
 
-/* The bar numbers are buttons now, for adding a marker at a bar. */
+/* A section's span, tinted across the lanes behind the clips. */
+.playlist-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid rgb(var(--accent-rgb) / 0.35);
+  background: rgb(var(--accent-rgb) / 0.03);
+  pointer-events: none;
+}
+.playlist-band.colored {
+  border-left-color: hsl(var(--sec-h) 62% 50% / 0.5);
+  background: hsl(var(--sec-h) 62% 50% / 0.06);
+}
+.playlist-band.on { background: rgb(var(--accent-rgb) / 0.08); }
+
+/* The bar numbers are buttons: one splits the section over it, or starts one. */
 button.playlist-bar {
   font: inherit;
   font-size: 9px;
-  padding: 0;
+  padding: 0 0 0 3px;
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: 2px;
+  border: none;
+  border-left: 1px solid var(--panel-edge);
+  border-radius: 0;
   cursor: pointer;
 }
 button.playlist-bar:hover { border-color: var(--rule); color: var(--ink); }
 
 /* The bars of the section being looped, lit in the ruler. */
 .playlist-bar.in-section { color: var(--accent-line); background: rgb(var(--accent-rgb) / 0.12); }
-
-/* A pattern given a colour of its own wears it here, where it is placed. */
-.playlist-row.colored .playlist-cell.filled {
-  background: hsl(var(--pat-h) 62% 55%);
-  border-color: hsl(var(--pat-h) 62% 42%);
-}
-.playlist-row.colored .playlist-cell.filled:not(.start) { border-left-color: hsl(var(--pat-h) 62% 55%); }
-
-.playlist-cell.filled { cursor: grab; }
-/* While a placement is dragged: where it is leaving, faded, and where it would
-   land, outlined. */
-.playlist-cell.leaving { opacity: 0.35; }
-.playlist-cell.landing {
-  outline: 2px dashed var(--accent-line);
-  outline-offset: -2px;
-}
 
 /* A colour chip: the pattern's or the track's, stepped on by a click. */
 .swatch {
@@ -3274,15 +3656,8 @@ button.playlist-bar:hover { border-color: var(--rule); color: var(--ink); }
   background: repeating-linear-gradient(45deg, var(--field), var(--field) 2px, var(--panel-edge) 2px, var(--panel-edge) 3px);
 }
 
-/* A pattern's name on the playlist: read as a label until it is clicked
+/* A pattern's name in the picker: read as a label until it is clicked
    into, then a field -- the track list's names work the same way. */
-.playlist-label:has(.playlist-name) {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 2px 0 4px;
-  cursor: default;
-}
 
 .playlist-name {
   flex: 1;
@@ -3297,17 +3672,16 @@ button.playlist-bar:hover { border-color: var(--rule); color: var(--ink); }
   cursor: pointer;
 }
 
-.playlist-name:focus {
+.playlist-name.editing {
   color: var(--ink);
   cursor: text;
 }
 
-.playlist-label:has(.playlist-name:focus) {
+.playlist-pattern:has(.playlist-name.editing) {
   background: var(--field);
   border-color: var(--accent-line);
 }
 
-.playlist-label:has(.playlist-name):hover { color: var(--ink); }
 
 /* --- the song console (the dock's Mix view) ---------------------------- */
 
@@ -3454,3 +3828,86 @@ button.playlist-bar:hover { border-color: var(--rule); color: var(--ink); }
 .crash-actions .panel-cancel { margin-top: 0; }
 
 .preset-failed { padding: 0 8px 8px; font-size: 11px; color: var(--danger); }
+
+/* --- audio settings -------------------------------------------------- */
+
+.sheet.audio-sheet { width: min(520px, 100%); }
+
+.audio-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 18px;
+  overflow-y: auto;
+}
+
+.audio-field {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  align-items: center;
+  gap: 12px;
+}
+
+.audio-label {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.audio-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+
+.audio-field select,
+.audio-ms input {
+  font: inherit;
+  font-size: 12px;
+  min-width: 0;
+  padding: 5px 6px;
+  color: var(--ink);
+  background: var(--field);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+}
+
+.audio-ms { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-dim); }
+.audio-ms input { width: 64px; }
+
+.audio-field select:focus,
+.audio-ms input:focus { outline: none; border-color: var(--accent-line); }
+
+.audio-hint { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink-faint); }
+
+.audio-link {
+  font: inherit;
+  padding: 0;
+  color: var(--accent-line);
+  background: none;
+  border: none;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.audio-readout {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--ink-dim);
+  background: var(--well);
+  border: 1px solid var(--panel-edge);
+  border-radius: 3px;
+}
+
+.audio-total {
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-line);
+}
+
+.audio-problem { margin: 0; font-size: 12px; line-height: 1.5; color: var(--danger); }
+
+@media (max-width: 480px) {
+  .audio-field { grid-template-columns: 1fr; gap: 6px; }
+}

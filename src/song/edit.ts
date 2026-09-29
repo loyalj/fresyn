@@ -1,12 +1,15 @@
 import type { TrackMix } from '../dsp/SongEngine'
 import { normalizeSong } from './normalize'
+import { clipOffset } from './clip'
+import { heardTracks, trackGain } from './folder'
+import { clipHits, sameSwing, songEnd, unswungTick } from './schedule'
 import {
   barTicks,
+  cleanSwing,
   DEFAULT_CONSOLE,
   DEFAULT_STRIP,
   minPatternLength,
   type Console,
-  type Marker,
   type Meter,
   type Note,
   type Song,
@@ -91,6 +94,10 @@ export function soloTrack(song: Song, id: string): Song {
   return {
     ...song,
     tracks: song.tracks.map((t) => ({ ...t, solo: !already && t.id === id ? (true as const) : undefined })),
+    // A folder's solo is a solo too, and solo is exclusive.
+    ...(song.folders?.some((f) => f.solo)
+      ? { folders: song.folders.map((f) => (f.solo ? (({ solo: _, ...rest }) => rest)(f) : f)) }
+      : {}),
   }
 }
 
@@ -104,7 +111,18 @@ export function duplicatePattern(song: Song, sourceId: string, id: string, name:
   if (!source || song.patterns.some((p) => p.id === id)) return song
   return {
     ...song,
-    patterns: [...song.patterns, { id, name, length: source.length, notes: source.notes.map((n) => ({ ...n })) }],
+    patterns: [
+      ...song.patterns,
+      {
+        id,
+        name,
+        length: source.length,
+        notes: source.notes.map((n) => ({ ...n })),
+        // A copy is a variation to write, and it should groove like the
+        // part it was copied from until it is told otherwise.
+        ...(source.swing ? { swing: { ...source.swing } } : {}),
+      },
+    ],
   }
 }
 
@@ -121,20 +139,6 @@ export function updatePattern(song: Song, id: string, change: { name?: string; c
       return next
     }),
   }
-}
-
-/**
- * Slide one placement of a pattern to start somewhere else. Landing exactly
- * on another placement of the same pattern merges the two, since two copies
- * of one pattern starting together play as one, only louder.
- */
-export function movePlacement(song: Song, pattern: string, from: number, to: number): Song {
-  const at = song.playlist.findIndex((x) => x.pattern === pattern && x.tick === from)
-  const target = Math.max(0, to)
-  if (at < 0 || target === from) return song
-  const others = song.playlist.filter((_, i) => i !== at)
-  if (others.some((x) => x.pattern === pattern && x.tick === target)) return { ...song, playlist: others }
-  return { ...song, playlist: [...others, { pattern, tick: target }] }
 }
 
 /**
@@ -163,7 +167,7 @@ export function reorderTracks(song: Song, ids: readonly string[]): Song {
  * bar five; the notes inside keep their ticks, which is to say their places
  * on the grid. That is what changing meter means in a sequencer -- the
  * arrangement is counted in bars -- and anything else would leave every
- * placement straddling a barline.
+ * clip straddling a barline.
  */
 export function setMeter(song: Song, meter: Meter): Song {
   // A bar has to be a whole, positive number of beats, or every bar in the
@@ -172,66 +176,31 @@ export function setMeter(song: Song, meter: Meter): Song {
   const from = barTicks(song)
   const to = barTicks({ meter })
   const bars = (ticks: number) => Math.round(ticks / from)
+  // A clip keeps its bar and its place in the bar -- a clip on beat two stays
+  // on beat two -- as far as the new bar reaches. On a barline, as every clip
+  // was before they could be anywhere, that is the bar-for-bar rule.
+  const within = (ticks: number) => {
+    const bar = Math.floor(ticks / from)
+    return bar * to + Math.min(ticks - bar * from, to - 1)
+  }
   const isDefault = meter.beats === 4 && meter.unit === 4
   const { meter: _dropped, ...rest } = song
-  // Through the reader's rules on the way out: two placements a bar apart in
-  // 4/4 can round onto the same bar of a shorter one, and so can two markers,
-  // and either would be a state the editor never makes.
+  // Through the reader's rules on the way out: two clips in one bar of 4/4
+  // can land on the same tick of a shorter one, and so can two sections, and
+  // either would be a state the editor never makes.
   return normalizeSong({
     ...rest,
     ...(isDefault ? {} : { meter }),
     patterns: song.patterns.map((p) => ({ ...p, length: Math.max(1, bars(p.length)) * to })),
-    playlist: song.playlist.map((x) => ({ ...x, tick: bars(x.tick) * to })),
-    ...(song.markers ? { markers: song.markers.map((m) => ({ ...m, tick: bars(m.tick) * to })) } : {}),
+    playlist: song.playlist.map((x) => ({
+      ...x,
+      tick: within(x.tick),
+      ...(x.length !== undefined ? { length: Math.max(1, within(x.length)) } : {}),
+    })),
+    ...(song.sections
+      ? { sections: song.sections.map((s) => ({ ...s, tick: within(s.tick), length: Math.max(1, within(s.length)) })) }
+      : {}),
   })
-}
-
-/** The markers, earliest first. */
-export function markersOf(song: Song): Marker[] {
-  return [...(song.markers ?? [])].sort((a, b) => a.tick - b.tick)
-}
-
-/**
- * Put a marker at a tick, named after the sections already there. One already
- * at that tick is left alone: two markers in one place would be a section
- * with nothing in it.
- */
-export function addMarker(song: Song, tick: number, name?: string): Song {
-  const markers = song.markers ?? []
-  if (markers.some((m) => m.tick === tick)) return song
-  const label = name ?? `Section ${markers.length + 1}`
-  return { ...song, markers: [...markers, { tick, name: label }].sort((a, b) => a.tick - b.tick) }
-}
-
-export function renameMarker(song: Song, tick: number, name: string): Song {
-  if (!name.trim()) return song
-  return { ...song, markers: (song.markers ?? []).map((m) => (m.tick === tick ? { ...m, name } : m)) }
-}
-
-export function removeMarker(song: Song, tick: number): Song {
-  const markers = (song.markers ?? []).filter((m) => m.tick !== tick)
-  if (markers.length === (song.markers ?? []).length) return song
-  const { markers: _dropped, ...rest } = song
-  return markers.length ? { ...rest, markers } : rest
-}
-
-/**
- * The span a marker's section covers: from it to the next marker, or to the
- * end of the arrangement. Null for a tick with no marker, or a section with
- * nothing to play.
- */
-export function sectionAt(song: Song, tick: number): { from: number; to: number } | null {
-  const markers = markersOf(song)
-  const at = markers.findIndex((m) => m.tick === tick)
-  if (at < 0) return null
-  const next = markers[at + 1]
-  let end = 0
-  for (const place of song.playlist) {
-    const p = song.patterns.find((x) => x.id === place.pattern)
-    if (p) end = Math.max(end, place.tick + p.length)
-  }
-  const to = next ? next.tick : end
-  return to > tick ? { from: tick, to } : null
 }
 
 /** Take a pattern out, and every placement of it. Never the last one. */
@@ -253,6 +222,27 @@ export function setPatternNotes(song: Song, id: string, notes: Note[]): Song {
   }
 }
 
+/**
+ * Swing a pattern, or straighten it. The amount is clamped to what swing
+ * means and anything at or below straight is stored as no swing at all.
+ * The same song back when nothing changes, so a slider held still, or set
+ * to where it already was, adds nothing to undo.
+ */
+export function setPatternSwing(song: Song, id: string, amount: number, step: number): Song {
+  const pattern = song.patterns.find((p) => p.id === id)
+  if (!pattern) return song
+  const swing = cleanSwing(amount, step)
+  if (sameSwing(pattern.swing, swing)) return song
+  return {
+    ...song,
+    patterns: song.patterns.map((p) => {
+      if (p.id !== id) return p
+      const { swing: _, ...rest } = p
+      return swing ? { ...rest, swing } : rest
+    }),
+  }
+}
+
 export function setPatternLength(song: Song, id: string, length: number): Song {
   const next = Math.max(minPatternLength(song), Math.round(length))
   const pattern = song.patterns.find((p) => p.id === id)
@@ -261,39 +251,6 @@ export function setPatternLength(song: Song, id: string, length: number): Song {
     ...song,
     patterns: song.patterns.map((p) => (p.id === id ? { ...p, length: next } : p)),
   }
-}
-
-/**
- * Put a pattern on the playlist at a bar, or take it off again.
- *
- * One call for both directions because that is what a click on a cell in the
- * grid is: the cell either has that pattern in it or it does not.
- */
-export function togglePlacement(song: Song, pattern: string, tick: number): Song {
-  const at = song.playlist.findIndex((x) => x.pattern === pattern && x.tick === tick)
-  if (at >= 0) {
-    return { ...song, playlist: song.playlist.filter((_, i) => i !== at) }
-  }
-  if (!song.patterns.some((p) => p.id === pattern)) return song
-  return { ...song, playlist: [...song.playlist, { pattern, tick }] }
-}
-
-/**
- * Where the placement of this pattern covering a tick begins, if one does.
- *
- * A pattern longer than a bar fills several cells of the playlist, and every
- * one of them has to be able to take the whole placement away -- a block only
- * its first cell could remove would be one you could paint over and then not
- * reach.
- */
-export function placementAt(song: Song, pattern: string, tick: number): number | null {
-  const p = song.patterns.find((x) => x.id === pattern)
-  if (!p) return null
-  for (const place of song.playlist) {
-    if (place.pattern !== pattern) continue
-    if (tick >= place.tick && tick < place.tick + p.length) return place.tick
-  }
-  return null
 }
 
 /**
@@ -311,14 +268,24 @@ export function patternOnly(song: Song, patternId: string): Song {
 }
 
 /**
- * Where a pattern first appears in the arrangement, or null if it is not in
- * it. The placement the roll writes against when it plays a pattern in the
- * song rather than on its own.
+ * Where a pattern's own tick zero falls in the song, at its earliest clip, or
+ * null if it is not in the song. The span the roll plays and draws against
+ * when it plays a pattern in the song rather than on its own.
+ *
+ * Tick zero rather than the clip's start, because the roll draws the pattern
+ * from its beginning: a clip trimmed to start half way through has the
+ * pattern's start half a pattern earlier. Where that would be before the song
+ * begins, the next repeat's start is used instead.
  */
 export function firstPlacement(song: Song, patternId: string): number | null {
+  const pattern = song.patterns.find((p) => p.id === patternId)
+  if (!pattern) return null
   let first: number | null = null
   for (const place of song.playlist) {
-    if (place.pattern === patternId && (first === null || place.tick < first)) first = place.tick
+    if (place.pattern !== patternId) continue
+    let zero = place.tick - clipOffset(place, pattern)
+    if (zero < 0) zero += pattern.length
+    if (first === null || zero < first) first = zero
   }
   return first
 }
@@ -330,10 +297,16 @@ export function firstPlacement(song: Song, patternId: string): number | null {
  * What the roll draws behind the pattern being written, so the drums that
  * play under a melody are there to be seen as well as heard. Other patterns
  * only: this pattern's own other tracks are already in it. Each note is cut
- * where its own pattern ends, as the scheduler cuts it, and to the span of
+ * where its own pattern and clip end, as the scheduler cuts it, and to the span of
  * the placement.
+ *
+ * `heard` is for a roll drawing swing as it sounds. Then each note is placed
+ * where it plays under its own pattern's swing, and handed back in this
+ * pattern's written ticks -- the tick that this pattern's swing would carry
+ * to that same moment -- so the roll's one mapping from written to drawn puts
+ * it exactly where it is heard, whatever either pattern's swing is.
  */
-export function contextNotes(song: Song, patternId: string, at: number): Note[] {
+export function contextNotes(song: Song, patternId: string, at: number, heard = false): Note[] {
   const self = song.patterns.find((p) => p.id === patternId)
   if (!self) return []
   const from = at
@@ -343,14 +316,18 @@ export function contextNotes(song: Song, patternId: string, at: number): Note[] 
     if (place.pattern === patternId) continue
     const other = song.patterns.find((p) => p.id === place.pattern)
     if (!other) continue
-    if (place.tick >= to || place.tick + other.length <= from) continue
-    for (const n of other.notes) {
-      if (n.tick >= other.length) continue
-      const start = place.tick + n.tick
-      const end = place.tick + Math.min(n.tick + n.length, other.length)
+    // Straight, when the notes are wanted where they are written.
+    const timing = heard ? other : { length: other.length }
+    for (const { note: n, on: start, off: end } of clipHits(place, other, from, to, timing)) {
       if (start >= to || end <= from) continue
-      const tick = Math.max(start, from)
-      out.push({ ...n, tick: tick - from, length: Math.min(end, to) - tick })
+      const tick = Math.max(start, from) - from
+      const until = Math.min(end, to) - from
+      if (heard) {
+        const t = unswungTick(tick, self)
+        out.push({ ...n, tick: t, length: unswungTick(until, self) - t })
+      } else {
+        out.push({ ...n, tick, length: until - tick })
+      }
     }
   }
   return out
@@ -368,14 +345,14 @@ export function contextNotes(song: Song, patternId: string, at: number): Note[] 
  * is: the arrangement, with one track let through.
  */
 export function trackMix(song: Song, only?: readonly string[]): Record<string, TrackMix> {
-  const soloed = song.tracks.some((t) => t.solo)
+  const heard = heardTracks(song)
   const mix: Record<string, TrackMix> = {}
   for (const t of song.tracks) {
-    const heard = soloed ? !!t.solo : !t.mute
     const strip = t.strip ?? DEFAULT_STRIP
     mix[t.id] = {
-      gain: t.gain,
-      audible: heard && (!only || only.includes(t.id)),
+      // The track's fader after its folder's, as a VCA group does it.
+      gain: trackGain(song, t),
+      audible: heard.has(t.id) && (!only || only.includes(t.id)),
       pan: strip.pan,
       eq: strip.eq,
       space: strip.space,
@@ -428,15 +405,9 @@ export function updateConsole(
   }
 }
 
-/** How many bars of four the playlist reaches, with room to add another. */
+/** How many bars the playlist reaches, with room to add another. */
 export function playlistBars(song: Song, minimum = 8): number {
-  let end = 0
-  for (const place of song.playlist) {
-    const pattern = song.patterns.find((p) => p.id === place.pattern)
-    if (!pattern) continue
-    end = Math.max(end, place.tick + pattern.length)
-  }
-  return Math.max(minimum, Math.ceil(end / barTicks(song)) + 1)
+  return Math.max(minimum, Math.ceil(songEnd(song) / barTicks(song)) + 1)
 }
 
 /**

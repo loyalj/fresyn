@@ -72,7 +72,7 @@ export function TakeList({
             key={take.index}
             className={`take${take.keep ? ' kept' : ''}${playing === take.index ? ' playing' : ''}`}
           >
-            <label className="take-keep" title={take.keep ? 'Will be exported' : 'Skipped'}>
+            <label className="take-keep" title={take.keep ? 'Will be downloaded' : 'Skipped'}>
               <input
                 type="checkbox"
                 checked={take.keep}

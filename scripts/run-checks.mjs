@@ -31,7 +31,7 @@ const FAST = [
   ['theme', ['scripts/check-theme.mjs']],
 ]
 
-const BROWSER = ['browser', 'cables', 'input', 'rack', 'export', 'roll', 'sampler', 'scope', 'tools'].map(
+const BROWSER = ['browser', 'audio', 'cables', 'input', 'rack', 'export', 'roll', 'sampler', 'scope', 'tools'].map(
   (n) => [n, [`scripts/check-${n}.mjs`]],
 )
 

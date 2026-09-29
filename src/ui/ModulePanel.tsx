@@ -26,12 +26,14 @@ interface Props {
   onBypass?: () => void
   presets?: { current: () => Record<string, number>; onApply: (params: Record<string, number>) => void }
   /** Open and close this module's own gate, for a panel that is played. */
-  onGate?: (open: boolean) => void
+  onGate?: (open: boolean, ahead?: Record<string, number>) => void
   /** Undefined for a module whose knobs have not been seeded yet. */
   valueOf: (paramId: string) => number | undefined
   onChange: (paramId: string, value: number) => void
   /** Several knobs at once, as one step of undo, for a face that sets pairs. */
   onChanges?: (values: Record<string, number>) => void
+  /** For a Keyboard: the note its bottom key plays, to name its keys by. */
+  tuning?: number
 }
 
 /**
@@ -53,6 +55,7 @@ export function ModulePanel({
   onChanges,
   sample,
   onSample,
+  tuning,
 }: Props) {
   return (
     <div className="unit">
@@ -144,6 +147,7 @@ export function ModulePanel({
           valueOf={valueOf}
           onChange={onChange}
           onGate={onGate}
+          tuning={tuning}
         />
       )
     }

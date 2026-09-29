@@ -1,4 +1,5 @@
 import { hasScale, stepInScale, type Scale } from './scale'
+import type { PitchRange } from './types'
 
 /**
  * Chords, for the roll's chord tool: one click lays every note of one.
@@ -46,7 +47,7 @@ export const chordById = (id: string) => CHORDS.find((c) => c.id === id)
  *
  * `inversion` lifts that many of the lowest notes an octave, which is what
  * keeps a progression from leaping about. Anything that would land above the
- * keyboard is folded down an octave rather than lost, so a chord clicked near
+ * top row is folded down an octave rather than lost, so a chord clicked near
  * the top is still the whole chord, voiced lower; one that lands on a note the
  * chord already has is dropped.
  */
@@ -55,7 +56,7 @@ export function chordPitches(
   chord: ChordShape,
   inversion: number,
   scale: Scale | undefined,
-  keys: number,
+  range: PitchRange,
 ): number[] {
   const built = chord.fromKey
     ? hasScale(scale)
@@ -69,8 +70,8 @@ export function chordPitches(
 
   const out: number[] = []
   for (let p of voiced) {
-    while (p > keys - 1) p -= 12
-    if (p < 0 || out.includes(p)) continue
+    while (p > range.high) p -= 12
+    if (p < range.low || out.includes(p)) continue
     out.push(p)
   }
   return out.sort((a, b) => a - b)

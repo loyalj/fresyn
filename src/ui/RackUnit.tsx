@@ -18,8 +18,11 @@ import { FaceShown } from './useFallingMeter'
 export interface RackActions {
   /** A press on the ear: picking, and the start of a reorder drag. */
   grab: (id: string, e: React.PointerEvent) => void
-  /** Open and close this unit's own gate, for a panel that is played. */
-  gate: (id: string, open: boolean) => void
+  /**
+   * Open and close this unit's own gate, for a panel that is played. `ahead`
+   * is knobs of this unit to send to the audio thread first; see KeysFace.
+   */
+  gate: (id: string, open: boolean, ahead?: Record<string, number>) => void
   /** A Trigger's button, pressed and let go. */
   press: (id: string) => void
   release: (id: string) => void
@@ -67,6 +70,8 @@ interface Props {
   isOccupied: (ref: PortRef, kind: JackKind) => boolean
   isCandidate: (ref: PortRef, kind: JackKind) => boolean
   actions: RackActions
+  /** For a Keyboard: the note its bottom key plays, to name its keys by. */
+  tuning?: number
 }
 
 /**
@@ -109,6 +114,7 @@ export const RackUnit = memo(function RackUnit({
   isOccupied,
   isCandidate,
   actions,
+  tuning,
 }: Props) {
   const moduleId = module.id
   const bypassed = !!module.bypass
@@ -123,7 +129,10 @@ export const RackUnit = memo(function RackUnit({
     [actions, moduleId],
   )
   const onGrab = useCallback((e: React.PointerEvent) => actions.grab(moduleId, e), [actions, moduleId])
-  const onGate = useCallback((open: boolean) => actions.gate(moduleId, open), [actions, moduleId])
+  const onGate = useCallback(
+    (open: boolean, ahead?: Record<string, number>) => actions.gate(moduleId, open, ahead),
+    [actions, moduleId],
+  )
   const onSample = useCallback((file: File | null) => actions.sample(moduleId, file), [actions, moduleId])
   const onBypass = useMemo(
     () => (def.bypass ? () => actions.bypass(moduleId) : undefined),
@@ -196,6 +205,7 @@ export const RackUnit = memo(function RackUnit({
             onChanges={onChanges}
             sample={module.sample}
             onSample={onSample}
+            tuning={tuning}
           />
         </FaceShown.Provider>
       </div>

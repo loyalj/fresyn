@@ -27,6 +27,8 @@ export interface Song {
   /** Beats per minute. One tempo for the whole song, for now. */
   tempo: number
   tracks: Track[]
+  /** Folders for the track list, in no particular order. See `Folder`. */
+  folders?: Folder[]
   patterns: Pattern[]
   playlist: Placement[]
   /** The transport's loop, in ticks. Absent means play to the end and stop. */
@@ -42,11 +44,13 @@ export interface Song {
   /** The song's mixing desk. Absent is the default one: see `DEFAULT_CONSOLE`. */
   console?: Console
   /**
-   * Named places in the arrangement -- Intro, Verse, Drop -- in ticks. A
-   * marker runs to the next one, or to the end, and that span is a section
-   * the playlist can jump to and loop.
+   * The named parts of the arrangement -- Intro, Verse, Drop -- each a span
+   * of ticks, earliest first, never overlapping. The song can have stretches
+   * no section covers. A section is what the playlist loops when its name is
+   * clicked, what a game jumps to, and what moves with its music when it is
+   * dragged to another place in the song.
    */
-  markers?: Marker[]
+  sections?: Section[]
   /**
    * The key the roll highlights, and snaps to when asked. Absent means none:
    * every row is as good as every other. A property of the song rather than
@@ -77,6 +81,35 @@ export interface Track {
   color?: number
   /** Its channel on the console: see `Strip`. Absent is a flat, centred strip. */
   strip?: Strip
+  /** The folder it is filed in, by id. Absent is none. */
+  folder?: string
+  /**
+   * Left out of the track list, the desk and the roll's background, and
+   * still heard: hiding is for tidying, and muting is what silences.
+   */
+  hidden?: boolean
+  /** Kept at the top of the track list, out of any folder and past any search. */
+  pinned?: boolean
+}
+
+/**
+ * A folder of tracks in the track list, and the group they make.
+ *
+ * It tidies -- it folds its tracks away under one row -- and it is a group:
+ * its mute and solo reach every track in it, and its level scales all of
+ * theirs, the way a VCA fader on a desk does. There is no bus behind it:
+ * the tracks still reach the mix one by one, each through its own strip.
+ */
+export interface Folder {
+  id: string
+  name: string
+  /** Linear, 0..1, multiplying each of its tracks' own levels. */
+  gain: number
+  color?: number
+  mute?: boolean
+  solo?: boolean
+  /** Folded away in the track list: only its own row shows. */
+  collapsed?: boolean
 }
 
 /**
@@ -148,6 +181,46 @@ export interface Pattern {
   notes: Note[]
   /** A hue, 0..360, for finding it on the playlist. Absent is the accent. */
   color?: number
+  /**
+   * How far every second step is pushed late. Absent is straight.
+   *
+   * Applied as the pattern is played, never to the notes: they stay on the
+   * grid they were written to, so editing and quantizing still mean what
+   * they say, and the amount can be changed while the loop runs -- by the
+   * roll, or by a game through `SongPlayer.setSwing`.
+   */
+  swing?: Swing
+}
+
+/**
+ * Swing, as drum machines have always counted it: where the second step of
+ * each pair lands, as a share of the pair. 0.5 is straight; about 0.67 is a
+ * triplet feel; 0.75 is a dotted shuffle.
+ */
+export interface Swing {
+  /** 0.5 to 0.75. */
+  amount: number
+  /** The step being swung, in ticks: an eighth or a sixteenth. */
+  step: number
+}
+
+export const SWING_MIN = 0.5
+export const SWING_MAX = 0.75
+/** The steps swing can be applied to: eighths and sixteenths. */
+export const SWING_STEPS: readonly number[] = [PPQ / 2, PPQ / 4]
+
+/**
+ * A swing as it is kept: the amount within range, the step one of the two
+ * there are, and nothing at all for straight -- so a pattern never swung and
+ * one swung and put back are the same pattern, in memory and in a file.
+ * Undefined for anything that is not a swing.
+ */
+export function cleanSwing(amount: unknown, step: unknown): Swing | undefined {
+  if (typeof amount !== 'number' || !Number.isFinite(amount)) return undefined
+  const a = Math.min(SWING_MAX, amount)
+  if (!(a > SWING_MIN)) return undefined
+  const s = SWING_STEPS.includes(step as number) ? (step as number) : SWING_STEPS[1]
+  return { amount: Math.round(a * 1000) / 1000, step: s }
 }
 
 export interface Note {
@@ -166,6 +239,20 @@ export interface Note {
   velocity: number
 }
 
+/** The pitches a roll has rows for, bottom and top, both included. */
+export interface PitchRange {
+  low: number
+  high: number
+}
+
+/**
+ * Every pitch the roll has a row for: 128 of them, the span of MIDI, with the
+ * Keyboard's own two octaves (0 to 24) sitting where MIDI's C3 to C5 do. Four
+ * octaves under the bottom key is room for any bass line, and the top is
+ * past anything a lead needs, whatever the patch is tuned to.
+ */
+export const PITCH_RANGE: PitchRange = { low: -48, high: 79 }
+
 export interface Meter {
   /** Beats to the bar: the top of the time signature. */
   beats: number
@@ -173,9 +260,14 @@ export interface Meter {
   unit: 4 | 8
 }
 
-export interface Marker {
+export interface Section {
+  /** Where it starts, in ticks. */
   tick: number
+  /** How long it lasts, in ticks. Always more than nothing. */
+  length: number
   name: string
+  /** A hue, 0..360, for the strip and the lanes under it. Absent is the accent. */
+  color?: number
 }
 
 /** Ticks in one bar of this song. */
@@ -205,10 +297,33 @@ export function beatTicks(song: { meter?: Meter }): number {
   return (PPQ * 4) / (song.meter?.unit ?? 4)
 }
 
+/**
+ * One clip on the playlist: a window onto a pattern, played from `tick`.
+ *
+ * The pattern repeats for as long as the clip lasts, so a one-bar drum
+ * pattern dragged out to eight bars is eight bars of drums. `offset` is where
+ * in the pattern the clip starts playing, and it is what trimming the front
+ * of a clip moves: the notes stay where they were in the song and the clip's
+ * edge moves over them.
+ *
+ * `offset` and `length` are absent until a clip is trimmed or split. Absent
+ * means "the pattern, from its start, once" -- so an untouched clip follows
+ * its pattern when the pattern's length changes, the way it always has.
+ */
 export interface Placement {
   pattern: string
-  /** Where in the playlist this instance of the pattern begins, in ticks. */
+  /** Where in the playlist this clip begins, in ticks. */
   tick: number
+  /**
+   * The playlist lane it sits in, from 0 at the top. Absent is 0. Only
+   * where it is drawn: any pattern can go in any lane, and lanes do not
+   * change what is heard.
+   */
+  lane?: number
+  /** Ticks into the pattern the clip begins playing at. Absent is 0. */
+  offset?: number
+  /** How long the clip lasts, in ticks. Absent is the pattern's length. */
+  length?: number
 }
 
 /** An empty song, which is what a new project opens on. */

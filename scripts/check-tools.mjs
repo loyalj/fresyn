@@ -61,6 +61,12 @@ async function pickMenu(menu, item) {
   return true
 }
 
+const laneAt = (bar, lane) =>
+  page.evaluate((bar, lane) => {
+    const r = document.querySelector('.playlist-layer').getBoundingClientRect()
+    const w = parseFloat(getComputedStyle(document.querySelector('.playlist-grid')).getPropertyValue('--bar-w'))
+    return { x: r.left + bar * w, y: r.top + lane * 24 + 12 }
+  }, bar, lane)
 const press = async (key, mods = []) => {
   for (const m of mods) await page.keyboard.down(m)
   await page.keyboard.press(key)
@@ -290,7 +296,7 @@ console.log('\npatterns, kept house')
   await edited()
   check('a pattern is added from the foot of the playlist', (await stored()).song.patterns.length === 2)
   const renameTo = async (text, key = 'Enter') => {
-    await page.click('.playlist-row.on .playlist-name', { clickCount: 3 })
+    await page.click('.playlist-pattern.on .playlist-name', { clickCount: 3 })
     await page.keyboard.type(text)
     await press(key)
     await edited()
@@ -300,21 +306,21 @@ console.log('\npatterns, kept house')
   check('a pattern can be renamed', song.patterns[1]?.name === 'Chorus', song.patterns.map((p) => p.name).join())
   song = await renameTo('Verse', 'Escape')
   check('Escape keeps the name it had', song.patterns[1]?.name === 'Chorus', song.patterns.map((p) => p.name).join())
-  await page.click('.playlist-row.on .playlist-name', { clickCount: 3 })
+  await page.click('.playlist-pattern.on .playlist-name', { clickCount: 3 })
   await press('Backspace')
   await press('Enter')
   await edited()
   song = (await stored()).song
   check('and a blank name is not kept', song.patterns[1]?.name === 'Chorus', song.patterns.map((p) => p.name).join())
-  await page.click('.playlist-row.on .swatch')
+  await page.click('.playlist-pattern.on .swatch')
   await edited()
   song = (await stored()).song
   check('and given a colour', typeof song.patterns[1]?.color === 'number')
-  await page.click('.playlist-row.on button[aria-label="Copy Chorus"]')
+  await page.click('.playlist-pattern.on button[aria-label="Copy Chorus"]')
   await edited()
   song = (await stored()).song
   check('a row copies its own pattern', song.patterns.length === 3, song.patterns.map((p) => p.name).join())
-  await page.click('.playlist-row.on button[aria-label^="Delete"]')
+  await page.click('.playlist-pattern.on button[aria-label^="Delete"]')
   await edited()
   check('and deletes its own', (await stored()).song.patterns.length === 2)
   // Undoable, so no confirm -- but it says so, since the placements went too.
@@ -328,21 +334,49 @@ console.log('\npatterns, kept house')
   check('which undoes', (await stored()).song.patterns.length === 3)
 }
 
-console.log('\nsliding a placement')
+console.log('\nediting clips')
 {
   await clickText('.dock-views .dock-toggle', 'Song')
   await wait(200)
-  const row = (await page.$$('.playlist-row'))[0]
-  const cells = await row.$$('.playlist-cell')
-  const a = await cells[0].boundingBox()
-  const b = await cells[3].boundingBox()
-  await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2)
-  await page.mouse.down()
-  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 6 })
-  await page.mouse.up()
+  const drag = async (from, to, mods = []) => {
+    for (const m of mods) await page.keyboard.down(m)
+    await page.mouse.move(from.x, from.y)
+    await page.mouse.down()
+    await page.mouse.move(to.x, to.y, { steps: 6 })
+    await page.mouse.up()
+    for (const m of mods) await page.keyboard.up(m)
+    await edited()
+    return (await stored()).song.playlist
+  }
+  check('the Song view has no pattern menu on the bar: its list is beside the lanes',
+    await page.evaluate(() => !document.querySelector('.dock-bar select[aria-label="Pattern"]')))
+  let playlist = await drag(await laneAt(0.5, 0), await laneAt(3.5, 0))
+  check('dragging a clip slides it to another bar', playlist.length === 1 && playlist[0].tick === 3 * 3840, JSON.stringify(playlist))
+
+  // By its right-hand edge: drawn out to two bars, the pattern repeats.
+  const clip = await (await page.$('.playlist-clip')).boundingBox()
+  playlist = await drag({ x: clip.x + clip.width - 2, y: clip.y + clip.height / 2 }, await laneAt(5, 0))
+  check('dragging its end trims it -- here, out to two bars', playlist[0].length === 2 * 3840, JSON.stringify(playlist))
+  check('and the repeat is drawn', (await page.$$('.playlist-clip .seam')).length === 1)
+
+  const cut = await laneAt(4, 0)
+  await page.keyboard.down('Control')
+  await page.mouse.click(cut.x, cut.y)
+  await page.keyboard.up('Control')
   await edited()
-  const playlist = (await stored()).song.playlist
-  check('dragging a placement slides it to another bar', playlist.length === 1 && playlist[0].tick === 3 * 3840, JSON.stringify(playlist))
+  playlist = (await stored()).song.playlist
+  check('a Ctrl+click splits it in two where it was clicked',
+    playlist.length === 2 && playlist[0].length === 3840 && playlist[1].tick === 4 * 3840 && playlist[1].length === 3840,
+    JSON.stringify(playlist))
+
+  // Shift+drag copies: the one grabbed is picked, so it is the one copied.
+  playlist = await drag(await laneAt(4.5, 0), await laneAt(6.5, 1), ['Shift'])
+  check('Shift+drag copies a clip, into another lane too', playlist.length === 3 && playlist[2].tick === 6 * 3840 && playlist[2].lane === 1,
+    JSON.stringify(playlist))
+  // The copy is what is picked now, so Delete takes it away.
+  await press('Delete')
+  await edited()
+  check('and Delete deletes what is picked', (await stored()).song.playlist.length === 2)
   await clickText('.dock-views .dock-toggle', 'Roll')
   await wait(200)
 }
@@ -400,6 +434,100 @@ console.log('\ntracks, kept house')
   await press('KeyZ', ['Control'])
   await edited()
   check('which it does', (await stored()).song.tracks.length === ids.length)
+}
+
+console.log('\nfolders, hiding, finding and pinning tracks')
+{
+  /** Pick a row from the menu that is open, by its label. */
+  const fromMenu = async (label) => {
+    const ok = await page.evaluate((label) => {
+      const row = [...document.querySelectorAll('.context-menu button')].find((b) => b.querySelector('.menu-text')?.textContent === label)
+      row?.click()
+      return !!row
+    }, label)
+    await edited()
+    return ok
+  }
+  const moreFor = async (index) => {
+    await (await page.$$('.track .track-more'))[index].click()
+    await wait(100)
+  }
+  const shownTracks = () => page.$$eval('.track .track-name', (els) => els.map((e) => e.value))
+
+  await clickText('.tracks-foot .track-add', '+ Folder')
+  await edited()
+  let song = (await stored()).song
+  check('+ Folder makes an empty folder', song.folders?.length === 1 && (await page.$$('.track-folder')).length === 1)
+  const folder = song.folders[0].id
+
+  // Filed by dragging its grip onto the folder's row.
+  // Measured after the press: pressing a track also puts its rack on the
+  // bench, and a rack of another height moves the dock under the pointer.
+  const grip = await (await page.$$('.track-grip'))[0].boundingBox()
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
+  await page.mouse.down()
+  await edited()
+  const header = await (await page.$('.track-folder')).boundingBox()
+  await page.mouse.move(header.x + header.width / 2, header.y + header.height / 2, { steps: 6 })
+  await page.mouse.up()
+  await edited()
+  song = (await stored()).song
+  const filed = song.tracks.find((t) => t.folder === folder)
+  check('dragging a track onto a folder files it there', !!filed, JSON.stringify(song.tracks.map((t) => t.folder)))
+  check('drawn under it', (await page.$$('.track.in-folder')).length === 1)
+
+  await page.click('.track-folder .track-fold')
+  await edited()
+  check('a folder folds its tracks away', (await page.$$('.track.in-folder')).length === 0 && (await stored()).song.folders[0].collapsed === true)
+  await page.click('.track-folder .track-fold')
+  await edited()
+
+  await page.click('.track-folder .track-flag[aria-label^="Mute"]')
+  await edited()
+  check('a folder\'s mute silences its tracks', await page.evaluate(() => !!document.querySelector('.track.in-folder.silent')))
+  await page.click('.track-folder .track-flag[aria-label^="Mute"]')
+  await edited()
+
+  // Search.
+  const loose = song.tracks.find((t) => t.folder !== folder)
+  await page.click('.tracks-search')
+  // By the folder's name, which finds the tracks filed in it.
+  await page.keyboard.type(song.folders[0].name)
+  await wait(100)
+  check('a search narrows the list, here by folder name', (await shownTracks()).join() === filed.name, (await shownTracks()).join())
+  await press('Escape')
+  await wait(100)
+  check('and Escape clears it', (await shownTracks()).length === 2)
+
+  // Hidden: out of the list, still playing, and back with the toggle.
+  const before = await shownTracks()
+  await moreFor(before.indexOf(loose.name))
+  check('a track\'s menu can hide it', await fromMenu('Hide (still plays)'))
+  check('which takes it out of the list', !(await shownTracks()).includes(loose.name))
+  check('and says one is hidden', await page.evaluate(() => /1 hidden/.test(document.querySelector('.tracks-hidden')?.textContent ?? '')))
+  check('without muting it', !(await stored()).song.tracks.find((t) => t.id === loose.id).mute)
+  await page.click('.tracks-hidden')
+  await wait(100)
+  check('the toggle lists it again, marked', (await page.$$('.track.hidden-track')).length === 1)
+  await moreFor((await shownTracks()).indexOf(loose.name))
+  await fromMenu('Show')
+  check('and its menu shows it', !(await stored()).song.tracks.find((t) => t.id === loose.id).hidden)
+  check('after which there is nothing hidden to toggle', !(await page.$('.tracks-hidden')))
+
+  // Pinned: to the top of the list, out of the folder's rows.
+  await moreFor((await shownTracks()).indexOf(filed.name))
+  await fromMenu('Pin to the top')
+  check('a pinned track goes to the top', (await shownTracks())[0] === filed.name, (await shownTracks()).join())
+  check('above a rule', !!(await page.$('.tracks-rule')))
+  await moreFor(0)
+  await fromMenu('Pin to the top')
+
+  // Taking the folder away keeps its track.
+  await (await page.$('.track-folder .track-more')).click()
+  await wait(100)
+  await fromMenu('Remove folder (keeps its tracks)')
+  song = (await stored()).song
+  check('removing a folder keeps its tracks', !song.folders && song.tracks.length === 2 && song.tracks.every((t) => !t.folder))
 }
 
 console.log('\nthe roll comes back as it was left')
@@ -554,24 +682,41 @@ console.log('\nsections and the time signature')
 {
   await clickText('.dock-views .dock-toggle', 'Song')
   await wait(200)
-  const slots = await page.$$('button.playlist-marker-slot')
-  await slots[0].click()
+  const BAR = 3840
+  /** A point on the sections strip, so many bars along. */
+  const strip = (bars) =>
+    page.evaluate((bars) => {
+      const r = document.querySelector('.playlist-section-layer').getBoundingClientRect()
+      const w = parseFloat(getComputedStyle(document.querySelector('.playlist-grid')).getPropertyValue('--bar-w'))
+      return { x: r.left + bars * w, y: r.top + r.height / 2 }
+    }, bars)
+  const sections = async () => (await stored()).song.sections ?? []
+  const where = (list) => list.map((x) => `${x.name}@${x.tick / BAR}+${x.length / BAR}`).join(', ')
+
+  let at = await strip(0.5)
+  await page.mouse.click(at.x, at.y)
   await edited()
-  let song = (await stored()).song
-  check('a click on the sections strip adds a marker', song.markers?.length === 1 && song.markers[0].tick === 0, JSON.stringify(song.markers))
-  // A bar number adds one too, even inside a section the strip is covering.
+  let list = await sections()
+  check('a click on the empty strip makes a four-bar section', list.length === 1 && list[0].tick === 0 && list[0].length === 4 * BAR, where(list))
+  // A bar number inside a section cuts it in two there.
   const numbers = await page.$$('button.playlist-bar')
   await numbers[3].click()
   await edited()
-  song = (await stored()).song
-  check('and a click on a bar number adds another', song.markers?.length === 2 && song.markers[1].tick === 3 * 3840,
-    JSON.stringify(song.markers))
-  const chip = await page.$('.playlist-marker')
-  await chip.click()
-  await wait(200)
-  check('a click on a marker loops its section', await page.evaluate(() => !!document.querySelector('.playlist-marker.on')))
-  check('lit in the ruler', await page.evaluate(() => document.querySelectorAll('.playlist-bar.in-section').length > 0))
-  await chip.click({ clickCount: 2 })
+  list = await sections()
+  check('a click on a bar number splits the section over it', list.length === 2 && list[1].tick === 3 * BAR && list[0].length === 3 * BAR, where(list))
+  // Drawn out across empty strip: as long as the drag.
+  const from = await strip(6.2)
+  const to = await strip(8.1)
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(to.x, to.y, { steps: 6 })
+  await page.mouse.up()
+  await edited()
+  list = await sections()
+  check('dragging across the strip makes a section that long', list.length === 3 && list[2].tick === 6 * BAR && list[2].length === 2 * BAR, where(list))
+
+  const first = await page.$('.playlist-section')
+  await first.click({ clickCount: 2 })
   await wait(150)
   await page.keyboard.down('Control')
   await page.keyboard.press('KeyA')
@@ -579,8 +724,57 @@ console.log('\nsections and the time signature')
   await page.keyboard.type('Intro')
   await press('Enter')
   await edited()
-  song = (await stored()).song
-  check('a double-click renames it', song.markers?.some((m) => m.name === 'Intro'), JSON.stringify(song.markers))
+  list = await sections()
+  check('a double-click renames it', list[0]?.name === 'Intro', where(list))
+  // The double-click's first click looped it; one more stops that, and one
+  // more starts it again.
+  await (await page.$('.playlist-section')).click()
+  await wait(250)
+  check('a click on a looped section stops looping it', await page.evaluate(() => !document.querySelector('.playlist-section.on')))
+  await (await page.$('.playlist-section')).click()
+  await wait(200)
+  check('and a click loops it', await page.evaluate(() => !!document.querySelector('.playlist-section.on')))
+  check('lit in the ruler', await page.evaluate(() => document.querySelectorAll('.playlist-bar.in-section').length === 3))
+
+  // Its × takes the label and leaves the music.
+  const clipsBefore = (await stored()).song.playlist.length
+  const last = (await page.$$('.playlist-section'))[2]
+  await last.hover()
+  await (await last.$('.playlist-section-remove')).click()
+  await edited()
+  list = await sections()
+  check('a section\'s × removes it', list.length === 2, where(list))
+  check('and leaves its music', (await stored()).song.playlist.length === clipsBefore)
+
+  // Dragged by its body to the front: the song closes up behind it.
+  const second = await (await page.$$('.playlist-section'))[1].boundingBox()
+  const front = await strip(0.2)
+  await page.mouse.move(second.x + second.width / 2, second.y + second.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(front.x, front.y, { steps: 8 })
+  await page.mouse.up()
+  await edited()
+  list = await sections()
+  check('dragging a section moves it', list[0]?.tick === 0 && list[0].length === BAR && list[1]?.name === 'Intro' && list[1].tick === BAR, where(list))
+  check('and the one being looped is still looped where it went',
+    await page.evaluate(() => document.querySelector('.playlist-section.on')?.textContent?.includes('Intro') ?? false))
+
+  // Dragged into empty time past the end, it slides there, drawn under the
+  // pointer all the way.
+  const intro = await (await page.$$('.playlist-section'))[1].boundingBox()
+  // Held by its middle, a bar and a half in: let go at 11.6 bars, it starts
+  // at 10.1, which the bar snap puts on 10.
+  const far = await strip(11.6)
+  await page.mouse.move(intro.x + intro.width / 2, intro.y + intro.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(far.x, far.y, { steps: 8 })
+  const inHand = await page.evaluate(() => document.querySelector('.playlist-section.sliding')?.getBoundingClientRect().left ?? null)
+  await page.mouse.up()
+  await edited()
+  list = await sections()
+  check('a section in hand follows the pointer', inHand !== null && inHand > intro.x + 100, `${intro.x} -> ${inHand}`)
+  check('and slides into empty time', list.some((x) => x.name === 'Intro' && x.tick === 10 * BAR), where(list))
+  check('the Song view leaves the track list to the roll', !(await page.$('.tracks')))
 
   await page.evaluate(() => {
     const s = [...document.querySelectorAll('.dock-field select')].find((x) => [...x.options].some((o) => o.value === '3/4'))
@@ -588,9 +782,9 @@ console.log('\nsections and the time signature')
     s.dispatchEvent(new Event('change', { bubbles: true }))
   })
   await edited()
-  song = (await stored()).song
+  const song = (await stored()).song
   check('the time signature can be set', song.meter?.beats === 3 && song.meter?.unit === 4, JSON.stringify(song.meter))
-  check('and the markers keep their bars', song.markers.some((m) => m.tick === 3 * 3 * 960), JSON.stringify(song.markers))
+  check('and the sections keep their bars', song.sections.some((m) => m.name === 'Intro' && m.tick === 10 * 3 * 960), JSON.stringify(song.sections))
   await clickText('.dock-views .dock-toggle', 'Roll')
   await wait(200)
 }
@@ -657,6 +851,146 @@ console.log('\nknob help')
   await wait(1100)
   check('and it stays off after a reload', !(await page.$('.knob-help')))
   await pickMenu('View', 'Knob help')
+}
+
+console.log('\nnotices that stay, and every warning')
+{
+  const { writeFileSync, mkdtempSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = mkdtempSync(join(tmpdir(), 'fresyn-notice-'))
+
+  // A file that is not a patch at all: an error, which has to outlast news.
+  const junk = join(dir, 'junk.json')
+  writeFileSync(junk, 'this is not json')
+  await (await page.$('.patch-file')).uploadFile(junk)
+  await waitUntil(page, () => !!document.querySelector('.notice-warn'))
+  await wait(4500)
+  check(
+    'a file that will not open says so until dismissed',
+    await page.evaluate(() => /not valid JSON/.test(document.querySelector('.notice-warn')?.textContent ?? '')),
+  )
+  await page.click('.notice-warn .notice-close')
+
+  // A patch with two cables to jacks that do not exist: it opens, and both
+  // warnings are there to read, not only the first.
+  const patch = (await stored())?.racks?.bench?.patch
+  const [a, b] = patch.modules
+  patch.cables.push(
+    { id: 'x1', from: { module: a.id, port: 'nowhere' }, to: { module: b.id, port: 'nothing' } },
+    { id: 'x2', from: { module: 'ghost', port: 'out' }, to: { module: b.id, port: 'in' } },
+  )
+  const bad = join(dir, 'bad.fpatch.json')
+  writeFileSync(bad, JSON.stringify({ version: 1, name: 'Bad cables', patch }))
+  await (await page.$('.patch-file')).uploadFile(bad)
+  await waitUntil(page, () => /warning/.test(document.querySelector('.notice-warn')?.textContent ?? ''))
+  const more = await page.$('.notice-warn .notice-more')
+  check('a load with warnings offers the rest of them', !!more)
+  if (more) {
+    await more.click()
+    await frames(page)
+    const listed = await page.$$eval('.notice-details li', (li) => li.length)
+    check('and lists them when asked', listed >= 1, `${listed} listed`)
+  }
+  await wait(4500)
+  check('and stays up to be read', !!(await page.$('.notice-warn')))
+  await page.click('.notice-warn .notice-close')
+  await press('KeyZ', ['Control'])
+  await edited()
+}
+
+console.log('\nthe Music dock fits the window')
+{
+  await page.evaluate(() => localStorage.setItem('fresyn.dock.v1', JSON.stringify({ open: true, height: 620 })))
+  await page.setViewport({ width: 390, height: 780 })
+  await page.reload({ waitUntil: 'networkidle0' })
+  await waitUntil(page, () => !!document.querySelector('.dock-body'))
+  const { dock, inner } = await page.evaluate(() => ({
+    dock: document.querySelector('.dock').getBoundingClientRect().height,
+    inner: innerHeight,
+  }))
+  check('a height saved on a big screen is capped on a small one', dock <= inner * 0.6 + 2, `${Math.round(dock)} of ${inner}`)
+  await page.setViewport({ width: 1280, height: 1900 })
+  await waitUntil(page, () => document.querySelector('.dock-body').getBoundingClientRect().height >= 600)
+  check(
+    'and given back when the window grows',
+    await page.evaluate(() => document.querySelector('.dock-body').getBoundingClientRect().height >= 600),
+  )
+}
+
+console.log('\nnames rename on a double-click')
+{
+  const trackName = () => page.$eval('.track.on .track-name', (i) => i.value)
+  const was = await trackName()
+  await page.click('.track.on .track-name')
+  await page.keyboard.type('zz')
+  await edited()
+  check('a single click on a track name does not start renaming it', (await trackName()) === was, await trackName())
+  check('and leaves the keys to the rack', await page.$eval('.track.on .track-name', (i) => i.readOnly))
+  await page.click('.track.on .track-name', { clickCount: 2 })
+  await page.keyboard.type('Bass')
+  await press('Enter')
+  await edited()
+  check('a double-click renames it, replacing the name', (await trackName()) === 'Bass', await trackName())
+  check('and Enter puts it back to a label', await page.$eval('.track.on .track-name', (i) => i.readOnly))
+
+  await page.focus('.track.on .track-name')
+  await press('F2')
+  await page.keyboard.type(was)
+  await press('Enter')
+  await edited()
+  check('F2 renames from the keyboard', (await trackName()) === was, await trackName())
+
+  await clickText('.dock-views .dock-toggle', 'Song')
+  await waitUntil(page, () => !!document.querySelector('.playlist-pattern .playlist-name'))
+  const patternName = () => page.$eval('.playlist-pattern.on .playlist-name', (i) => i.value)
+  const first = await patternName()
+  await page.click('.playlist-pattern.on .playlist-name')
+  await page.keyboard.type('zz')
+  await edited()
+  check('a single click on a pattern name only picks it', (await patternName()) === first, await patternName())
+  await page.click('.playlist-pattern.on .playlist-name', { clickCount: 2 })
+  await page.keyboard.type('Hook')
+  await press('Enter')
+  await edited()
+  check('a double-click renames the pattern', (await patternName()) === 'Hook', await patternName())
+  await page.click('.playlist-pattern.on .playlist-name', { clickCount: 2 })
+  await page.keyboard.type(first)
+  await press('Enter')
+  await edited()
+}
+
+console.log('\nswing on the roll')
+{
+  await clickText('.dock-toggle', 'Roll')
+  await frames(page)
+  const swingOf = async () => (await stored())?.song?.patterns?.[0]?.swing ?? null
+  const readout = () => page.evaluate(() => document.querySelector('.swing-readout')?.textContent ?? null)
+  check('the roll has a swing control', !!(await page.$('.swing-amount')))
+  check('and a new pattern is straight', (await readout()) === 'Off' && (await swingOf()) === null)
+
+  // Eighths chosen while it is off are still eighths once it is turned up.
+  await page.select('.swing-field select', '480')
+  await edited()
+  check('picking the step while straight stores nothing yet', (await swingOf()) === null)
+  await page.focus('.swing-amount')
+  for (let i = 0; i < 16; i++) await page.keyboard.press('ArrowRight')
+  await edited()
+  check('the slider turns it up', (await readout()) === '66%', await readout())
+  const swing = await swingOf()
+  check('and the pattern keeps it, on the step that was picked', swing?.amount === 0.66 && swing?.step === 480, JSON.stringify(swing))
+
+  await page.select('.swing-field select', '240')
+  await edited()
+  check('the step can be changed while it swings', (await swingOf())?.step === 240)
+  await press('KeyZ', ['Control'])
+  await edited()
+  check('and that change undoes on its own', (await swingOf())?.step === 480, JSON.stringify(await swingOf()))
+
+  await page.focus('.swing-amount')
+  await page.keyboard.press('Home')
+  await edited()
+  check('all the way down is straight again', (await readout()) === 'Off' && (await swingOf()) === null)
 }
 
 await finish()

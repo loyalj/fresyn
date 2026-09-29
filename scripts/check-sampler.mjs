@@ -272,7 +272,7 @@ console.log('\nexporting and importing the rack')
     return true
   }
 
-  check('the Patch menu saves a patch', await menuItem('Patch', 'Save patch...'))
+  check('the Patch menu saves a patch', await menuItem('Patch', 'Download patch...'))
 
   // The write is asynchronous, and Chrome renames a .crdownload when it lands.
   let bundle = null

@@ -1,4 +1,5 @@
 import { engineEventsByTrack, type NoteTarget } from '../song/bind'
+import { releasedBySwing } from '../song/schedule'
 import { fill, playheadTick, type Cursor, type Loop } from '../song/transport'
 import type { Song } from '../song/types'
 import type { AudioEngine } from './AudioEngine'
@@ -91,8 +92,24 @@ export class Transport {
    */
   setSong(song: Song) {
     const tempoChanged = song.tempo !== this.song.tempo
+    // A swing moved while it plays can carry the end of a note already
+    // started to behind the cursor, where the next pass would never send it.
+    // Let go of those at the cursor; the rest are picked up as usual.
+    const released =
+      this.playing && this.pending === null && !tempoChanged
+        ? releasedBySwing(this.song, song, this.cursor.tick)
+        : []
     this.song = song
     if (tempoChanged) this.resync()
+    else if (released.length) {
+      const frame = Math.round(this.cursor.frame)
+      this.engine.schedule(
+        engineEventsByTrack(
+          released.map((e) => ({ frame, track: e.track, kind: e.kind, pitch: e.pitch, velocity: e.velocity })),
+          this.targets,
+        ),
+      )
+    }
   }
 
   /**

@@ -405,6 +405,18 @@ export class GraphEngine {
   }
 
   /**
+   * Drop what is queued from a frame on, keeping what comes before it. What
+   * a change of course needs: the lookahead has already been handed over,
+   * and the part of it past the turning point is no longer what will play.
+   */
+  dropFrom(frame: number) {
+    const q = this.queue
+    let i = q.length
+    while (i > 0 && q[i - 1].frame >= frame) i--
+    q.length = i
+  }
+
+  /**
    * Release every note being held.
    *
    * What a transport stop needs: the queue can be emptied, but a note that

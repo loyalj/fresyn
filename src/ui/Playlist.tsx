@@ -1,12 +1,30 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Transport } from '../audio/Transport'
-import { markersOf, placementAt, playlistBars } from '../song/edit'
-import { barTicks, type Song } from '../song/types'
+import { loadPrefs, savePrefs } from '../patch/storage'
+import {
+  addClip,
+  clipEnd,
+  clipLength,
+  duplicateClips,
+  laneOf,
+  lanesUsed,
+  MAX_LANE,
+  moveClips,
+  removeClips,
+  splitClip,
+  trimClip,
+} from '../song/clip'
+import { playlistBars } from '../song/edit'
+import { addSection, sectionAt, sectionOver, sectionsOf, splitSection } from '../song/section'
+import { clipHits, clipRepeats } from '../song/schedule'
+import { barTicks, beatTicks, type Pattern, type Placement, type Song } from '../song/types'
+import { NameField } from './NameField'
+import { SectionStrip } from './SectionStrip'
 import { nextHue } from './palette'
 
 interface Props {
   song: Song
-  /** The pattern the roll is writing into, lit so the two views agree. */
+  /** The pattern the roll is writing into, and the one a click paints. */
   patternId: string
   onSelectPattern: (id: string) => void
   /** Called on every keystroke, like a track's name; see `PatternName`. */
@@ -16,42 +34,85 @@ interface Props {
   /** A new pattern: empty, or a copy of the one named. */
   onAddPattern: (from?: string) => void
   onRemovePattern: (id: string) => void
-  onToggle: (patternId: string, tick: number) => void
-  /** Slide a placement to start at another bar. */
-  onMove: (patternId: string, from: number, to: number) => void
-  /** The marker whose section is being looped, or null. */
+  /** Every change to the clips, as an edit of the song as it stands. */
+  onEdit: (fn: (song: Song) => Song) => void
+  /** Open a pattern in the roll: a double-click on one of its clips. */
+  onOpenPattern: (id: string) => void
+  /** The section being looped, by the tick it starts on, or null. */
   section: number | null
   onSection: (tick: number | null) => void
-  onAddMarker: (tick: number) => void
-  onRenameMarker: (tick: number, name: string) => void
-  onRemoveMarker: (tick: number) => void
   transport: Transport
 }
 
-/** A placement being slid along its row. */
-interface Slide {
-  pattern: string
-  /** Where the placement started, in ticks, and the bar it was taken hold of by. */
-  from: number
-  grabBar: number
-  /** Where it would start if let go now. */
-  to: number
-  moved: boolean
+type SnapName = 'bar' | 'beat' | 'half' | 'quarter' | 'off'
+const SNAPS: { id: SnapName; label: string }[] = [
+  { id: 'bar', label: 'Bar' },
+  { id: 'beat', label: 'Beat' },
+  { id: 'half', label: '½ beat' },
+  { id: 'quarter', label: '¼ beat' },
+  { id: 'off', label: 'Off' },
+]
+
+/** A lane's height, in pixels. Matches `--lane-h` in the stylesheet. */
+const LANE_H = 24
+/** The width of a bar, in pixels, as far as zoom goes each way. */
+const ZOOM_MIN = 12
+const ZOOM_MAX = 480
+/** Lanes shown past the last one used, so there is always an empty one to paint in. */
+const SPARE_LANES = 2
+const MIN_LANES = 4
+
+/** A pointer on the timeline, in ticks across and lanes down. */
+interface Point {
+  tick: number
+  lane: number
 }
 
+/** What a press on the playlist is doing until it lets go. */
+type Drag =
+  /** A new clip of the chosen pattern, placed where it is let go. */
+  | { kind: 'paint'; pattern: string; start: number; x0: number; tick: number; lane: number }
+  /**
+   * The picked clips moving together, or copies of them with Shift. `toggle`
+   * is a clip Shift+clicked while already picked: let go without moving, it
+   * leaves the selection.
+   */
+  | {
+      kind: 'move'
+      indices: number[]
+      grab: number
+      x0: number
+      lane0: number
+      dt: number
+      dl: number
+      copy: boolean
+      moved: boolean
+      toggle: number | null
+    }
+  | { kind: 'trim'; index: number; edge: 'start' | 'end'; at: number }
+  /** A right-button sweep: every clip it passes over is deleted on release. */
+  | { kind: 'erase'; hit: number[] }
+  /** Ctrl+drag on empty lanes: a box that picks every clip it touches. */
+  | { kind: 'marquee'; from: Point; to: Point; base: number[] }
+
 /**
- * The arrangement: which pattern plays in which bar.
+ * The arrangement: clips of patterns, anywhere, in any lane.
  *
- * A grid rather than free-floating blocks on a timeline. A pattern is already
- * a fixed length, so the only thing a placement can say is where it starts --
- * and a grid of bars says that with one click. A placement can be slid along
- * its row by dragging it, snapping to bars; a click without a drag takes it
- * away, as it always has.
+ * Patterns are listed on the left. The one lit there is the one the roll is
+ * writing into and the one a click on an empty lane paints. A clip is
+ * dragged by its body to move it, by an edge to trim it, split with a
+ * Ctrl+click and deleted with the right button -- the way FL's playlist has
+ * taught a generation of people to arrange. Snap is to the bar unless asked
+ * otherwise, and Alt held while dragging lets go of it.
+ *
+ * Every drag is drawn by applying the edit it would make to the song and
+ * drawing that, rather than by drawing a guess at it. What is on screen while
+ * the button is down is exactly what letting go will do, because it is the
+ * same function.
  *
  * Laid out in the DOM rather than on a canvas, unlike the roll. There are
- * dozens of cells here and not hundreds of notes, they want to be buttons
- * that can be tabbed to, and only the playhead moves -- which is one element
- * sliding, not a picture being redrawn.
+ * dozens of clips here and not thousands of notes, and only the playhead
+ * moves -- which is one element sliding, not a picture being redrawn.
  */
 export function Playlist({
   song,
@@ -61,102 +122,121 @@ export function Playlist({
   onColorPattern,
   onAddPattern,
   onRemovePattern,
-  onToggle,
-  onMove,
+  onEdit,
+  onOpenPattern,
   section,
   onSection,
-  onAddMarker,
-  onRenameMarker,
-  onRemoveMarker,
   transport,
 }: Props) {
-  const bars = playlistBars(song)
-  // A bar is as long as the time signature says. Read through a ref by the
-  // playhead, which is drawn by a loop set up once.
   const BAR = barTicks(song)
-  const barRef = useRef(BAR)
-  barRef.current = BAR
-  const markers = markersOf(song)
-  /** Where the last placement ends, for how far the last section reaches. */
-  let songEndTicks = 0
-  for (const place of song.playlist) {
-    const p = song.patterns.find((x) => x.id === place.pattern)
-    if (p) songEndTicks = Math.max(songEndTicks, place.tick + p.length)
+  const BEAT = beatTicks(song)
+  const [snapName, setSnapNameState] = useState<SnapName>(() => loadPrefs().playlistSnap ?? 'bar')
+  const setSnapName = (next: SnapName) => {
+    setSnapNameState(next)
+    savePrefs({ playlistSnap: next })
   }
-  /** The marker being renamed, and what it is being called. */
-  const [renaming, setRenaming] = useState<{ tick: number; name: string } | null>(null)
+  const snapTicks = { bar: BAR, beat: BEAT, half: BEAT / 2, quarter: BEAT / 4, off: 0 }[snapName]
+  const [barPx, setBarPxState] = useState(() => clamp(loadPrefs().playlistZoom ?? 64, ZOOM_MIN, ZOOM_MAX))
+  const setBarPx = (next: number) => {
+    const px = clamp(Math.round(next), ZOOM_MIN, ZOOM_MAX)
+    setBarPxState(px)
+    savePrefs({ playlistZoom: px })
+  }
+  const ppt = barPx / BAR
+  // Read by the playhead, which is drawn by a loop set up once.
+  const pptRef = useRef(ppt)
+  pptRef.current = ppt
+
+  const looped = section === null ? null : sectionAt(song, section)
+
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const layerRef = useRef<HTMLDivElement>(null)
   const headRef = useRef<HTMLDivElement>(null)
-  const gridRef = useRef<HTMLDivElement>(null)
-  const [slide, setSlideState] = useState<Slide | null>(null)
+
+  const [picked, setPicked] = useState<number[]>([])
+  // An undo can take clips away from under a selection; what is left of it
+  // is what counts.
+  const selected = picked.filter((i) => i < song.playlist.length)
+
+  const [drag, setDragState] = useState<Drag | null>(null)
   /**
    * The same, for the handlers to read. A quick click lands its press and its
    * release before React has re-rendered, so a release reading the state it
    * was rendered with would never see the press at all.
    */
-  const slideRef = useRef<Slide | null>(null)
-  /**
-   * Set when a press on a placement was dealt with on release. The click the
-   * browser sends after it arrives once the grid has already re-rendered --
-   * on a cell that is now empty, which would put the placement straight back.
-   */
-  const swallowClick = useRef(false)
-  const setSlide = (next: Slide | null) => {
-    slideRef.current = next
-    setSlideState(next)
+  const dragRef = useRef<Drag | null>(null)
+  const setDrag = (next: Drag | null) => {
+    dragRef.current = next
+    setDragState(next)
   }
 
-  // The playhead is moved by writing to the element, never through state: at
-  // thirty frames a second React would re-render the whole grid for it.
-  //
-  // Where a bar sits is measured off two real cells rather than worked out
-  // from the width of the grid, because the grid also holds the column of
-  // pattern names down its left -- scaling across the whole of it put the
-  // playhead most of a bar early, and on top of the labels at the start.
-  //
-  // Measured once per layout rather than once per frame: after every render,
-  // which is when cells come and go, and whenever the grid changes size.
-  // Both are offsets within the grid, so scrolling it does not change them.
-  const cellGeometry = useRef<{ left: number; perBar: number } | null>(null)
-  const measureCells = useCallback(() => {
-    const grid = gridRef.current
-    const cells = grid?.querySelectorAll('.playlist-cell')
-    if (!grid || !cells || cells.length < 2) {
-      cellGeometry.current = null
-      return
+  /** The song as it would be if the drag in hand let go now. */
+  const view = useMemo(() => {
+    if (!drag) return song
+    switch (drag.kind) {
+      case 'paint':
+        return addClip(song, drag.pattern, drag.tick, drag.lane)
+      case 'move':
+        return drag.copy
+          ? duplicateClips(song, drag.indices, drag.dt, drag.dl)
+          : moveClips(song, drag.indices, drag.dt, drag.dl)
+      case 'trim':
+        return trimClip(song, drag.index, drag.edge, drag.at)
+      default:
+        return song
     }
-    const origin = grid.getBoundingClientRect().left
-    const first = cells[0].getBoundingClientRect()
-    // The gap between cells is a stylesheet's business, so it is read
-    // rather than repeated here.
-    cellGeometry.current = {
-      left: first.left - origin,
-      perBar: cells[1].getBoundingClientRect().left - first.left,
-    }
-  }, [])
-  useLayoutEffect(measureCells)
-  useEffect(() => {
-    const grid = gridRef.current
-    if (!grid) return
-    const watch = new ResizeObserver(measureCells)
-    watch.observe(grid)
-    return () => watch.disconnect()
-  }, [measureCells])
+  }, [song, drag])
 
-  // The loop runs only while the transport plays. Stopped, the head is hidden
-  // once and nothing is drawn until the next Play.
+  /** Which clips are drawn picked: the copies, while they are being made. */
+  const shownPicked = useMemo(() => {
+    if (drag?.kind === 'move' && drag.copy && drag.moved) {
+      return new Set(drag.indices.map((_, k) => song.playlist.length + k))
+    }
+    if (drag?.kind === 'paint') return new Set([song.playlist.length])
+    return new Set(selected)
+  }, [drag, selected, song.playlist.length])
+  const erasing = new Set(drag?.kind === 'erase' ? drag.hit : [])
+
+  // Wide enough to fill the pane, whatever is arranged.
+  const [paneWidth, setPaneWidth] = useState(0)
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const watch = new ResizeObserver(() => setPaneWidth(el.clientWidth))
+    watch.observe(el)
+    return () => watch.disconnect()
+  }, [])
+  const bars = Math.max(playlistBars(view), Math.ceil(paneWidth / barPx))
+  const lanes = Math.max(MIN_LANES, lanesUsed(view) + SPARE_LANES)
+
+  // A zoom from the wheel keeps the tick under the pointer where it was,
+  // which means scrolling once the new width has been laid out.
+  const zoomAnchor = useRef<{ tick: number; x: number } | null>(null)
+  useLayoutEffect(() => {
+    const anchor = zoomAnchor.current
+    const scroller = scrollRef.current
+    const layer = layerRef.current
+    if (!anchor || !scroller || !layer) return
+    zoomAnchor.current = null
+    const left = layer.getBoundingClientRect().left + anchor.tick * ppt
+    scroller.scrollLeft += left - anchor.x
+  }, [ppt])
+
+  // The playhead is moved by writing to the element, never through state: at
+  // thirty frames a second React would re-render every clip for it. The loop
+  // runs only while the transport plays.
   useEffect(() => {
     let raf = 0
     const draw = () => {
       raf = 0
       const head = headRef.current
       const state = transport.state
-      const at = cellGeometry.current
       if (head) {
-        if (!state.playing || !at) {
+        if (!state.playing) {
           head.style.display = 'none'
         } else {
           head.style.display = 'block'
-          head.style.transform = `translateX(${at.left + (state.tick / barRef.current) * at.perBar}px)`
+          head.style.transform = `translateX(${state.tick * pptRef.current}px)`
         }
       }
       if (state.playing) raf = requestAnimationFrame(draw)
@@ -171,302 +251,541 @@ export function Playlist({
     }
   }, [transport])
 
-  /** The bar under a point on the page, read off the cell there. */
-  const barAt = (x: number, y: number) => {
+  const pointAt = (e: { clientX: number; clientY: number }): Point => {
+    const r = layerRef.current!.getBoundingClientRect()
+    return { tick: (e.clientX - r.left) / ppt, lane: Math.floor((e.clientY - r.top) / LANE_H) }
+  }
+  /** A tick on the snap, or on the tick with Alt held or snap off. Never before the start. */
+  const snap = (tick: number, free: boolean, how: 'round' | 'floor' = 'round') => {
+    const step = free ? 0 : snapTicks
+    if (!step) return Math.max(0, Math.round(tick))
+    return Math.max(0, (how === 'floor' ? Math.floor : Math.round)(tick / step) * step)
+  }
+  const clipUnder = (x: number, y: number): number | null => {
     const el = document.elementFromPoint(x, y)
-    const cell = el instanceof Element ? el.closest<HTMLElement>('.playlist-cell') : null
-    return cell?.dataset.bar !== undefined ? Number(cell.dataset.bar) : null
+    const clip = el instanceof Element ? el.closest<HTMLElement>('.playlist-clip') : null
+    return clip?.dataset.index !== undefined ? Number(clip.dataset.index) : null
   }
 
-  return (
-    // The list of patterns with its add button underneath, the way the track
-    // list has its own: the button stays put while the playlist scrolls.
-    <div className="playlist-pane">
-      <div className="playlist">
-        <div className="playlist-grid" ref={gridRef}>
-          <div className="playlist-head" ref={headRef} aria-hidden="true" />
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 && e.button !== 2) return
+    claimKeyboard(scrollRef.current)
+    const target = e.target instanceof Element ? e.target : null
+    const clipEl = target?.closest<HTMLElement>('.playlist-clip')
+    const index = clipEl ? Number(clipEl.dataset.index) : null
+    const edge = target?.closest<HTMLElement>('.playlist-clip-edge')?.dataset.edge as 'start' | 'end' | undefined
+    const p = pointAt(e)
+    const ctrl = e.ctrlKey || e.metaKey
+    e.currentTarget.setPointerCapture(e.pointerId)
 
-          {/* The sections: a click on an empty bar puts a marker there, a click
-              on a marker plays from it and loops its section, and a double-click
-              renames it -- or, with the name emptied, is the way to delete it. */}
-          <div className="playlist-markers">
-            <span className="playlist-label playlist-label-quiet">Sections</span>
-            {Array.from({ length: bars }, (_, bar) => {
-              const tick = bar * BAR
-              const at = markers.findIndex((m) => m.tick >= tick && m.tick < tick + BAR)
-              const marker = at >= 0 ? markers[at] : null
-              if (!marker) {
+    if (e.button === 2) {
+      setDrag({ kind: 'erase', hit: index === null ? [] : [index] })
+      return
+    }
+
+    if (index === null) {
+      if (ctrl) {
+        const base = e.shiftKey ? selected : []
+        setPicked(base)
+        setDrag({ kind: 'marquee', from: p, to: p, base })
+        return
+      }
+      setPicked([])
+      const tick = snap(p.tick, e.altKey, 'floor')
+      setDrag({ kind: 'paint', pattern: patternId, start: tick, x0: p.tick, tick, lane: clamp(p.lane, 0, MAX_LANE) })
+      return
+    }
+
+    const place = song.playlist[index]
+    if (!place) return
+    // A clip touched is its pattern chosen: the next click paints it, and the
+    // roll is writing into it.
+    if (place.pattern !== patternId) onSelectPattern(place.pattern)
+    const pattern = song.patterns.find((x) => x.id === place.pattern)
+
+    if (ctrl && pattern) {
+      // Split where the pointer is, on the snap -- unless the snap would put
+      // the cut on the clip's own edge, which would cut nothing.
+      const stop = clipEnd(place, pattern)
+      let at = snap(p.tick, e.altKey)
+      if (at <= place.tick || at >= stop) at = Math.round(p.tick)
+      onEdit((s) => splitClip(s, index, at))
+      setPicked([])
+      e.currentTarget.releasePointerCapture(e.pointerId)
+      return
+    }
+
+    if (edge && pattern) {
+      setPicked([index])
+      setDrag({ kind: 'trim', index, edge, at: edge === 'start' ? place.tick : clipEnd(place, pattern) })
+      return
+    }
+
+    const already = selected.includes(index)
+    const indices = already ? selected : e.shiftKey ? [...selected, index] : [index]
+    setPicked(indices)
+    setDrag({
+      kind: 'move',
+      indices,
+      grab: place.tick,
+      x0: p.tick,
+      lane0: p.lane,
+      dt: 0,
+      dl: 0,
+      copy: e.shiftKey,
+      moved: false,
+      toggle: e.shiftKey && already ? index : null,
+    })
+  }
+
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = dragRef.current
+    if (!d) return
+    const p = pointAt(e)
+    switch (d.kind) {
+      case 'paint': {
+        const tick = snap(d.start + p.tick - d.x0, e.altKey)
+        const lane = clamp(p.lane, 0, MAX_LANE)
+        if (tick !== d.tick || lane !== d.lane) setDrag({ ...d, tick, lane })
+        break
+      }
+      case 'move': {
+        const dt = snap(d.grab + p.tick - d.x0, e.altKey) - d.grab
+        const dl = p.lane - d.lane0
+        if (dt !== d.dt || dl !== d.dl) setDrag({ ...d, dt, dl, moved: d.moved || dt !== 0 || dl !== 0 })
+        break
+      }
+      case 'trim': {
+        const at = snap(p.tick, e.altKey)
+        if (at !== d.at) setDrag({ ...d, at })
+        break
+      }
+      case 'erase': {
+        const i = clipUnder(e.clientX, e.clientY)
+        if (i !== null && !d.hit.includes(i)) setDrag({ ...d, hit: [...d.hit, i] })
+        break
+      }
+      case 'marquee': {
+        const t0 = Math.min(d.from.tick, p.tick)
+        const t1 = Math.max(d.from.tick, p.tick)
+        const l0 = Math.min(d.from.lane, p.lane)
+        const l1 = Math.max(d.from.lane, p.lane)
+        const hits: number[] = []
+        song.playlist.forEach((place, i) => {
+          const pattern = song.patterns.find((x) => x.id === place.pattern)
+          if (!pattern) return
+          const lane = laneOf(place)
+          if (lane < l0 || lane > l1) return
+          if (place.tick > t1 || clipEnd(place, pattern) < t0) return
+          hits.push(i)
+        })
+        setPicked([...new Set([...d.base, ...hits])])
+        setDrag({ ...d, to: p })
+        break
+      }
+    }
+  }
+
+  const onPointerUp = () => {
+    const d = dragRef.current
+    if (!d) return
+    setDrag(null)
+    const count = song.playlist.length
+    switch (d.kind) {
+      case 'paint':
+        onEdit((s) => addClip(s, d.pattern, d.tick, d.lane))
+        setPicked([count])
+        break
+      case 'move':
+        if (!d.moved) {
+          if (d.toggle !== null) setPicked(d.indices.filter((i) => i !== d.toggle))
+        } else if (d.copy) {
+          onEdit((s) => duplicateClips(s, d.indices, d.dt, d.dl))
+          setPicked(d.indices.map((_, k) => count + k))
+        } else {
+          onEdit((s) => moveClips(s, d.indices, d.dt, d.dl))
+        }
+        break
+      case 'trim':
+        onEdit((s) => trimClip(s, d.index, d.edge, d.at))
+        break
+      case 'erase':
+        if (d.hit.length) {
+          onEdit((s) => removeClips(s, d.hit))
+          setPicked([])
+        }
+        break
+      case 'marquee':
+        break
+    }
+  }
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    // Keys typed into a marker's name are the name's.
+    if (e.target !== e.currentTarget || dragRef.current) return
+    const ctrl = e.ctrlKey || e.metaKey
+    const key = e.key
+    let handled = true
+    if (ctrl && key.toLowerCase() === 'a') {
+      setPicked(song.playlist.map((_, i) => i))
+    } else if (key === 'Escape') {
+      setPicked([])
+      handled = false
+    } else if (!selected.length) {
+      handled = false
+    } else if (key === 'Delete' || key === 'Backspace') {
+      onEdit((s) => removeClips(s, selected))
+      setPicked([])
+    } else if (ctrl && key.toLowerCase() === 'd') {
+      // Copies straight after the selection, as a block: a four-bar phrase
+      // duplicated is the same phrase again, starting where it ended.
+      let from = Infinity
+      let to = 0
+      for (const i of selected) {
+        const place = song.playlist[i]
+        const pattern = song.patterns.find((x) => x.id === place.pattern)
+        if (!pattern) continue
+        from = Math.min(from, place.tick)
+        to = Math.max(to, clipEnd(place, pattern))
+      }
+      if (to > from) {
+        const count = song.playlist.length
+        onEdit((s) => duplicateClips(s, selected, to - from, 0))
+        setPicked(selected.map((_, k) => count + k))
+      }
+    } else if (key === 'ArrowLeft' || key === 'ArrowRight') {
+      const step = snapTicks || BEAT
+      onEdit((s) => moveClips(s, selected, key === 'ArrowLeft' ? -step : step, 0))
+    } else if (key === 'ArrowUp' || key === 'ArrowDown') {
+      onEdit((s) => moveClips(s, selected, 0, key === 'ArrowUp' ? -1 : 1))
+    } else {
+      handled = false
+    }
+    if (handled) e.preventDefault()
+  }
+
+  const onWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    // Ctrl+wheel zooms. The page's own zoom on the same gesture is stopped
+    // by the input layer, for the whole app.
+    if (!(e.ctrlKey || e.metaKey) || !layerRef.current) return
+    const next = clamp(Math.round(barPx * (e.deltaY < 0 ? 1.2 : 1 / 1.2)), ZOOM_MIN, ZOOM_MAX)
+    if (next === barPx) return
+    zoomAnchor.current = { tick: pointAt(e).tick, x: e.clientX }
+    setBarPx(next)
+  }
+
+  const patterns = useMemo(() => new Map(view.patterns.map((p) => [p.id, p])), [view.patterns])
+  const marquee = drag?.kind === 'marquee' ? drag : null
+  const beatPx = (BEAT / BAR) * barPx
+  // At a small zoom only every so many bar numbers fit.
+  const numberEvery = barPx >= 28 ? 1 : barPx >= 16 ? 2 : 4
+
+  return (
+    <div className="playlist-pane">
+      {/* The patterns, with their add button underneath, the way the track
+          list has its own. The one lit is the one a click paints. */}
+      <div className="playlist-patterns">
+        <div className="playlist-patterns-list" role="list" aria-label="Patterns">
+          {song.patterns.map((pattern) => (
+            <div
+              key={pattern.id}
+              role="listitem"
+              className={`playlist-pattern${pattern.id === patternId ? ' on' : ''}`}
+            >
+              {/* The track list's colour chip: a click steps it on round the
+                  wheel, and round to none. */}
+              <button
+                className={`swatch${pattern.color === undefined ? ' none' : ''}`}
+                style={pattern.color !== undefined ? ({ '--swatch-h': pattern.color } as React.CSSProperties) : undefined}
+                onClick={() => onColorPattern(pattern.id, nextHue(pattern.color) ?? null)}
+                title="Colour this pattern"
+                aria-label={`Colour ${pattern.name}`}
+                type="button"
+              />
+              <NameField
+                className="playlist-name"
+                value={pattern.name}
+                label="Pattern name"
+                title="Paint with this pattern and write into it; double-click to rename it"
+                onSelect={() => onSelectPattern(pattern.id)}
+                onRename={(name) => onRenamePattern(pattern.id, name)}
+              />
+              <button
+                className="track-remove"
+                onClick={() => onAddPattern(pattern.id)}
+                title="Copy this pattern into a new one"
+                aria-label={`Copy ${pattern.name}`}
+                type="button"
+              >
+                ⧉
+              </button>
+              <button
+                className="track-remove"
+                onClick={() => onRemovePattern(pattern.id)}
+                // There has to be one for the roll to write into.
+                disabled={song.patterns.length <= 1}
+                title="Delete this pattern, and every clip of it in the song"
+                aria-label={`Delete ${pattern.name}`}
+                type="button"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+        <button className="track-add" onClick={() => onAddPattern()} type="button">
+          + Pattern
+        </button>
+      </div>
+
+      <div className="playlist-main">
+        <div className="playlist-tools">
+          <label className="playlist-snap">
+            Snap
+            <select value={snapName} onChange={(e) => setSnapName(e.target.value as SnapName)} aria-label="Playlist snap">
+              {SNAPS.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="playlist-zoom" onClick={() => setBarPx(barPx / 1.5)} title="Zoom out (Ctrl+wheel)" aria-label="Zoom out" type="button">
+            −
+          </button>
+          <button className="playlist-zoom" onClick={() => setBarPx(barPx * 1.5)} title="Zoom in (Ctrl+wheel)" aria-label="Zoom in" type="button">
+            +
+          </button>
+          <span className="playlist-hint">
+            Click paints · drag edges to trim · Ctrl+click splits · right-click deletes · Shift+drag copies · Alt ignores snap
+          </span>
+        </div>
+
+        <div
+          className="playlist"
+          ref={scrollRef}
+          tabIndex={0}
+          aria-label="Playlist"
+          onKeyDown={onKeyDown}
+          onPointerMove={() => claimKeyboard(scrollRef.current)}
+          onWheel={onWheel}
+        >
+          <div
+            className="playlist-grid"
+            style={{ '--bar-w': `${barPx}px`, '--beat-w': `${beatPx}px`, '--lane-h': `${LANE_H}px` } as React.CSSProperties}
+          >
+            <SectionStrip
+              song={song}
+              width={bars * barPx}
+              ppt={ppt}
+              bar={BAR}
+              minimum={BEAT}
+              snap={snap}
+              section={section}
+              onSection={onSection}
+              onEdit={onEdit}
+            />
+
+            <div className="playlist-ruler">
+              <span className="playlist-label" />
+              {Array.from({ length: bars }, (_, i) => {
+                const tick = i * BAR
+                const inSection = looped !== null && tick >= looped.from && tick < looped.to
+                // A bar number cuts the section over it in two there, or
+                // starts a new one where there is none.
+                const over = sectionOver(song, tick)
+                const splits = over !== undefined && over.tick < tick
                 return (
                   <button
-                    key={bar}
-                    className="playlist-marker-slot"
-                    onClick={() => onAddMarker(tick)}
-                    aria-label={`Add a section marker at bar ${bar + 1}`}
-                    title="Add a section marker here"
+                    key={i}
+                    className={`playlist-bar${i % 4 === 0 ? ' strong' : ''}${inSection ? ' in-section' : ''}`}
+                    onClick={() => {
+                      if (splits) onEdit((x) => splitSection(x, tick))
+                      else if (!over) onEdit((x) => addSection(x, tick, 4 * BAR))
+                    }}
+                    title={
+                      splits
+                        ? `Split ${over.name} at bar ${i + 1}`
+                        : over
+                          ? `Bar ${i + 1}`
+                          : `Start a section at bar ${i + 1}`
+                    }
                     type="button"
-                  />
+                  >
+                    {i % numberEvery === 0 ? i + 1 : ''}
+                  </button>
                 )
-              }
-              // A marker runs until the next one -- or, the last one, to the end
-              // of what is arranged -- so its label can use the room without
-              // covering the empty bars past the end, where more can be added.
-              const next = markers[at + 1]
-              const end = Math.ceil(songEndTicks / BAR)
-              const span = Math.max(1, Math.min(bars - bar, next ? Math.round((next.tick - marker.tick) / BAR) : end - bar))
-              const on = section === marker.tick
-              return (
-                <span
-                  key={bar}
-                  className={`playlist-marker-slot has${next ? '' : ' last'}`}
-                  style={{ '--span': span } as React.CSSProperties}
-                >
-                  {renaming?.tick === marker.tick ? (
-                    <span className="playlist-marker-edit">
-                      <input
-                        value={renaming.name}
-                        autoFocus
-                        aria-label="Section name"
-                        spellCheck={false}
-                        onChange={(e) => setRenaming({ tick: marker.tick, name: e.target.value })}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') e.currentTarget.blur()
-                          if (e.key === 'Escape') setRenaming(null)
-                        }}
-                        onBlur={() => {
-                          if (renaming.name.trim()) onRenameMarker(marker.tick, renaming.name.trim())
-                          setRenaming(null)
-                        }}
-                      />
-                      <button
-                        className="playlist-marker-delete"
-                        // Before the input's blur would commit the name.
-                        onPointerDown={(e) => {
-                          e.preventDefault()
-                          setRenaming(null)
-                          onRemoveMarker(marker.tick)
-                        }}
-                        aria-label={`Delete ${marker.name}`}
-                        title="Delete this marker"
-                        type="button"
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ) : (
-                    <button
-                      className={`playlist-marker${on ? ' on' : ''}`}
-                      onClick={() => onSection(on ? null : marker.tick)}
-                      onDoubleClick={() => setRenaming({ tick: marker.tick, name: marker.name })}
-                      title={on ? 'Looping this section: click to play the whole song' : 'Play from here and loop this section (double-click to rename)'}
-                      aria-pressed={on}
-                      type="button"
-                    >
-                      {marker.name}
-                    </button>
-                  )}
-                </span>
-              )
-            })}
-          </div>
+              })}
+            </div>
 
-          <div className="playlist-ruler">
-            <span className="playlist-label" />
-            {Array.from({ length: bars }, (_, i) => {
-              const inSection =
-                section !== null && i * BAR >= section && i * BAR < (markers.find((m) => m.tick > section)?.tick ?? Infinity)
-              // A bar number adds a marker there, which is the way to split a
-              // section the strip above is already covering.
-              const marked = markers.some((m) => m.tick === i * BAR)
-              return (
-                <button
-                  key={i}
-                  className={`playlist-bar${i % 4 === 0 ? ' strong' : ''}${inSection ? ' in-section' : ''}`}
-                  onClick={() => !marked && onAddMarker(i * BAR)}
-                  title={marked ? `Bar ${i + 1}` : `Add a section marker at bar ${i + 1}`}
-                  type="button"
-                >
-                  {i + 1}
-                </button>
-              )
-            })}
-          </div>
-
-          {song.patterns.map((pattern) => {
-            const sliding = slide?.pattern === pattern.id && slide.moved ? slide : null
-            const spanBars = Math.max(1, Math.ceil(pattern.length / BAR))
-            return (
+            <div className="playlist-lanes" style={{ height: lanes * LANE_H }}>
+              <div className="playlist-lane-labels" aria-hidden="true">
+                {Array.from({ length: lanes }, (_, lane) => (
+                  <span key={lane} className="playlist-lane-label">
+                    {lane + 1}
+                  </span>
+                ))}
+              </div>
               <div
-                key={pattern.id}
-                className={`playlist-row${pattern.id === patternId ? ' on' : ''}${pattern.color !== undefined ? ' colored' : ''}`}
-                style={pattern.color !== undefined ? ({ '--pat-h': pattern.color } as React.CSSProperties) : undefined}
+                className="playlist-layer"
+                ref={layerRef}
+                style={{ width: bars * barPx }}
+                onPointerDown={onPointerDown}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+                onPointerCancel={() => setDrag(null)}
+                onContextMenu={(e) => e.preventDefault()}
+                onDoubleClick={(e) => {
+                  const clip = e.target instanceof Element ? e.target.closest<HTMLElement>('.playlist-clip') : null
+                  const place = clip ? song.playlist[Number(clip.dataset.index)] : undefined
+                  if (place) onOpenPattern(place.pattern)
+                }}
               >
-                <div className="playlist-label">
-                  {/* The track list's colour chip: a click steps it on round
-                      the wheel, and round to none. */}
-                  <button
-                    className={`swatch${pattern.color === undefined ? ' none' : ''}`}
-                    style={pattern.color !== undefined ? ({ '--swatch-h': pattern.color } as React.CSSProperties) : undefined}
-                    onClick={() => onColorPattern(pattern.id, nextHue(pattern.color) ?? null)}
-                    title="Colour this pattern"
-                    aria-label={`Colour ${pattern.name}`}
-                    type="button"
+                {/* Each section tints the lanes under it, so it is plain which
+                    bars go with it when it is moved. */}
+                {sectionsOf(song).map((x) => (
+                  <div
+                    key={`band${x.tick}`}
+                    className={`playlist-band${x.color !== undefined ? ' colored' : ''}${section === x.tick ? ' on' : ''}`}
+                    style={
+                      {
+                        left: x.tick * ppt,
+                        width: x.length * ppt,
+                        ...(x.color !== undefined ? { '--sec-h': x.color } : {}),
+                      } as React.CSSProperties
+                    }
+                    aria-hidden="true"
                   />
-                  <PatternName
-                    name={pattern.name}
-                    onSelect={() => onSelectPattern(pattern.id)}
-                    onRename={(name) => onRenamePattern(pattern.id, name)}
-                  />
-                  {/* On the row, as a track's remove button is on its own: the
-                      pattern they act on is the one they are next to, rather
-                      than whichever one the bar happens to have picked. */}
-                  <button
-                    className="track-remove"
-                    onClick={() => onAddPattern(pattern.id)}
-                    title="Copy this pattern into a new one"
-                    aria-label={`Copy ${pattern.name}`}
-                    type="button"
-                  >
-                    ⧉
-                  </button>
-                  <button
-                    className="track-remove"
-                    onClick={() => onRemovePattern(pattern.id)}
-                    // There has to be one for the roll to write into.
-                    disabled={song.patterns.length <= 1}
-                    title="Delete this pattern, and every place it is used in the song"
-                    aria-label={`Delete ${pattern.name}`}
-                    type="button"
-                  >
-                    ×
-                  </button>
-                </div>
-
-                {Array.from({ length: bars }, (_, bar) => {
-                  // Where the placement covering this bar begins, if one does. A
-                  // pattern longer than a bar fills several cells, and clicking
-                  // any of them takes the whole placement away rather than
-                  // leaving a block nothing can reach.
-                  const start = placementAt(song, pattern.id, bar * BAR)
-                  const here = start !== null
-                  const isStart = start === bar * BAR
-                  // Where the placement in hand would land, drawn over the grid
-                  // while it is dragged.
-                  const landing =
-                    sliding !== null && bar * BAR >= sliding.to && bar < sliding.to / BAR + spanBars
-                  const leaving = sliding !== null && start === sliding.from
+                ))}
+                {view.playlist.map((place, i) => {
+                  const pattern = patterns.get(place.pattern)
+                  if (!pattern) return null
                   return (
-                    <button
-                      key={bar}
-                      data-bar={bar}
-                      className={`playlist-cell${here ? ' filled' : ''}${isStart ? ' start' : ''}${
-                        landing ? ' landing' : ''
-                      }${leaving ? ' leaving' : ''}`}
-                      onPointerDown={(e) => {
-                        // A fresh press: whatever the last one left behind is
-                        // not about this one.
-                        swallowClick.current = false
-                        if (!here || e.button !== 0) return
-                        e.currentTarget.setPointerCapture(e.pointerId)
-                        setSlide({ pattern: pattern.id, from: start, grabBar: bar, to: start, moved: false })
-                      }}
-                      onPointerMove={(e) => {
-                        const slide = slideRef.current
-                        if (!slide || slide.pattern !== pattern.id) return
-                        const over = barAt(e.clientX, e.clientY)
-                        if (over === null) return
-                        const to = Math.max(0, slide.from + (over - slide.grabBar) * BAR)
-                        if (to !== slide.to || (!slide.moved && over !== slide.grabBar)) {
-                          setSlide({ ...slide, to, moved: slide.moved || over !== slide.grabBar })
-                        }
-                      }}
-                      onPointerUp={() => {
-                        const slide = slideRef.current
-                        if (!slide || slide.pattern !== pattern.id) return
-                        setSlide(null)
-                        swallowClick.current = true
-                        if (slide.moved && slide.to !== slide.from) onMove(pattern.id, slide.from, slide.to)
-                        else if (!slide.moved) onToggle(pattern.id, slide.from)
-                      }}
-                      onPointerCancel={() => setSlide(null)}
-                      // An empty cell places the pattern on a click. A filled one
-                      // is handled by the pointer above -- except from the
-                      // keyboard, where there is no pointer and a click is all
-                      // there is.
-                      onClick={(e) => {
-                        if (swallowClick.current) {
-                          swallowClick.current = false
-                          return
-                        }
-                        if (!here || e.detail === 0) onToggle(pattern.id, here ? start : bar * BAR)
-                      }}
-                      aria-label={`${pattern.name}, bar ${bar + 1}`}
-                      aria-pressed={here}
-                      title={here ? 'Drag to move, click to remove' : 'Click to place'}
-                      type="button"
+                    <Clip
+                      key={i}
+                      index={i}
+                      place={place}
+                      pattern={pattern}
+                      ppt={ppt}
+                      picked={shownPicked.has(i)}
+                      erasing={erasing.has(i)}
                     />
                   )
                 })}
+                {marquee && (
+                  <div
+                    className="playlist-marquee"
+                    style={{
+                      left: Math.min(marquee.from.tick, marquee.to.tick) * ppt,
+                      width: Math.abs(marquee.to.tick - marquee.from.tick) * ppt,
+                      top: Math.min(marquee.from.lane, marquee.to.lane) * LANE_H,
+                      height: (Math.abs(marquee.to.lane - marquee.from.lane) + 1) * LANE_H,
+                    }}
+                  />
+                )}
+                <div className="playlist-head" ref={headRef} aria-hidden="true" />
               </div>
-            )
-          })}
+            </div>
+          </div>
         </div>
       </div>
-
-      <button className="track-add" onClick={() => onAddPattern()} type="button">
-        + Pattern
-      </button>
     </div>
   )
 }
 
-/**
- * A pattern's name, edited where it is shown -- the way a track's is on the
- * track list, rather than behind a rename button on the bar.
- *
- * Focusing it picks the pattern, as clicking a track's name picks the track,
- * so the name you are typing into is always the pattern the roll is on. It
- * cannot be left blank: a pattern with no name is a row nobody can find, so
- * clearing it and walking away puts back the name it had.
- */
-function PatternName({
-  name,
-  onSelect,
-  onRename,
-}: {
-  name: string
-  onSelect: () => void
-  onRename: (name: string) => void
-}) {
-  /** What the name was when editing began, for Escape and for a blank. */
-  const before = useRef(name)
-
-  return (
-    <input
-      className="playlist-name"
-      value={name}
-      spellCheck={false}
-      aria-label="Pattern name"
-      title="Write into this pattern; type to rename it"
-      onFocus={() => {
-        before.current = name
-        onSelect()
-      }}
-      onChange={(e) => onRename(e.target.value)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') e.currentTarget.blur()
-        if (e.key === 'Escape') {
-          onRename(before.current)
-          // Blurred after the render that puts the old name back, so the
-          // blank check below sees the restored name rather than the edit.
-          const el = e.currentTarget
-          requestAnimationFrame(() => el.blur())
-        }
-      }}
-      onBlur={(e) => {
-        const trimmed = e.currentTarget.value.trim()
-        if (!trimmed) onRename(before.current)
-        else if (trimmed !== e.currentTarget.value) onRename(trimmed)
-      }}
-    />
-  )
+interface ClipProps {
+  index: number
+  place: Placement
+  pattern: Pattern
+  ppt: number
+  picked: boolean
+  erasing: boolean
 }
+
+/**
+ * One clip: its pattern's name, and its notes drawn small, repeat after
+ * repeat, with a faint line where each repeat begins. Memoized, because a
+ * drag re-renders the playlist every time the pointer crosses a snap line and
+ * most clips have not moved.
+ */
+const Clip = memo(function Clip({ index, place, pattern, ppt, picked, erasing }: ClipProps) {
+  const length = clipLength(place, pattern)
+  const art = useMemo(() => clipArt(place, pattern), [place, pattern])
+  const colored = pattern.color !== undefined
+  return (
+    <div
+      className={`playlist-clip${picked ? ' picked' : ''}${erasing ? ' erasing' : ''}${colored ? ' colored' : ''}`}
+      data-index={index}
+      style={
+        {
+          left: place.tick * ppt,
+          width: Math.max(3, length * ppt),
+          top: laneOf(place) * LANE_H,
+          ...(colored ? { '--pat-h': pattern.color } : {}),
+        } as React.CSSProperties
+      }
+      aria-label={`${pattern.name}, clip ${index + 1}`}
+      title={`${pattern.name} -- drag to move, drag an edge to trim, Ctrl+click to split, right-click to delete, double-click to edit`}
+    >
+      <svg className="playlist-clip-notes" viewBox={`0 0 ${length} ${art.rows}`} preserveAspectRatio="none" aria-hidden="true">
+        {art.seams.map((x) => (
+          <line key={`s${x}`} className="seam" x1={x} x2={x} y1={0} y2={art.rows} vectorEffect="non-scaling-stroke" />
+        ))}
+        {art.notes.map((n, k) => (
+          <rect key={k} x={n.x} y={n.y} width={n.w} height={1} />
+        ))}
+      </svg>
+      <span className="playlist-clip-name">{pattern.name}</span>
+      <span className="playlist-clip-edge" data-edge="start" />
+      <span className="playlist-clip-edge" data-edge="end" />
+    </div>
+  )
+})
+
+/** Past this many notes a clip is drawn without them: a solid block reads as well. */
+const MAX_DRAWN = 2000
+
+/** A clip's notes and seams, in ticks from its start and rows from the top. */
+function clipArt(place: Placement, pattern: Pattern) {
+  const stop = clipEnd(place, pattern)
+  const hits = clipHits(place, pattern, place.tick, stop)
+  let lo = Infinity
+  let hi = -Infinity
+  for (const n of pattern.notes) {
+    lo = Math.min(lo, n.pitch)
+    hi = Math.max(hi, n.pitch)
+  }
+  // A drum pattern on one pitch would be one row the full height of the clip;
+  // a few rows of headroom keep it a line of hits.
+  const span = Number.isFinite(lo) ? hi - lo + 1 : 1
+  const rows = Math.max(span, 8)
+  const top = hi + Math.floor((rows - span) / 2)
+  const notes =
+    hits.length > MAX_DRAWN
+      ? []
+      : hits
+          .filter((h) => h.on < stop)
+          .map((h) => ({ x: h.on - place.tick, y: top - h.note.pitch, w: Math.max(1, h.off - h.on) }))
+  const seams = clipRepeats(place, pattern, place.tick, stop)
+    .filter((base) => base > place.tick && base < stop)
+    .map((base) => base - place.tick)
+  return { rows, notes, seams }
+}
+
+/**
+ * Give the playlist the keyboard while the pointer is over it, the way the
+ * roll takes it: so Delete deletes clips without a click first. Anything
+ * being typed into keeps it.
+ */
+function claimKeyboard(el: HTMLElement | null) {
+  if (!el) return
+  const active = document.activeElement
+  if (active === el) return
+  if (active instanceof HTMLElement) {
+    if (active.isContentEditable || active instanceof HTMLTextAreaElement) return
+    if (active instanceof HTMLInputElement && !['button', 'checkbox', 'radio', 'range'].includes(active.type)) return
+  }
+  el.focus({ preventScroll: true })
+}
+
+const clamp = (n: number, lo: number, hi: number) => (n < lo ? lo : n > hi ? hi : n)

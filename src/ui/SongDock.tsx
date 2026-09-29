@@ -3,23 +3,30 @@ import type { AudioEngine } from '../audio/AudioEngine'
 import type { Transport } from '../audio/Transport'
 import { loadPrefs, savePrefs } from '../patch/storage'
 import type { NoteTarget } from '../song/bind'
+import type { Tuning } from '../song/tuning'
 import {
   contextNotes,
-  addMarker,
   firstPlacement,
-  movePlacement,
-  removeMarker,
-  renameMarker,
   setMeter,
-  reorderTracks,
   setPatternLength,
+  setPatternSwing,
   updatePattern,
   soloTrack,
-  togglePlacement,
 } from '../song/edit'
-import { barTicks, beatTicks, PPQ, type Note, type Song, type Track } from '../song/types'
+import {
+  barTicks,
+  beatTicks,
+  PPQ,
+  SWING_MAX,
+  SWING_MIN,
+  SWING_STEPS,
+  type Note,
+  type Song,
+  type Track,
+} from '../song/types'
 import { MixView } from './MixView'
 import { TrackList } from './TrackList'
+import { dockHeightWithin, DOCK_MIN_H, useDockMax } from './useDockMax'
 
 /**
  * The roll and the playlist are not in the page's own script: the dock
@@ -67,9 +74,6 @@ const METERS = ['2/4', '3/4', '4/4', '5/4', '6/8', '7/8', '9/8', '12/8']
 /** What the grid is drawn at when snapping is off. */
 const OFF_GRID = PPQ / 4
 
-export const DOCK_MIN_H = 160
-export const DOCK_MAX_H = 620
-
 interface Props {
   transport: Transport
   /** The project's name: what Save project and the bounces are called. */
@@ -88,6 +92,8 @@ interface Props {
   /** Delete a pattern and its placements. The app says how to undo it. */
   onRemovePattern: (id: string) => void
   targets: ReadonlyMap<string, NoteTarget>
+  /** What the benched track's Keyboard plays, to name the roll's rows by. */
+  tuning: Tuning | null
   view: 'roll' | 'song' | 'mix'
   onView: (view: 'roll' | 'song' | 'mix') => void
   /**
@@ -117,6 +123,8 @@ interface Props {
   onOpenChange: (open: boolean) => void
   height: number
   onHeight: (height: number) => void
+  /** Draw a swung pattern where its notes are heard, rather than on its written grid. */
+  showSwing: boolean
 }
 
 /** The pattern menu's last row, which makes one rather than picking one. */
@@ -151,6 +159,7 @@ export const SongDock = memo(function SongDock({
   onAddPattern,
   onRemovePattern,
   targets,
+  tuning,
   view,
   onView,
   onEdit,
@@ -165,6 +174,7 @@ export const SongDock = memo(function SongDock({
   onOpenChange,
   height,
   onHeight,
+  showSwing,
 }: Props) {
   const [parts, setParts] = useState(dockParts)
   useEffect(() => {
@@ -176,6 +186,12 @@ export const SongDock = memo(function SongDock({
   }, [])
   const [playing, setPlaying] = useState(transport.state.playing)
   // The grid you last wrote in, if it is still one this dock offers.
+  /** Whether hidden tracks are listed, and given strips, after all. */
+  const [showHidden, setShowHiddenState] = useState(() => loadPrefs().showHiddenTracks ?? false)
+  const setShowHidden = (show: boolean) => {
+    setShowHiddenState(show)
+    savePrefs({ showHiddenTracks: show })
+  }
   const [grid, setGridState] = useState(() => {
     const saved = loadPrefs().grid
     return GRIDS.some((g) => g.ticks === saved) ? (saved as number) : PPQ / 4
@@ -219,17 +235,23 @@ export const SongDock = memo(function SongDock({
   // writing it blind. So is whatever the other patterns play over the same
   // bars, which is drawn behind it too, whichever way the roll is playing.
   const mine = pattern?.notes.filter((n) => n.track === trackId) ?? []
+  const others = pattern?.notes.filter((n) => n.track !== trackId) ?? []
+  // Hidden tracks still play, but are left out of what is drawn behind.
+  const hiddenTracks = new Set(song.tracks.filter((t) => t.hidden).map((t) => t.id))
   const ghosts = [
-    ...(pattern?.notes.filter((n) => n.track !== trackId) ?? []),
-    ...(placedAt === null ? [] : contextNotes(song, patternId, placedAt)),
-  ]
+    ...others,
+    ...(placedAt === null ? [] : contextNotes(song, patternId, placedAt, showSwing)),
+  ].filter((n) => !hiddenTracks.has(n.track))
 
   const trackHues = useMemo(
     () => new Map(song.tracks.flatMap((t) => (t.color === undefined ? [] : [[t.id, t.color] as const]))),
     [song.tracks],
   )
 
-  const setMine = useCallback((notes: Note[]) => onNotes([...ghosts, ...notes]), [onNotes, ghosts])
+  // This pattern's other tracks go back in with the edit; the notes of other
+  // patterns drawn behind it do not. They belong to their own patterns, and
+  // written back here they were copied into this one on every edit.
+  const setMine = useCallback((notes: Note[]) => onNotes([...others, ...notes]), [onNotes, others])
 
   const setBars = useCallback(
     (next: number) => {
@@ -242,25 +264,46 @@ export const SongDock = memo(function SongDock({
     [onEdit, patternId],
   )
 
+  // Dragged within what this window allows, not the most any window does:
+  // past it the drawn height stops moving and the handle comes off the hand.
+  // Everything of the dock that is not the body -- the bar, which wraps to
+  // several rows on a narrow window, and the grip and padding around it --
+  // counts against the same share of the window the body does.
+  const dockRef = useRef<HTMLDivElement>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const [chrome, setChrome] = useState(0)
+  useEffect(() => {
+    const dock = dockRef.current
+    if (!dock) return
+    const measure = () => setChrome(dock.offsetHeight - (bodyRef.current?.offsetHeight ?? 0))
+    const watch = new ResizeObserver(measure)
+    watch.observe(dock)
+    return () => watch.disconnect()
+  }, [])
+  const dockMax = useDockMax(chrome)
+  const bodyHeight = dockHeightWithin(height, dockMax)
+
   const onGrabResize = useCallback(
     (e: React.PointerEvent) => {
       e.currentTarget.setPointerCapture(e.pointerId)
-      setDragFrom({ y: e.clientY, height })
+      setDragFrom({ y: e.clientY, height: bodyHeight })
     },
-    [height],
+    [bodyHeight],
   )
 
   const onResize = useCallback(
     (e: React.PointerEvent) => {
       if (!dragFrom) return
       // Upward is taller: the dock is anchored to the bottom of the window.
-      onHeight(clamp(dragFrom.height + (dragFrom.y - e.clientY), DOCK_MIN_H, DOCK_MAX_H))
+      onHeight(
+        clamp(dragFrom.height + (dragFrom.y - e.clientY), Math.min(DOCK_MIN_H, dockMax), dockMax),
+      )
     },
-    [dragFrom, onHeight],
+    [dragFrom, onHeight, dockMax],
   )
 
   return (
-    <div className={`dock${open ? '' : ' dock-closed'}`}>
+    <div className={`dock${open ? '' : ' dock-closed'}`} ref={dockRef}>
       {open && (
         <div
           className="dock-grip"
@@ -269,7 +312,7 @@ export const SongDock = memo(function SongDock({
           onPointerUp={() => setDragFrom(null)}
           onPointerCancel={() => setDragFrom(null)}
           role="separator"
-          aria-label="Resize the dock"
+          aria-label="Resize the Music dock"
         />
       )}
 
@@ -380,10 +423,11 @@ export const SongDock = memo(function SongDock({
           </button>
         </div>
 
-        {/* Patterns are what the roll edits and what the playlist places, so
-            they are on the bar for both; the desk mixes tracks and has no use
-            for them. */}
-        {view !== 'mix' && (
+        {/* Which pattern the roll writes into, and a new one. Only for the
+            roll: the Song view lists its patterns beside the lanes, where
+            they are picked, named and added, and the desk has no use for
+            them. */}
+        {view === 'roll' && (
           <div className="dock-group" role="group" aria-label="Pattern">
             <label className="dock-field">
               <select
@@ -453,6 +497,20 @@ export const SongDock = memo(function SongDock({
                 ))}
               </select>
             </label>
+
+            {pattern && (
+              <SwingField
+                key={patternId}
+                amount={pattern.swing?.amount ?? SWING_MIN}
+                step={pattern.swing?.step ?? SWING_STEPS[1]}
+                // One undo step for a whole drag of the slider, the way a
+                // knob is one; the step it swings is a choice of its own.
+                onAmount={(amount, step) =>
+                  onEdit((s) => setPatternSwing(s, patternId, amount, step), `swing:${patternId}`)
+                }
+                onStep={(amount, step) => onEdit((s) => setPatternSwing(s, patternId, amount, step))}
+              />
+            )}
           </div>
         )}
 
@@ -472,7 +530,7 @@ export const SongDock = memo(function SongDock({
         <button
           className="dock-fold"
           onClick={() => onOpenChange(!open)}
-          title={open ? 'Hide the dock' : 'Show the dock'}
+          title={open ? 'Hide the Music dock (Ctrl+M)' : 'Show the Music dock (Ctrl+M)'}
           type="button"
         >
           {open ? 'Hide' : 'Music'}
@@ -480,7 +538,7 @@ export const SongDock = memo(function SongDock({
       </div>
 
       {open && (
-        <div className="dock-body" style={{ height }}>
+        <div className="dock-body" ref={bodyRef} style={{ height: bodyHeight }}>
           {/* The desk has a strip per track, so the track list would say
               everything twice: it gives the room to the strips. */}
           {view === 'mix' ? (
@@ -490,11 +548,16 @@ export const SongDock = memo(function SongDock({
               onTrack={onTrack}
               onSolo={(id) => onEdit((s) => soloTrack(s, id))}
               engine={engine}
+              showHidden={showHidden}
             />
           ) : (
           <>
+          {/* Only for the roll, which writes one track at a time and needs to
+              say which. The song lists its patterns in that room instead, and
+              the desk has a strip per track. */}
+          {view === 'roll' && (
           <TrackList
-            tracks={song.tracks}
+            song={song}
             selected={trackId}
             targets={targets}
             onSelect={onSelectTrack}
@@ -502,8 +565,11 @@ export const SongDock = memo(function SongDock({
             onRemove={onRemoveTrack}
             onChange={onTrack}
             onSolo={(id) => onEdit((s) => soloTrack(s, id))}
-            onReorder={(ids) => onEdit((s) => reorderTracks(s, ids))}
+            onEdit={onEdit}
+            showHidden={showHidden}
+            onShowHidden={setShowHidden}
           />
+          )}
 
           {parts && (view === 'roll' && pattern ? (
             <parts.PianoRoll
@@ -516,6 +582,7 @@ export const SongDock = memo(function SongDock({
               beat={beatTicks(song)}
               snapOff={grid === 0}
               scale={song.scale}
+              tuning={tuning}
               trackHues={trackHues}
               onScale={(scale) =>
                 onEdit((s) => {
@@ -526,6 +593,7 @@ export const SongDock = memo(function SongDock({
               playOffset={inContext ? (placedAt ?? Infinity) : 0}
               onChange={setMine}
               transport={transport}
+              swing={showSwing ? pattern.swing : undefined}
             />
           ) : (
             <parts.Playlist
@@ -537,16 +605,13 @@ export const SongDock = memo(function SongDock({
               onColorPattern={(id, color) => onEdit((s) => updatePattern(s, id, { color }))}
               onAddPattern={onAddPattern}
               onRemovePattern={onRemovePattern}
-              onToggle={(id, tick) => onEdit((s) => togglePlacement(s, id, tick))}
-              onMove={(id, from, to) => onEdit((s) => movePlacement(s, id, from, to))}
+              onEdit={(fn) => onEdit(fn)}
+              onOpenPattern={(id) => {
+                onSelectPattern(id)
+                show('roll')
+              }}
               section={section}
               onSection={onSection}
-              onAddMarker={(tick) => onEdit((s) => addMarker(s, tick))}
-              onRenameMarker={(tick, name) => onEdit((s) => renameMarker(s, tick, name))}
-              onRemoveMarker={(tick) => {
-                if (section === tick) onSection(null)
-                onEdit((s) => removeMarker(s, tick))
-              }}
               transport={transport}
             />
           ))}
@@ -632,5 +697,71 @@ function TempoField({ tempo, onTempo }: { tempo: number; onTempo: (tempo: number
         }}
       />
     </label>
+  )
+}
+
+/**
+ * The pattern's swing: how late every second step lands, and which steps.
+ *
+ * Shown as the percentage drum machines have always used, with Off for
+ * straight rather than 50%, which reads like half of something. Double-click
+ * puts it back to straight, as it does for the faders.
+ */
+function SwingField({
+  amount,
+  step,
+  onAmount,
+  onStep,
+}: {
+  amount: number
+  step: number
+  onAmount: (amount: number, step: number) => void
+  onStep: (amount: number, step: number) => void
+}) {
+  // Straight is stored as no swing at all, which has no step in it -- so the
+  // step picked while it is off is held here until there is a swing to keep
+  // it in, rather than snapping back to sixteenths on the first drag.
+  const swung = amount > SWING_MIN
+  const [chosen, setChosen] = useState(step)
+  useEffect(() => {
+    if (swung) setChosen(step)
+  }, [swung, step])
+  const percent = Math.round(amount * 100)
+  const said = swung ? `${percent}%` : 'Off'
+  return (
+    <div
+      className="dock-field swing-field"
+      title="Swing: pushes every second step late. 50% is straight, 67% a triplet feel, 75% a hard shuffle"
+    >
+      <span>Swing</span>
+      <input
+        className="swing-amount"
+        type="range"
+        min={SWING_MIN * 100}
+        max={SWING_MAX * 100}
+        step={1}
+        value={percent}
+        aria-label="Swing"
+        aria-valuetext={said === 'Off' ? 'Off, straight' : said}
+        onChange={(e) => onAmount(Number(e.target.value) / 100, chosen)}
+        onDoubleClick={() => onAmount(SWING_MIN, chosen)}
+      />
+      <span className="swing-readout">{said}</span>
+      {/* "on", so it reads as what is swung rather than as a second Grid. */}
+      <span>on</span>
+      <select
+        value={chosen}
+        aria-label="Swing steps"
+        title="Which steps are swung"
+        onChange={(e) => {
+          const next = Number(e.target.value)
+          setChosen(next)
+          if (swung) onStep(amount, next)
+        }}
+      >
+        <option value={SWING_STEPS[0]}>1/8</option>
+        <option value={SWING_STEPS[1]}>1/16</option>
+      </select>
+    </div>
   )
 }

@@ -138,7 +138,7 @@ export function ExportPanel({ settings: s, onSettings, onExport, busy, hasTakes 
         {/* Beside the format, because both are about what lands in the file
             rather than about the sound: a whole set of takes at one
             loudness is what a game's mix is built from. */}
-        <label className="export-format" title="Bring every take to the same level before it is saved">
+        <label className="export-format" title="Bring every take to the same loudness before it is downloaded">
           <select value={s.normalize} onChange={(e) => set('normalize', e.target.value as Normalize)}>
             {NORMALIZE_OPTIONS.map((o) => (
               <option key={o.id} value={o.id}>
@@ -146,7 +146,7 @@ export function ExportPanel({ settings: s, onSettings, onExport, busy, hasTakes 
               </option>
             ))}
           </select>
-          <span className="knob-label">Level</span>
+          <span className="knob-label">Loudness</span>
         </label>
       </div>
 
@@ -160,7 +160,7 @@ export function ExportPanel({ settings: s, onSettings, onExport, busy, hasTakes 
           ask="Replace the takes?"
           onConfirm={() => onExport(s)}
         >
-          {busy ?? (s.count > 1 ? `Render ${s.count} takes` : 'Render')}
+          {busy ?? (s.count > 1 ? `Render ${s.count} takes` : 'Render 1 take')}
         </ConfirmButton>
       </div>
     </div>

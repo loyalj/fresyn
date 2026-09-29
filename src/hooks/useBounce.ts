@@ -9,6 +9,7 @@ import { downloadBytes, slug } from '../patch/storage'
 import type { Rack } from '../song/project'
 import { songEnd } from '../song/schedule'
 import type { Song } from '../song/types'
+import { progress, reason, warn, type SetNotice } from '../ui/notice'
 import { nextFrame } from './nextFrame'
 
 interface Options {
@@ -18,7 +19,9 @@ interface Options {
   engine: AudioEngine
   samples: SampleLibrary
   transport: Transport
-  setNotice: (text: string) => void
+  setNotice: SetNotice
+  /** The one-job-at-a-time lock, shared with saving. */
+  runJob: (label: string, job: () => Promise<void>) => Promise<void>
 }
 
 /**
@@ -27,7 +30,7 @@ interface Options {
  * The renderer is fetched when a bounce is asked for rather than with the
  * page. It is a second copy of the whole DSP, and most sessions never bounce.
  */
-export function useBounce({ song, racks, name, engine, samples, transport, setNotice }: Options) {
+export function useBounce({ song, racks, name, engine, samples, transport, setNotice, runJob }: Options) {
   /**
    * Bounce the arrangement to a file.
    *
@@ -40,35 +43,37 @@ export function useBounce({ song, racks, name, engine, samples, transport, setNo
       setNotice('Nothing on the playlist to bounce -- put a pattern in a bar first')
       return
     }
-    transport.stop()
-    setNotice('Bouncing...')
-    try {
-      const { renderSong } = await import('../audio/renderSong')
-      const audio = await renderSong(song, racks, {
-        sampleRate: engine.sampleRate,
-        samples: samples.bank(),
-        onProgress: async (done) => {
-          setNotice(`Bouncing ${Math.round(done * 100)}%`)
-          await nextFrame()
-        },
-      })
-      // 24-bit: a mix is more likely than a one-shot to be mastered or
-      // re-encoded afterwards, and the headroom costs a third of a file that
-      // is already small.
-      downloadBytes(
-        encodeWav([audio.left, audio.right], audio.sampleRate, 24) as BlobPart,
-        `${slug(name)}.wav`,
-        'audio/wav',
-      )
-      setNotice(
-        audio.peak > 1
-          ? `Bounced ${audio.seconds.toFixed(1)}s -- it clips at ${audio.peak.toFixed(2)}, so bring the levels down`
-          : `Bounced ${audio.seconds.toFixed(1)}s, peak ${audio.peak.toFixed(2)}`,
-      )
-    } catch (err) {
-      setNotice(`Bounce failed: ${err instanceof Error ? err.message : String(err)}`)
-    }
-  }, [song, racks, name, engine, samples, transport, setNotice])
+    await runJob('bouncing', async () => {
+      transport.stop()
+      setNotice(progress('Bouncing...'))
+      try {
+        const { renderSong } = await import('../audio/renderSong')
+        const audio = await renderSong(song, racks, {
+          sampleRate: engine.sampleRate,
+          samples: samples.bank(),
+          onProgress: async (done) => {
+            setNotice(progress(`Bouncing ${Math.round(done * 100)}%`))
+            await nextFrame()
+          },
+        })
+        // 24-bit: a mix is more likely than a one-shot to be mastered or
+        // re-encoded afterwards, and the headroom costs a third of a file that
+        // is already small.
+        downloadBytes(
+          encodeWav([audio.left, audio.right], audio.sampleRate, 24) as BlobPart,
+          `${slug(name)}.wav`,
+          'audio/wav',
+        )
+        setNotice(
+          audio.peak > 1
+            ? warn(`Bounced ${audio.seconds.toFixed(1)}s -- it clips at ${audio.peak.toFixed(2)}, so bring the levels down`)
+            : `Bounced ${audio.seconds.toFixed(1)}s, peak ${audio.peak.toFixed(2)}`,
+        )
+      } catch (err) {
+        setNotice(warn(`Bounce failed: ${reason(err)}`))
+      }
+    })
+  }, [song, racks, name, engine, samples, transport, setNotice, runJob])
 
   /**
    * One file per track, so the mix can be rebuilt or re-balanced elsewhere --
@@ -81,36 +86,38 @@ export function useBounce({ song, racks, name, engine, samples, transport, setNo
         setNotice('Nothing on the playlist to bounce -- put a pattern in a bar first')
         return
       }
-      transport.stop()
-      setNotice('Bouncing stems...')
-      try {
-        const { renderStems } = await import('../audio/renderSong')
-        const stems = await renderStems(song, racks, {
-          stemMix,
-          sampleRate: engine.sampleRate,
-          samples: samples.bank(),
-          onProgress: async (done) => {
-            setNotice(`Bouncing stems ${Math.round(done * 100)}%`)
-            await nextFrame()
-          },
-        })
-        if (stems.length === 0) {
-          setNotice('Every track is muted, so there are no stems to write')
-          return
+      await runJob('bouncing', async () => {
+        transport.stop()
+        setNotice(progress('Bouncing stems...'))
+        try {
+          const { renderStems } = await import('../audio/renderSong')
+          const stems = await renderStems(song, racks, {
+            stemMix,
+            sampleRate: engine.sampleRate,
+            samples: samples.bank(),
+            onProgress: async (done) => {
+              setNotice(progress(`Bouncing stems ${Math.round(done * 100)}%`))
+              await nextFrame()
+            },
+          })
+          if (stems.length === 0) {
+            setNotice('Every track is muted, so there are no stems to write')
+            return
+          }
+          // Numbered, so they sort into the order the tracks are in rather than
+          // alphabetically -- which is the order anybody will want to line them up.
+          const entries: ZipEntry[] = stems.map((stem, i) => ({
+            name: `${String(i + 1).padStart(2, '0')} ${slug(stem.name)}.wav`,
+            data: encodeWav([stem.audio.left, stem.audio.right], stem.audio.sampleRate, 24),
+          }))
+          downloadBytes(makeZip(entries) as BlobPart, `${slug(name)}-stems.zip`, 'application/zip')
+          setNotice(`Bounced ${stems.length} stem${stems.length === 1 ? '' : 's'}`)
+        } catch (err) {
+          setNotice(warn(`Bounce failed: ${reason(err)}`))
         }
-        // Numbered, so they sort into the order the tracks are in rather than
-        // alphabetically -- which is the order anybody will want to line them up.
-        const entries: ZipEntry[] = stems.map((stem, i) => ({
-          name: `${String(i + 1).padStart(2, '0')} ${slug(stem.name)}.wav`,
-          data: encodeWav([stem.audio.left, stem.audio.right], stem.audio.sampleRate, 24),
-        }))
-        downloadBytes(makeZip(entries) as BlobPart, `${slug(name)}-stems.zip`, 'application/zip')
-        setNotice(`Bounced ${stems.length} stem${stems.length === 1 ? '' : 's'}`)
-      } catch (err) {
-        setNotice(`Bounce failed: ${err instanceof Error ? err.message : String(err)}`)
-      }
+      })
     },
-    [song, racks, name, engine, samples, transport, setNotice],
+    [song, racks, name, engine, samples, transport, setNotice, runJob],
   )
 
   return { bounceSong, bounceStems }

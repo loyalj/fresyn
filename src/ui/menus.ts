@@ -10,6 +10,8 @@ export interface MenuContext {
   saveProject: (saveAs?: boolean) => void
   bounceSong: () => void
   bounceStems: (mix: StemMix) => void
+  /** A bounce or a save is running, and another would compete with it. */
+  busy: boolean
   canUndo: boolean
   canRedo: boolean
   undo: () => void
@@ -18,6 +20,7 @@ export interface MenuContext {
   canPaste: boolean
   copy: () => void
   paste: () => void
+  openAudioSettings: () => void
   openLibrary: () => void
   openPatch: () => void
   addPatchAsTrack: () => void
@@ -30,6 +33,8 @@ export interface MenuContext {
   dockOpen: boolean
   toggleDock: () => void
   knobHelp: boolean
+  showSwing: boolean
+  setShowSwing: (on: boolean) => void
   setKnobHelp: (on: boolean) => void
   compact: boolean
   setCompact: (on: boolean) => void
@@ -49,21 +54,21 @@ export function buildMenus(ctx: MenuContext): MenuDef[] {
       items: [
         { kind: 'action', label: 'New project', onSelect: ctx.newProject },
         { kind: 'action', label: 'Open project...', shortcut: 'Ctrl+O', onSelect: ctx.openProject },
-        { kind: 'action', label: 'Save project', shortcut: 'Ctrl+S', onSelect: () => ctx.saveProject() },
-        { kind: 'action', label: 'Save project as...', shortcut: 'Ctrl+Shift+S', onSelect: () => ctx.saveProject(true) },
+        { kind: 'action', label: 'Save project', shortcut: 'Ctrl+S', disabled: ctx.busy, onSelect: () => ctx.saveProject() },
+        { kind: 'action', label: 'Save project as...', shortcut: 'Ctrl+Shift+S', disabled: ctx.busy, onSelect: () => ctx.saveProject(true) },
         { kind: 'separator' },
         // The piece as audio. The project above is the piece as something you
         // can still change your mind about.
-        { kind: 'action', label: 'Bounce song...', onSelect: ctx.bounceSong },
+        { kind: 'action', label: 'Bounce song...', disabled: ctx.busy, onSelect: ctx.bounceSong },
         {
           kind: 'submenu',
           label: 'Bounce stems',
           // What each stem carries of its channel. Never the master bus: see
           // `StemMix`.
           items: [
-            { kind: 'action', label: 'Channel only (EQ, pan, fader)...', onSelect: () => ctx.bounceStems('channel') },
-            { kind: 'action', label: 'Channel and sends (with reverb, delay)...', onSelect: () => ctx.bounceStems('sends') },
-            { kind: 'action', label: 'Raw rack output...', onSelect: () => ctx.bounceStems('raw') },
+            { kind: 'action', label: 'Channel only (EQ, pan, fader)...', disabled: ctx.busy, onSelect: () => ctx.bounceStems('channel') },
+            { kind: 'action', label: 'Channel and sends (with reverb, delay)...', disabled: ctx.busy, onSelect: () => ctx.bounceStems('sends') },
+            { kind: 'action', label: 'Raw rack output...', disabled: ctx.busy, onSelect: () => ctx.bounceStems('raw') },
           ],
         },
       ],
@@ -88,6 +93,10 @@ export function buildMenus(ctx: MenuContext): MenuDef[] {
           kind: 'action', label: 'Paste modules', shortcut: 'Ctrl+V',
           disabled: !ctx.canPaste, onSelect: ctx.paste,
         },
+        { kind: 'separator' },
+        // Where preferences live in most programs. It is this machine's sound
+        // card, so it belongs to no project.
+        { kind: 'action', label: 'Audio settings...', onSelect: ctx.openAudioSettings },
       ],
     },
     {
@@ -101,7 +110,7 @@ export function buildMenus(ctx: MenuContext): MenuDef[] {
         { kind: 'separator' },
         { kind: 'action', label: 'Open patch...', onSelect: ctx.openPatch },
         { kind: 'action', label: 'Add patch as track...', onSelect: ctx.addPatchAsTrack },
-        { kind: 'action', label: 'Save patch...', onSelect: ctx.savePatch },
+        { kind: 'action', label: 'Download patch...', onSelect: ctx.savePatch },
         { kind: 'action', label: 'Save to library', onSelect: ctx.saveToLibrary },
       ],
     },
@@ -130,6 +139,14 @@ export function buildMenus(ctx: MenuContext): MenuDef[] {
         // Beside the rack's flip, because the dock is the other half of the
         // room: the button on the dock's bar does the same thing.
         { kind: 'toggle', label: 'Music', shortcut: 'Ctrl+M', checked: ctx.dockOpen, onSelect: ctx.toggleDock },
+        // Off, the roll shows the grid a swung pattern was written on --
+        // easier for some to edit against than a grid that lopes.
+        {
+          kind: 'toggle',
+          label: 'Show swing in the roll',
+          checked: ctx.showSwing,
+          onSelect: () => ctx.setShowSwing(!ctx.showSwing),
+        },
         {
           kind: 'toggle',
           label: 'Knob help',

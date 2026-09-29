@@ -1,11 +1,11 @@
-import { MIN_VELOCITY, minPatternLength, type Marker, type Placement, type Song } from './types'
+import { MIN_VELOCITY, minPatternLength, type Folder, type Placement, type Section, type Song, type Track } from './types'
 
 /**
  * The invariants a song holds however it arrived.
  *
  * The editor keeps these by construction -- a note is dragged a whole tick at
- * a time, the velocity lane stops at its floor, a cell on the playlist is
- * either filled or not -- and a file keeps them only if something checks. A
+ * a time, the velocity lane stops at its floor, a clip is trimmed a whole tick
+ * at a time -- and a file keeps them only if something checks. A
  * hand-edited file, one from an older build or one from somebody else's tool
  * can say anything, and the arithmetic downstream assumes it cannot: the
  * scale walks step a row at a time and never meet a fractional pitch, two
@@ -21,12 +21,29 @@ import { MIN_VELOCITY, minPatternLength, type Marker, type Placement, type Song 
  * that says so was not written by it.
  */
 export function normalizeSong(song: Song): Song {
-  const tracks = []
+  const tracks: Track[] = []
   const trackIds = new Set<string>()
   for (const t of song.tracks) {
     if (!safeId(t.id) || trackIds.has(t.id)) continue
     trackIds.add(t.id)
     tracks.push(t)
+  }
+
+  // Folders with ids that can be keys, once each; a track filed in one that
+  // is not there is filed in none.
+  const folders: Folder[] = []
+  const folderIds = new Set<string>()
+  for (const f of song.folders ?? []) {
+    if (!safeId(f.id) || folderIds.has(f.id)) continue
+    folderIds.add(f.id)
+    folders.push({ ...f, gain: Number.isFinite(f.gain) ? Math.max(0, Math.min(1, f.gain)) : 1 })
+  }
+  for (let i = 0; i < tracks.length; i++) {
+    const t = tracks[i]
+    if (t.folder !== undefined && !folderIds.has(t.folder)) {
+      const { folder: _, ...rest } = t
+      tracks[i] = rest
+    }
   }
 
   const shortest = minPatternLength(song)
@@ -50,21 +67,32 @@ export function normalizeSong(song: Song): Song {
     })
   }
 
-  // Two copies of one pattern starting together play as one, only louder,
-  // which is why moving a placement onto another merges them. The same rule
-  // for a file: the first is kept.
+  // A clip's fields in range and whole, and the defaults left out. The same
+  // clip twice over -- same pattern, place, lane and window -- is one clip
+  // played twice as loud, and nothing the editor makes: the first is kept.
+  const lengths = new Map(patterns.map((p) => [p.id, p.length]))
   const playlist: Placement[] = []
   const placed = new Set<string>()
   for (const x of song.playlist) {
-    if (!patternIds.has(x.pattern)) continue
+    const len = lengths.get(x.pattern)
+    if (len === undefined) continue
     const tick = Math.max(0, whole(x.tick))
-    const key = `${x.pattern}@${tick}`
+    const lane = Math.max(0, Math.min(255, whole(x.lane ?? 0)))
+    const offset = ((whole(x.offset ?? 0) % len) + len) % len
+    const length = x.length === undefined ? undefined : Math.max(1, whole(x.length))
+    const key = `${x.pattern}@${tick}/${lane}/${offset}/${length ?? ''}`
     if (placed.has(key)) continue
     placed.add(key)
-    playlist.push({ ...x, tick })
+    const clip: Placement = { pattern: x.pattern, tick }
+    if (lane) clip.lane = lane
+    if (offset) clip.offset = offset
+    if (length !== undefined) clip.length = length
+    playlist.push(clip)
   }
 
   const out: Song = { ...song, tracks, patterns, playlist }
+  if (folders.length) out.folders = folders
+  else delete out.folders
 
   if (song.loop) {
     const from = Math.max(0, whole(song.loop.from))
@@ -73,17 +101,23 @@ export function normalizeSong(song: Song): Song {
     else delete out.loop
   }
 
-  // Two markers on one tick would be a section with nothing in it, which the
-  // editor refuses to make. The first one's name wins.
-  if (song.markers) {
-    const markers: Marker[] = []
-    for (const m of song.markers) {
-      const tick = whole(m.tick)
-      if (tick < 0 || markers.some((x) => x.tick === tick)) continue
-      markers.push({ ...m, tick })
+  // Sections in order, whole, never empty and never overlapping: one that
+  // runs into the next is cut short where the next begins, and two starting
+  // together are one, the first.
+  if (song.sections) {
+    const sorted = song.sections
+      .map((s) => ({ ...s, tick: Math.max(0, whole(s.tick)), length: whole(s.length) }))
+      .filter((s) => s.length > 0)
+      .sort((a, b) => a.tick - b.tick)
+    const sections: Section[] = []
+    for (const s of sorted) {
+      const prev = sections[sections.length - 1]
+      if (prev && prev.tick === s.tick) continue
+      if (prev && prev.tick + prev.length > s.tick) prev.length = s.tick - prev.tick
+      sections.push(s)
     }
-    if (markers.length) out.markers = markers.sort((a, b) => a.tick - b.tick)
-    else delete out.markers
+    if (sections.length) out.sections = sections
+    else delete out.sections
   }
 
   return out

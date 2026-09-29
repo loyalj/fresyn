@@ -3,6 +3,7 @@ import { archiveDoc, makeArchive, readArchive, repointSamples } from '../patch/a
 import { initialValues } from '../patch/edit'
 import { fromStored, toStored, type StoredPatch } from '../patch/serialize'
 import type { Patch } from '../patch/types'
+import { laneByPattern } from './clip'
 import { parseSong } from './serialize'
 import { BENCH_TRACK, benchSong, type Song } from './types'
 
@@ -16,7 +17,11 @@ import { BENCH_TRACK, benchSong, type Song } from './types'
  * play the music is inside it, and nothing in it needs a browser.
  */
 
-export const PROJECT_FORMAT = 1
+/**
+ * 2: clips have lanes. A version 1 file's playlist was a row per pattern, and
+ * is read into a lane per pattern so it looks as it did.
+ */
+export const PROJECT_FORMAT = 2
 
 /** One rack, as it is held while being edited. */
 export interface Rack {
@@ -80,8 +85,9 @@ export function fromStoredProject(input: unknown): LoadedProject | { error: stri
     return { error: `project format ${data.version} is newer than this build understands` }
   }
 
-  const song = parseSong(data.song)
-  if (!song) return { error: 'no arrangement in file' }
+  const read = parseSong(data.song)
+  if (!read) return { error: 'no arrangement in file' }
+  const song = data.version < 2 ? laneByPattern(read) : read
 
   const warnings: string[] = []
   const racks: Record<string, Rack> = {}

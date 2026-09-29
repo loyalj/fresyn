@@ -30,6 +30,7 @@ import { encodeWav } from '../src/audio/wav'
 import { compile } from '../src/patch/compile'
 import { defOf } from '../src/patch/defs'
 import { CATEGORIES, LIBRARY, type Template } from '../src/patch/library'
+import { midiNameCents, rowZero, tuningOf } from '../src/song/tuning'
 
 const SR = 48000
 const WAVS = process.env.INSTRUMENT_WAVS
@@ -224,6 +225,15 @@ for (const cat of CATEGORIES.filter((c) => c.id !== 'tutorial')) {
       const base = bottomKey(t)
       const { cents: baseOff, octave } = fromC(base)
       if (Math.abs(baseOff) > 0.5) problems.push(`the bottom key is ${base.toFixed(2)} Hz, not a C`)
+      // And the roll and the Keyboard panel name that key by the note it
+      // plays, read off the knobs by a rule of their own. Held to the one
+      // here, which the renders below hold to the ear.
+      const tuning = tuningOf(t.build())
+      const heard = 69 + 12 * Math.log2(base / 440)
+      if (!tuning) problems.push("the roll cannot name its keys: nothing tuned is on the Keyboard's pitch")
+      else if (Math.abs(rowZero(tuning) - heard) > 0.01) {
+        problems.push(`the roll names the bottom key ${midiNameCents(rowZero(tuning))}, but it plays ${midiNameCents(heard)}`)
+      }
       for (const pitch of [0, 7, 12, 24]) {
         const r = render(t, [{ at: 0, length: 2, pitch }], 2, true)
         const expect = base * 2 ** (pitch / 12)

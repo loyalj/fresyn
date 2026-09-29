@@ -1,6 +1,7 @@
 import { useCallback, useRef } from 'react'
 import { formatValue } from '../patch/param'
 import type { ModuleDef } from '../patch/types'
+import { midiName, midiNameCents } from '../song/tuning'
 
 /** Two octaves and the C on top, which is what a 25-key controller is. */
 const KEYS = 25
@@ -20,7 +21,13 @@ interface Props {
   valueOf: (paramId: string) => number | undefined
   onChange: (paramId: string, value: number) => void
   /** Opens and closes this module's gate, through the rack's transport. */
-  onGate?: (open: boolean) => void
+  onGate?: (open: boolean, ahead?: Record<string, number>) => void
+  /**
+   * The MIDI note the bottom key plays with Octave at 0, read off whatever it
+   * is patched to (see `song/tuning`). Absent when nothing tuned is, and the
+   * keys are named by where they sit instead.
+   */
+  tuning?: number
 }
 
 /**
@@ -34,7 +41,7 @@ interface Props {
  * pressed last. Choosing the note and firing it are separate gestures, and
  * only the first one belongs to this panel.
  */
-export function KeysFace({ def, valueOf, onChange, onGate }: Props) {
+export function KeysFace({ def, valueOf, onChange, onGate, tuning }: Props) {
   const noteSpec = def.params.find((p) => p.id === 'note')!
   const octaveSpec = def.params.find((p) => p.id === 'octave')!
   const voicesSpec = def.params.find((p) => p.id === 'voices')!
@@ -48,7 +55,12 @@ export function KeysFace({ def, valueOf, onChange, onGate }: Props) {
   const press = useCallback(
     (n: number) => {
       onChange('note', n)
-      onGate?.(true)
+      // The key goes with the press. The knob write above reaches the audio
+      // thread only after the rack has re-rendered, and the gate goes at
+      // once, so on its own the gate got there first: a Keyboard with voices
+      // gave the new note to whatever key was pressed before, and a single
+      // voice started on the old note and jumped.
+      onGate?.(true, { note: n })
       held.current = true
     },
     [onChange, onGate],
@@ -70,6 +82,13 @@ export function KeysFace({ def, valueOf, onChange, onGate }: Props) {
     if (next !== voices) onChange('voices', next)
   }
 
+  /** What key `n` sounds, fractional, when there is a tuning to say. */
+  const sounded = (n: number) => (tuning === undefined ? undefined : tuning + 12 * octave + n)
+  const nameOf = (n: number) => {
+    const midi = sounded(n)
+    return midi === undefined ? NAMES[n % OCTAVE] : midiName(midi)
+  }
+
   const key = (n: number) => (
     <button
       key={n}
@@ -80,10 +99,14 @@ export function KeysFace({ def, valueOf, onChange, onGate }: Props) {
       onPointerDown={() => press(n)}
       // Sliding across the keyboard with the button down plays what it crosses.
       onPointerEnter={(e) => e.buttons === 1 && press(n)}
-      aria-label={`${NAMES[n % OCTAVE]}, key ${n + 1}`}
+      aria-label={`${nameOf(n)}, key ${n + 1}`}
       aria-pressed={n === note}
       type="button"
-    />
+    >
+      {/* The Cs of the board named by the note they play, so the panel and
+          the roll say the same thing. */}
+      {tuning !== undefined && n % OCTAVE === 0 && <span className="keys-key-name">{nameOf(n)}</span>}
+    </button>
   )
 
   return (
@@ -129,7 +152,9 @@ export function KeysFace({ def, valueOf, onChange, onGate }: Props) {
         </div>
 
         <div className="keys-readout">
-          <span className="keys-note">{NAMES[note % OCTAVE]}</span>
+          <span className="keys-note">
+            {tuning === undefined ? NAMES[note % OCTAVE] : midiNameCents(sounded(note)!)}
+          </span>
           {/* What the Pitch jack is actually putting out, in the octaves
               every CV destination in this rack is scaled in. */}
           <span className="keys-pitch">

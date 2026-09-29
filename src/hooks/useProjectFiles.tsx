@@ -18,6 +18,7 @@ import type { Patch } from '../patch/types'
 import { addTrack, nextTrackId } from '../song/edit'
 import { toStoredProject, type Rack } from '../song/project'
 import { BENCH_TRACK, type Song } from '../song/types'
+import { reason, warn, type SetNotice } from '../ui/notice'
 import { fillRacks, type Doc } from './useDocument'
 
 /** `3 tracks`, `1 sample`: for notices that say what went into a file. */
@@ -60,7 +61,9 @@ interface Options {
   applyPatch: (next: Patch, trackName: string, preset?: Record<string, number>) => void
   setSelected: (id: string) => void
   setPatternId: (id: string) => void
-  setNotice: (text: string) => void
+  setNotice: SetNotice
+  /** The one-job-at-a-time lock, shared with bouncing. */
+  runJob: (label: string, job: () => Promise<void>) => Promise<void>
 }
 
 /**
@@ -82,6 +85,7 @@ export function useProjectFiles({
   setSelected,
   setPatternId,
   setNotice,
+  runJob,
 }: Options) {
   /** The file on disk this project was opened from or last saved to, where the browser allows one. */
   const projectHandle = useRef<FileSystemFileHandle | null>(null)
@@ -118,8 +122,8 @@ export function useProjectFiles({
     // this and saving the project.
     setNotice(
       missing > 0
-        ? `Saved patch ${patchName} without ${missing} missing sample(s)`
-        : `Saved patch ${patchName}: this track's sound${found.length ? ` and ${countOf(found.length, 'sample')}` : ''}, no notes`,
+        ? warn(`Downloaded patch ${patchName} without ${missing} missing sample(s)`)
+        : `Downloaded patch ${patchName}: this track's sound${found.length ? ` and ${countOf(found.length, 'sample')}` : ''}, no notes`,
     )
   }, [patchName, patch, values, gatherSamples, setNotice])
 
@@ -132,7 +136,7 @@ export function useProjectFiles({
    * is a download, as it always was.
    */
   const saveProject = useCallback(
-    async (saveAs = false) => {
+    (saveAs = false) => runJob('saving', async () => {
       const patches = song.tracks.flatMap((t) => racks[t.id]?.patch ?? [])
       const { found, missing } = await gatherSamples(patches)
       const stored = toStoredProject(name, song, racks)
@@ -143,7 +147,7 @@ export function useProjectFiles({
 
       if (!canUseFileHandles) {
         downloadProject(stored, found)
-        setNotice(`Saved project ${name}: ${summary}`)
+        setNotice(missing > 0 ? warn(`Saved project ${name} ${summary}`) : `Saved project ${name}: ${summary}`)
         return
       }
 
@@ -159,7 +163,7 @@ export function useProjectFiles({
         try {
           handle = await pickFileToSave(file.filename, [PROJECT_FILE_KINDS[file.kind]])
         } catch (e) {
-          setNotice(`Could not save: ${(e as Error).message}`)
+          setNotice(warn(`Could not save: ${reason(e)}`))
           return
         }
         if (!handle) return
@@ -168,22 +172,21 @@ export function useProjectFiles({
       try {
         await writeFile(handle, file.data)
       } catch (e) {
-        setNotice(`Could not save ${handle.name}: ${(e as Error).message}`)
+        setNotice(warn(`Could not save ${handle.name}: ${reason(e)}`))
         return
       }
       projectHandle.current = handle
-      setNotice(
-        `Saved ${handle.name}: ${summary}${changedForm ? ` -- now a ${file.kind === 'zip' ? 'zip, to carry its audio' : 'plain JSON file'}` : ''}`,
-      )
-    },
-    [name, song, racks, gatherSamples, setNotice],
+      const said = `Saved ${handle.name}${missing > 0 ? ' ' : ': '}${summary}${changedForm ? ` -- now a ${file.kind === 'zip' ? 'zip, to carry its audio' : 'plain JSON file'}` : ''}`
+      setNotice(missing > 0 ? warn(said) : said)
+    }),
+    [name, song, racks, gatherSamples, setNotice, runJob],
   )
 
   const openProject = useCallback(
     async (file: File) => {
       const result = await readProjectFile(file)
       if ('error' in result) {
-        setNotice(result.error)
+        setNotice(warn(result.error))
         return false
       }
       // Whatever file the last project was saved to is not this one's. The
@@ -201,7 +204,7 @@ export function useProjectFiles({
       setPatternId(result.song.patterns[0]?.id ?? 'main')
       setNotice(
         result.warnings.length
-          ? `Opened with ${result.warnings.length} warning(s): ${result.warnings[0]}`
+          ? warn(`Opened ${result.name} with ${countOf(result.warnings.length, 'warning')}: ${result.warnings[0]}`, result.warnings.slice(1))
           : `Opened ${result.name}`,
       )
       for (const w of result.warnings) console.warn('[fresyn project]', w)
@@ -229,7 +232,7 @@ export function useProjectFiles({
         },
       ])
     } catch (e) {
-      setNotice(`Could not open: ${(e as Error).message}`)
+      setNotice(warn(`Could not open: ${reason(e)}`))
       return
     }
     if (!picked) return
@@ -245,7 +248,7 @@ export function useProjectFiles({
     async (file: File, asTrack: boolean) => {
       const result = await readPatchFile(file)
       if ('error' in result) {
-        setNotice(result.error)
+        setNotice(warn(result.error))
         return
       }
       // Audio first, patch second. The other order puts every Sampler in the
@@ -269,7 +272,7 @@ export function useProjectFiles({
       }
       setNotice(
         result.warnings.length
-          ? `Loaded with ${result.warnings.length} warning(s): ${result.warnings[0]}`
+          ? warn(`Loaded ${result.name} with ${countOf(result.warnings.length, 'warning')}: ${result.warnings[0]}`, result.warnings.slice(1))
           : asTrack
             ? `Added ${result.name} as a new track -- Ctrl+Z to undo`
             : `Loaded ${result.name} onto this track -- Ctrl+Z to undo`,

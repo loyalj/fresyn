@@ -215,6 +215,17 @@ const pickSub = async (menu, sub, item) => {
 await page.evaluateOnNewDocument(() => {
   delete window.showOpenFilePicker
   delete window.showSaveFilePicker
+  // What the rack says to the audio thread, knobs and gates, in the order it
+  // says it: the thread takes them in that order, so this is what it heard.
+  window.__posted = []
+  const post = MessagePort.prototype.postMessage
+  MessagePort.prototype.postMessage = function (msg, ...rest) {
+    if (msg && (msg.type === 'param' || msg.type === 'gate')) {
+      window.__posted.push({ type: msg.type, value: msg.value, open: msg.open })
+      if (window.__posted.length > 500) window.__posted.shift()
+    }
+    return post.call(this, msg, ...rest)
+  }
 })
 await page.goto(url, { waitUntil: 'networkidle0' })
 // Start from a known state; the autosave persists across runs.
@@ -1008,6 +1019,26 @@ console.log('the keyboard panel')
   // scaled in octaves: 16/12 = 1.33.
   check('and reports what the jack puts out', down.pitch === '+1.33', String(down.pitch))
 
+  // A new key's note has to reach the audio thread before its gate does. The
+  // other way round, a Keyboard with voices gave the new note the pitch of
+  // the key pressed before it, and only a second press sounded right.
+  const other = await page.evaluate(() => {
+    const k = [...document.querySelectorAll('.keys-key')][3]
+    const r = k.getBoundingClientRect()
+    window.__posted.length = 0
+    return { x: r.left + r.width / 2, y: r.top + r.height * 0.8 }
+  })
+  await page.mouse.click(other.x, other.y)
+  await settle(150)
+  const heard = await page.evaluate(() => window.__posted.slice())
+  const noteAt = heard.findIndex((m) => m.type === 'param' && m.value === 5)
+  const gateAt = heard.findIndex((m) => m.type === 'gate' && m.open)
+  check("a new key's note reaches the audio thread before its gate", noteAt >= 0 && gateAt >= 0 && noteAt < gateAt,
+    `note at ${noteAt}, gate at ${gateAt}`)
+  // Back to the key the checks below expect to be down.
+  await page.mouse.click(key.x, key.y)
+  await settle(150)
+
   await page.evaluate(() => document.querySelector('[aria-label="Octave up"]').click())
   await settle(250)
   check(
@@ -1286,7 +1317,7 @@ console.log('\nsurviving a reload')
 // --- export and import ------------------------------------------------
 console.log('\nexport and import')
 {
-  check('the Save patch action is there', await pick('Patch', 'Save patch...'))
+  check('the Download patch action is there', await pick('Patch', 'Download patch...'))
 
   const files = await downloaded('.json')
   check('a file was written', files.length === 1, files.join(','))
@@ -1355,7 +1386,7 @@ console.log('\na project is not a patch')
   // A patch comes in as a track of its own, and the arrangement is untouched.
   const before = await tracks()
   const patchFile = join(downloads, 'rumble.fpatch.json')
-  await pick('Patch', 'Save patch...')
+  await pick('Patch', 'Download patch...')
   await downloaded('rumble.fpatch.json')
   if (existsSync(patchFile)) {
     await (await page.$('.track-file')).uploadFile(patchFile)

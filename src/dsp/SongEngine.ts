@@ -252,6 +252,11 @@ export class SongEngine {
     for (const t of this.tracks) t.engine.clearSchedule()
   }
 
+  /** Drop every track's queued events from a frame on. See `GraphEngine.dropFrom`. */
+  dropFrom(frame: number) {
+    for (const t of this.tracks) t.engine.dropFrom(frame)
+  }
+
   allNotesOff() {
     for (const t of this.tracks) t.engine.allNotesOff()
   }

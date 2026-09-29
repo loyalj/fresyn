@@ -149,7 +149,7 @@ a band.
 They are **templates, not files**. Choosing one replaces what you are working
 on with a copy of it; nothing is ever written back, and there is no way to
 change what is on the shelf from inside the app. What you do to the copy is
-yours, and **Patch → Save patch...** is how you keep it.
+yours, and **Patch → Download patch...** is how you keep it.
 
 It lands as one edit, so **Ctrl+Z** puts back whatever you had.
 
@@ -193,6 +193,7 @@ and read the tutorial when you want to know why it works.
 | Remove a unit | Hover it on the back, use **×** |
 | Change the theme | The dropdown at the top |
 | Switch dark and light | The sun/moon button beside it |
+| Choose the output, buffer or sample rate | **Edit → Audio settings...** |
 
 **Tuning by note.** Hold **Alt** while dragging an oscillator's Pitch knob and
 it lands on whole notes only; **Alt + wheel** steps one semitone at a time.
@@ -222,7 +223,8 @@ it stays put while the rack scrolls under it, so the menus and **F** are
 always in reach.
 
 A patch is named on its track, in the list down the side of the **Music** dock:
-click the name and type. The project is named in the box at the left end of the
+**double-click** the name (or select it and press Enter or F2) and type. A
+single click only picks the track. The project is named in the box at the left end of the
 dock's bar. Both save automatically, and each becomes the filename of what it
 names: takes and saved patches are called after the patch, saved projects and
 bounces after the project. See [Projects, tracks and patches](#projects-tracks-and-patches).
@@ -248,6 +250,28 @@ the button next to it swings that theme between **dark and light**:
 
 Every theme has both modes, so the two choices never fight each other. The rack
 cross-fades rather than cutting, and your choice is remembered.
+
+**Audio settings.** **Edit → Audio settings...** sets how the browser opens
+your sound card. These settings belong to this machine, so they are saved in
+the browser and never in a project.
+
+- **Output** sends the rack to a sound card other than the system default.
+  Chrome and Edge can do this; other browsers always use the default. The
+  browser keeps output names hidden until the page is allowed a microphone,
+  so the list may show **Show output names**: it asks for that permission and
+  releases the microphone straight away. An output that has been unplugged
+  falls back to the default, and the dialog says so.
+- **Buffer** trades the delay before you hear a note against steadiness.
+  **Low** is for playing, **Safe** is for a heavy song that crackles, and
+  **Custom** asks for a size in milliseconds (3–500). The browser rounds it to
+  what the hardware can do.
+- **Sample rate** is the device's own rate by default. Samples play at their
+  proper pitch at any rate.
+
+The box at the bottom shows the actual delay, from a key to the speaker, once
+the audio is running. Changing the buffer or the sample rate restarts the
+audio and stops playback. Driver choice (ASIO, exclusive mode) is not
+something a browser offers.
 
 ## 4. What travels down a cable
 
@@ -550,6 +574,11 @@ With FM Amt at +1.00 the keyboard plays in tune: the bottom key puts out
 nothing at all, so it sounds the oscillator's **Pitch** knob, and every key
 above it adds a semitone. Set the oscillator's Pitch to the note you want the
 bottom key to be.
+
+**The panel names its keys by the notes they play**, read the same way the
+piano roll reads them: the Cs of the board are labelled, and the readout
+says which note the last key is sounding, with its cents when it is between
+two. Patched to an oscillator at A2, the bottom key is labelled A2.
 
 **A render plays it too**, opening the gate without touching the note, so
 what sounds is whichever key you pressed last. That is how you render a batch
@@ -1763,7 +1792,7 @@ just as audible as it was.
 ## 6. Writing music
 
 **Press MUSIC**, at the right-hand end of the bar across the bottom of the
-window, and a dock comes up under the rack. It holds the tracks, a piano roll
+window, and the **Music** dock comes up under the rack. It holds the tracks, a piano roll
 and a playlist, and it plays them through the racks above it. The rack stays
 visible the whole time, which is the point: reach for the filter while the
 loop is running and you hear the change on the next note rather than after a
@@ -1785,6 +1814,27 @@ everywhere else, and pressing it again lets everything back in.
 A track with a **!** beside its name has nothing in its rack a note can be
 played on. A track marked **T** has a Trigger but no Keyboard, so its notes
 are hits rather than pitches.
+
+**Drag a track by its grip** (⋮⋮) to reorder the list. **⋯**, or a
+right-click on the row, has the rest: **Pin to the top**, **Hide**, **Move
+to folder** and **Remove track**.
+
+**Folders group tracks.** **+ FOLDER** makes one. Drag a track onto a
+folder's row to file it there, or among a folder's tracks to join them; drag
+it among loose tracks to take it out. A folder is also a group. Its **M** and
+**S** reach every track in it, its level multiplies each track's own level
+(like a VCA fader), and the arrow folds its tracks away. Removing a folder
+keeps its tracks.
+
+**Hidden tracks still play.** Hiding only takes a track out of the list, the
+Mix view and the faint notes in the roll; mute is what silences. **Show n
+hidden**, beside the search box, lists them again, in italics.
+
+**Pinned tracks stay at the top**, above a line, whatever folder they are in
+and whatever is being searched for.
+
+**Find a track** narrows the list to tracks whose name, or whose folder's
+name, contains what you type. **Escape** clears it.
 
 **With only one track, the name at the top of the window is that rack's
 name.** Add a second and it becomes the name of the piece, and each track
@@ -1815,9 +1865,55 @@ Keyboard's **Octave** switch moves the whole roll with it — so on a pattern it
 is a transpose. Patch **key1 · Pitch → osc1 · FM** with **FM Amt** at **+1.00**
 and it plays in tune, exactly as it does when you click the keys by hand.
 
+**The rows go on well past the Keyboard.** There are 128 of them, the span of
+a MIDI keyboard: four octaves under its bottom key and more than four above
+its top one, so a bass line and a lead fit on one track whatever the patch is
+tuned to. When a track comes onto the bench the roll opens centred on its
+notes, or on the middle of the Keyboard when it has none yet.
+
+**The rows are named by the notes they play.** The roll reads the tuning off
+the rack: the Pitch knob and Octave of whatever the Keyboard's Pitch is
+patched to, directly or through a Slew or a Quantizer, plus the Keyboard's
+own **Octave**. An oscillator at 262 Hz makes the bottom key's row **C4**,
+and flipping the Keyboard's Octave up makes it C5. The line at the right of
+the tools says what it read, as in **Bottom key C4 · osc1**. With several
+oscillators it goes by the lowest, and a pair detuned a few cents either side
+of a note counts as that note. It reads the knobs, not what comes after them:
+FM Amt, an envelope in the same jack, or a CV Utility along the way do not
+change the names.
+
+**Tuning between notes is kept, not rounded.** A patch tuned a quarter tone
+sharp says so -- **Bottom key A4 +50¢** -- and every row is that far off the
+name it carries, which is the nearest note. With nothing tuned on the
+Keyboard's Pitch -- a Sampler, a drum, a rack still being wired -- the rows
+are named by key position instead, the bottom key C0, and the line says
+**Rows by key position**.
+
+**The song's key is in the notes you hear.** A minor is the A that sounds,
+on every track, whatever each track is tuned to: the shading, Snap to key and
+the chords built from the key all follow each track's own names.
+
 **Stack notes in a column and they play as a chord** — as many at once as the
 Keyboard's **Voices** allow. At one voice the track is a single line, and a
 note that starts while another is held takes over from it.
+
+**The tools over the roll work on the selected notes**, or on every note of
+the track when none are selected, and each is one step of undo.
+**Quantize** snaps note starts to the grid, and **Humanize** nudges them a
+little early or late and a little softer or harder. The **Tools** menu beside
+them holds the rest:
+
+| Tool | What it does |
+| --- | --- |
+| Chop into grid steps | Cuts each note into pieces one grid step long, so a held note becomes a repeated one |
+| Strum up / Strum down | Plays each chord a string at a time, lowest or highest first, about 15 ms apart at 120 BPM. The ends stay where they were |
+| Arpeggiate up / Arpeggiate down | Plays each chord as a run, one note per grid step, round and round for as long as it was held. A single note is left alone |
+| Flam | Puts a softer grace note just before each note, on the same key |
+| Reverse | Plays the notes backwards across the span they cover |
+| Randomize pitch | Gives each note a new pitch from the range the notes already span, an octave at least, and on the key when the song has one. Rhythm and velocity stay |
+
+What a tool made is left selected when there was a selection, so two can be
+run on the same notes one after the other: Arpeggiate, then Humanize.
 
 **With no Keyboard, every note fires the Trigger.** The rows mean nothing and
 what you are writing is a rhythm, which is the right way to play a coin, a
@@ -1830,17 +1926,91 @@ laser or a footstep. Velocity still counts: it comes out of the Trigger's
 holds the notes for every track together, so the kick, the bass and the lead
 that belong with each other are written together and placed together.
 
-**+ PATTERN**, under the playlist, starts an empty one, and so does **New
+**+ PATTERN**, under the pattern list, starts an empty one, and so does **New
 pattern** at the bottom of the pattern menu on the dock's bar. The **⧉** on a
 pattern's row makes a new one from it — which is how a variation is written,
 rather than by keeping three clips lined up by hand — and **×** deletes it.
 
-**SONG** shows the playlist: one row per pattern, one column per bar. Click a
-cell to put that pattern in that bar, and click it again to take it out. A
-pattern longer than a bar fills several cells, and any of them will remove it.
-**Click a pattern's name** at the start of its row to pick it, and type to
-rename it, the same way you rename a track. The circle beside it gives it a
-colour, which its placements wear on the playlist.
+**SONG** shows the playlist, in place of the track list: the patterns listed on the left, and lanes of
+clips beside them. **Click a pattern's name** to pick it, and double-click it
+to rename it, the same way you rename a track. The circle beside it gives it
+a colour, which its clips wear. The picked pattern is the one the roll writes
+into, and the one a click on the lanes paints.
+
+**Any pattern goes in any lane.** Lanes are only for keeping things tidy:
+they do not change what you hear. There are always a couple of empty ones at
+the bottom.
+
+| On the lanes | What it does |
+| --- | --- |
+| Click on empty space | Paints the picked pattern there. Keep the button down and drag to place it |
+| Drag a clip | Moves it, and every other picked clip with it, along and between lanes |
+| Drag a clip's left or right edge | Trims it. The left edge moves over the notes rather than moving them |
+| Ctrl + click a clip | Splits it in two at that point |
+| Right-click, or right-drag across | Deletes the clips it touches |
+| Shift + drag | Copies instead of moving |
+| Shift + click | Adds a clip to what is picked, or takes it out |
+| Ctrl + drag on empty space | Picks every clip in the box |
+| Double-click a clip | Opens its pattern in the roll |
+| Alt, held while dragging | Ignores the snap |
+
+**Snap**, over the lanes, sets where clips land: the bar, the beat, half or a
+quarter of a beat, or Off. **−** and **+**, or **Ctrl + wheel**, zoom.
+
+**A clip drawn longer than its pattern repeats it.** Drag a one-bar drum
+pattern out to eight bars and you have eight bars of drums, with a faint line
+where each repeat starts. Trimming the front of a clip starts it part way
+into the pattern. Pulled back past the pattern's own start, the front plays
+the end of the previous repeat. A note plays in the clip its start falls in,
+and a clip's end cuts off a note still sounding there, as a pattern's end
+does.
+
+With the pointer over the lanes, **Delete** removes the picked clips, the
+**arrow keys** nudge them by the snap or a lane, **Ctrl + D** copies them to
+just after themselves, **Ctrl + A** picks every clip and **Escape** picks
+none.
+
+Projects saved before lanes open with each pattern on its own lane, so they
+look the way they did.
+
+### Sections
+
+**Sections are the named parts of the song** — Intro, Verse, Chorus — on
+the strip over the bar numbers. Each has its own start and length, and the
+song can have stretches no section covers. The lanes under a section are
+tinted with it, so you can see which bars belong to it.
+
+| On the sections strip | What it does |
+| --- | --- |
+| Click empty strip | A new four-bar section there |
+| Drag across empty strip | A new section exactly that long |
+| Click a section | Plays it and loops it. Click again to play the whole song |
+| Double-click a section | Renames it |
+| Drag a section into empty time | Slides it there, **with its music**. Nothing else moves |
+| Drag a section onto other sections | Moves it, **with its music**, into the gap between them, and the song makes room |
+| Drag a section's edge | Makes it longer or shorter. Only the label moves |
+| × on a section | Removes the section. **Its music stays** |
+| Right-click a section | Loop, rename, colour, duplicate, split at a bar, remove, or delete it with its music |
+| Click a bar number | Splits the section over it there, or starts one |
+
+**Moving a section moves its music.** Drop it between two others and the
+song opens up there to take it and closes up where it came from. A clip that
+crosses a section's edge is split there first, which you cannot hear.
+**Duplicate, with its music** puts a copy straight after the original, so a
+song can be built by writing a Verse and a Chorus once and repeating them.
+
+A section being dragged is drawn under the pointer. Over empty time it
+lands exactly there. Over other sections, a line shows the gap it will go
+into. **Delete section and its music** in the right-click menu takes the
+bars out and closes the song up.
+
+**Everything else changes only the label.** Removing a section, moving its
+edges and splitting it never touch a note. Every section has a name no other
+section has, and a copy is numbered, because a game asks for sections by
+name.
+
+Projects saved before sections had lengths open with each old marker as a
+section running to the next.
 
 **ROLL plays the pattern; SONG plays the arrangement.** Which view is showing
 decides what the transport does, so there is no third button to forget about.
@@ -1852,17 +2022,44 @@ decides what the transport does, so there is no third button to forget about.
 | ▶ / ■ | Starts and stops |
 | Loop | Whether it comes round again at the end, or plays once and stops |
 | Tempo | Beats per minute, 20 to 300 |
-| Pattern | Which pattern the roll writes into, and the playlist lights |
+| Pattern | Which pattern the roll writes into, or a new one. Roll view only: Song view lists the patterns beside the lanes |
 | Bars | How long that pattern is. Notes past the new end are kept, not cut |
 | Grid | What notes snap to, from a quarter note down to a thirty-second |
-| Hide | Folds the dock away, leaving the bar |
+| Swing | How late every second step lands, and whether the steps are eighths or sixteenths. Off is straight. Belongs to the pattern |
+| Hide | Folds the Music dock away, leaving the bar |
 
 **Space still plays the Trigger**, as it always has. The transport has its own
 button rather than taking the key the rack is played with.
 
-**Drag the top edge of the dock** to make it taller or shorter. The roll's
-rows grow and shrink with it, so the whole two octaves are always on screen
-and there is never anything to scroll to.
+**Drag the top edge of the Music dock** to make it taller or shorter, and the
+roll shows more rows or fewer. **The mouse wheel** scrolls the rows up and
+down, three rows a notch, gliding rather than jumping; a trackpad follows
+your fingers exactly. **The scroll bar** down the right of the rows can be
+dragged, to the pixel, and a click on it jumps there. It never lays a note.
+**Ctrl + wheel** makes the rows taller or shorter around the row under the
+pointer. Notes moved with the arrow keys take the view with them.
+
+**Swing pushes every second step late.** 50% is straight and shows as Off;
+around 67% is a triplet feel, the lope of a shuffle; 75% is a hard, dotted
+swing. **on 1/16** swings sixteenths, the usual choice for hats and busy
+parts, and **on 1/8** swings eighths. It is part of the pattern, so two
+patterns can swing by different amounts, and a copy of a pattern swings the
+way its original did. Double-click the slider to straighten it.
+
+The roll draws a swung pattern as it sounds: the second step of each pair
+stands late, the notes on it are drawn where they play, and the playhead
+passes each note as you hear it. Underneath, the notes are still written on
+the grid -- a note drawn in a swung cell is written on the step it belongs
+to, Quantize still snaps to the grid, and the amount can be changed while the
+loop runs. **View → Show swing in the roll** turns the drawing off, for
+anyone who would rather edit on the straight grid; the pattern sounds the
+same either way. Notes from other patterns, drawn faintly behind, are placed
+where they are heard too, under their own swing. It moves everything, not only the notes
+on the second step: a note placed off the grid, or humanized, swings by its
+share, and the end of a note moves with its start, so a legato line stays
+joined. The first step of every pair never moves, so the beat stays on the
+beat and a loop still tiles. It is allowed in any time signature, and what
+sounds right in 6/8 is for your ear to decide.
 
 **Edits while it is playing are heard about a quarter of a second later.**
 That is how far ahead the notes are handed to the audio thread, which is what
@@ -1894,7 +2091,7 @@ would load: everything needed to play the music is in it, and none of it needs
 a browser.
 
 **The Patch menu** works on one sound, the one on the selected track, and
-never touches a note. **Save patch...** writes that sound out. **Open
+never touches a note. **Download patch...** writes that sound out. **Open
 patch...** replaces the selected track's sound with one from a file, keeping
 its notes. **Add patch as track...** puts a sound on a new track of its own,
 which is how you bring a sound from one project into another. **Library...**
@@ -2015,6 +2212,41 @@ setting it every frame does not click. It returns `false` for a track or knob
 that is not there. `getParam` reads one back, and `paramsOf('Lead')` lists
 every knob a track has.
 
+**Swinging from the game** is `setSwing`. Name a pattern, by id or by name,
+or leave it out to swing every pattern at once:
+
+```js
+player.setSwing(0.62, 'Verse')   // just the verse
+player.setSwing(0.5)             // straighten the lot
+player.setSwing(0.66, 'Chase', 480)   // swing eighths rather than sixteenths
+```
+
+The amount is clamped to 0.5 – 0.75, and the last argument is the step in
+ticks: 240 for sixteenths (the default), 480 for eighths. It is heard from
+whatever has not been scheduled yet, a lookahead's worth from now, and a
+note it would otherwise leave hanging is let go of cleanly. It returns
+`false` for a pattern that is not there. `getSwing('Verse')` reads one back.
+
+**Playing sections from the game** is how adaptive music is done. Name the
+section, and say when to change:
+
+```js
+player.playSection('Combat')                        // at the next bar line, and loop it
+player.playSection('Explore', { when: 'section' })  // once the section playing now ends
+player.playSection('Sting', { when: 'beat', loop: false })  // play it once, then carry on
+player.releaseSection()        // stop looping and let the song play on
+player.section                 // the name of the section being heard, or null
+player.sections                // every section: { name, from, to } in ticks
+```
+
+`when` is `'now'`, `'beat'`, `'bar'` (the default) or `'section'`. It is
+worked out from what is being heard, not from how far ahead the player has
+scheduled. The change lands on that exact sample, and every note sounding
+there is let go. A section asked for without `loop: false` loops until
+something else is asked for. Names are matched exactly first, then without
+case. `playSection` returns `false` for a name no section has. A second call
+before the first has happened replaces it.
+
 **A Macro is the best thing to hand a game.** Build the patch so one Macro's
 Amount is "intensity" — the filter, the drive, the extra layer and the tempo
 of a wobble all on its lanes — and the game needs to know one name and one
@@ -2041,16 +2273,17 @@ nudge it, and double-click to put it back to its default.
 | Spread | 0 – 0.5 | 0.08 | How far knobs wander between takes. 0 means identical takes |
 | Seed | 1 – 128 | 1 | The same seed always gives exactly the same takes |
 | Format | — | 48 kHz · 16-bit | Sample rate and bit depth |
+| Loudness | — | As rendered | Brings every take to the same loudness before it is downloaded: a peak of −1 dB, or a LUFS target |
 
 Press **Render** and you get a list of takes. Click a waveform to hear it,
-click again to stop. Untick the ones you do not want. Untick any you do not want, then **Save** — one take
+click again to stop. Untick any you do not want, then **Download** — one take
 downloads as a `.wav`, several as a `.zip`.
 
 **This is the reason the app exists.** Ten footsteps that are recognisably the
 same footstep but not identical is what stops a game sounding repetitive, and
 Spread is the knob that decides how varied they are. Start around 0.05 – 0.10.
 
-**Nothing is written to disk until you press Save.** Render freely.
+**Nothing is written to disk until you press Download.** Render freely.
 
 **Renders are reproducible.** Note the seed of a take you liked and you can
 make it again exactly, even after closing the browser.

@@ -1,5 +1,7 @@
 import { hasScale, inScale, isRoot, type Scale } from '../song/scale'
-import type { Note } from '../song/types'
+import { swungTick, unswungTick } from '../song/schedule'
+import { midiName } from '../song/tuning'
+import type { Note, Swing } from '../song/types'
 
 /**
  * Drawing the roll.
@@ -12,10 +14,8 @@ import type { Note } from '../song/types'
 
 /** Semitones within an octave that are black keys. */
 const SHARP = new Set([1, 3, 6, 8, 10])
-const NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
 export const isSharp = (pitch: number) => SHARP.has(((pitch % 12) + 12) % 12)
-export const noteName = (pitch: number) => NAMES[((pitch % 12) + 12) % 12]
 
 export interface RollColors {
   bg: string
@@ -55,10 +55,26 @@ export interface RollView {
   viewH: number
   /** How far the rows are scrolled down from the top row, in pixels. */
   scrollY: number
+  /**
+   * The width of the scroll bar down the right of the rows: `SCROLL_W` when
+   * there are more rows than fit, and nothing when there are not. The grid
+   * stops short of it, so no note is ever under the bar.
+   */
+  scrollW: number
   /** Height of the velocity lane under the grid. */
   velH: number
-  /** How many semitone rows, counting up from the bottom. */
+  /**
+   * The bottom row's pitch, and how many semitone rows count up from it. The
+   * bottom row sits well below zero: pitch is counted from the bottom of the
+   * track's Keyboard, and a bass line goes under it.
+   */
+  low: number
   keys: number
+  /**
+   * The MIDI note the track's bottom key sounds, fractional -- what turns a
+   * row into the name of the note you hear. See `song/tuning`.
+   */
+  rowZero: number
   pxPerTick: number
   /** The pattern's length, which is the whole width of the roll. */
   lengthTicks: number
@@ -69,6 +85,13 @@ export interface RollView {
   grid: number
   /** Where the playhead is, or null when nothing is playing. */
   playTick: number | null
+  /**
+   * The pattern's swing, when the roll is drawing it as it sounds. Then the
+   * width is time as it is heard: the off-step grid lines stand where those
+   * steps play, a note is drawn where it plays, and a click there still lands
+   * on the grid tick it is written at. Absent draws the grid straight.
+   */
+  swing?: Swing
   /** The key to highlight, if the song has one. */
   scale?: Scale
   /** Each track's colour, for its notes drawn behind another track's. */
@@ -105,6 +128,8 @@ export interface RollOverlay {
    * a chord's shape, where it lands and how long it will be.
    */
   preview: { tick: number; length: number; pitches: number[] } | null
+  /** The scroll bar, lit while the pointer is over it or dragging it. */
+  scrollbar?: 'hover' | 'drag' | null
 }
 
 export const NO_OVERLAY: RollOverlay = {
@@ -133,16 +158,46 @@ export function partAt(x: number, left: number, width: number): NotePart {
   return 'body'
 }
 
-export const tickToX = (tick: number, v: RollView) => v.gutterW + tick * v.pxPerTick
-export const xToTick = (x: number, v: RollView) => (x - v.gutterW) / v.pxPerTick
+/** Where a written tick is drawn -- where it plays, when swing is shown. */
+export const tickToX = (tick: number, v: RollView) =>
+  v.gutterW + (v.swing ? swungTick(tick, swingOf(v)) : tick) * v.pxPerTick
+/** The written tick under an x position: `tickToX` backwards. */
+export const xToTick = (x: number, v: RollView) => {
+  const heard = (x - v.gutterW) / v.pxPerTick
+  return v.swing ? unswungTick(heard, swingOf(v)) : heard
+}
+/**
+ * How wide something written from `tick` for `length` is drawn. Not
+ * `length * pxPerTick`: swung, a note on the first step is drawn longer and
+ * one on the second shorter, as they are heard.
+ */
+export const spanX = (tick: number, length: number, v: RollView) =>
+  tickToX(tick + length, v) - tickToX(tick, v)
+/** Where a moment of playback is drawn: the playhead runs in heard time. */
+const heardToX = (tick: number, v: RollView) => v.gutterW + tick * v.pxPerTick
+const swingOf = (v: RollView) => ({ length: v.lengthTicks, swing: v.swing })
+/** The top row's pitch. */
+export const highPitch = (v: RollView) => v.low + v.keys - 1
+/** Whether a pitch has a row at all. */
+export const hasRow = (pitch: number, v: RollView) => pitch >= v.low && pitch <= highPitch(v)
 /** Pitch counts up, the screen counts down. */
 export const pitchToY = (pitch: number, v: RollView) =>
-  v.rulerH - v.scrollY + (v.keys - 1 - pitch) * v.rowH
+  v.rulerH - v.scrollY + (highPitch(v) - pitch) * v.rowH
 export const yToPitch = (y: number, v: RollView) =>
-  v.keys - 1 - Math.floor((y - v.rulerH + v.scrollY) / v.rowH)
+  highPitch(v) - Math.floor((y - v.rulerH + v.scrollY) / v.rowH)
+/**
+ * The rows that can be seen, bottom and top, for loops that would otherwise
+ * paint all of them: most of a full range is scrolled out of sight.
+ */
+const visibleRows = (v: RollView) => ({
+  from: Math.max(v.low, yToPitch(gridBottom(v), v)),
+  to: Math.min(highPitch(v), yToPitch(gridTop(v), v)),
+})
 
-/** The name a row plays, with its octave counted the way the keys are labelled. */
-export const pitchName = (pitch: number) => `${noteName(pitch)}${Math.floor(pitch / 12)}`
+/** The note a row sounds, whole, for colouring keys: which are black, which are C. */
+export const soundedAt = (pitch: number, v: RollView) => Math.round(v.rowZero) + pitch
+/** The name of the note a row sounds. */
+export const pitchName = (pitch: number, v: RollView) => midiName(v.rowZero + pitch)
 
 /** The top and bottom of the visible rows, which is not the top and bottom of the rows. */
 export const gridTop = (v: RollView) => v.rulerH
@@ -194,7 +249,7 @@ export function drawRoll(
   })
   drawVelocity(ctx, notes, v, o)
   clipToRows(ctx, width, v, () => drawGutter(ctx, v, o))
-  drawScrollbar(ctx, width, v)
+  drawScrollbar(ctx, width, v, o.scrollbar ?? null)
   drawRuler(ctx, width, v, o)
   drawMarquee(ctx, o, v)
   drawPlayhead(ctx, v)
@@ -211,23 +266,49 @@ function clipToRows(ctx: CanvasRenderingContext2D, width: number, v: RollView, d
   ctx.restore()
 }
 
+/** How wide the rows' scroll bar is, in pixels: wide enough to grab without aiming. */
+export const SCROLL_W = 12
+
 /**
- * A thin bar down the right of the rows when there are more of them than
- * fit, so it is plain there is somewhere to scroll to and roughly where in
- * the range the view is.
+ * Where the scroll bar's thumb is, or null when every row fits and there is
+ * no bar. `range` is how far the thumb can travel and `max` how far the rows
+ * can, so a thumb position turns into a scroll by one ratio.
  */
-function drawScrollbar(ctx: CanvasRenderingContext2D, width: number, v: RollView) {
+export function scrollThumb(v: RollView, width: number) {
   const total = v.keys * v.rowH
-  if (total <= v.viewH + 0.5) return
+  if (!v.scrollW || total <= v.viewH + 0.5) return null
   const top = gridTop(v)
-  const thumb = Math.max(16, (v.viewH / total) * v.viewH)
-  const y = top + (v.scrollY / (total - v.viewH)) * (v.viewH - thumb)
+  const h = Math.max(24, (v.viewH / total) * v.viewH)
+  const range = v.viewH - h
+  const max = total - v.viewH
+  return { x: width - v.scrollW, top, y: top + (v.scrollY / max) * range, h, range, max }
+}
+
+/**
+ * The rows' scroll bar down the right, when there are more of them than fit:
+ * a track the height of the rows, and a thumb that can be dragged or jumped
+ * to with a click.
+ */
+function drawScrollbar(ctx: CanvasRenderingContext2D, width: number, v: RollView, state: 'hover' | 'drag' | null) {
+  const bar = scrollThumb(v, width)
+  if (!bar) return
+  const inset = 2
+  const w = v.scrollW - inset * 2
+  // Its own strip: whatever is drawn under it stops at its edge.
+  ctx.fillStyle = v.colors.bg
+  ctx.fillRect(bar.x, bar.top, v.scrollW, v.viewH)
   ctx.fillStyle = v.colors.inkFaint
-  ctx.globalAlpha = 0.15
-  ctx.fillRect(width - 5, top, 4, v.viewH)
-  ctx.globalAlpha = 0.6
-  ctx.fillRect(width - 5, y, 4, thumb)
+  ctx.globalAlpha = 0.12
+  roundRect(ctx, bar.x + inset, bar.top + inset, w, v.viewH - inset * 2, w / 2)
+  ctx.globalAlpha = state === 'drag' ? 0.9 : state === 'hover' ? 0.75 : 0.5
+  roundRect(ctx, bar.x + inset, bar.y + inset, w, bar.h - inset * 2, w / 2)
   ctx.globalAlpha = 1
+}
+
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath()
+  ctx.roundRect(x, y, w, Math.max(0, h), r)
+  ctx.fill()
 }
 
 /**
@@ -240,9 +321,10 @@ function drawRows(ctx: CanvasRenderingContext2D, width: number, v: RollView) {
   const right = Math.min(width, tickToX(v.lengthTicks, v))
   const w = right - v.gutterW
   const keyed = hasScale(v.scale)
-  for (let p = 0; p < v.keys; p++) {
+  const rows = visibleRows(v)
+  for (let p = rows.from; p <= rows.to; p++) {
     const y = pitchToY(p, v)
-    const dark = keyed ? !inScale(p, v.scale) : isSharp(p)
+    const dark = keyed ? !inScale(p, v.scale) : isSharp(soundedAt(p, v))
     if (dark) {
       ctx.globalAlpha = keyed ? 0.3 : 0.16
       ctx.fillStyle = v.colors.keyBlack
@@ -272,7 +354,7 @@ function drawHover(ctx: CanvasRenderingContext2D, v: RollView, o: RollOverlay) {
     ctx.fillRect(tickToX(o.hover.tick, v), gridTop(v), cellWidth(o.hover.tick, v), v.viewH)
   }
   const pitch = o.hover.pitch
-  if (pitch !== null && pitch >= 0 && pitch < v.keys) {
+  if (pitch !== null && hasRow(pitch, v)) {
     ctx.fillRect(v.gutterW, pitchToY(pitch, v), right - v.gutterW, v.rowH)
   }
   ctx.globalAlpha = 1
@@ -280,7 +362,7 @@ function drawHover(ctx: CanvasRenderingContext2D, v: RollView, o: RollOverlay) {
 
 /** One grid cell from `tick`, cut short where the pattern ends. */
 const cellWidth = (tick: number, v: RollView) =>
-  Math.max(0, Math.min(v.grid, v.lengthTicks - tick)) * v.pxPerTick
+  Math.max(0, spanX(tick, Math.min(v.grid, v.lengthTicks - tick), v))
 
 function drawGrid(ctx: CanvasRenderingContext2D, v: RollView) {
   const top = gridTop(v)
@@ -302,11 +384,14 @@ function drawGrid(ctx: CanvasRenderingContext2D, v: RollView) {
     ctx.stroke()
   }
 
-  // An octave line every twelve semitones, so two octaves of rows do not read
-  // as one undifferentiated field.
+  // An octave line under every C, so the rows do not read as one
+  // undifferentiated field.
   ctx.globalAlpha = 0.5
   ctx.strokeStyle = v.colors.rule
-  for (let p = 0; p < v.keys; p += 12) {
+  const rows = visibleRows(v)
+  // The first C at or above the lowest row showing, in this track's tuning.
+  const firstC = rows.from + (((-soundedAt(rows.from, v)) % 12) + 12) % 12
+  for (let p = firstC; p <= rows.to; p += 12) {
     const y = Math.round(pitchToY(p, v) + v.rowH) + 0.5
     ctx.beginPath()
     ctx.moveTo(v.gutterW, y)
@@ -324,10 +409,10 @@ function drawNotes(
 ) {
   for (let i = 0; i < notes.length; i++) {
     const n = notes[i]
-    if (n.pitch < 0 || n.pitch >= v.keys) continue
+    if (!hasRow(n.pitch, v)) continue
     const x = tickToX(n.tick, v)
     const y = pitchToY(n.pitch, v)
-    const w = Math.max(2, n.length * v.pxPerTick)
+    const w = Math.max(2, spanX(n.tick, n.length, v))
     const h = Math.max(2, v.rowH - 1)
 
     // Velocity reads as weight rather than as a number on the note: at this
@@ -420,7 +505,7 @@ function drawName(
   if (h < 10) return
   const size = Math.min(11, Math.floor(h - 3))
   ctx.font = `600 ${size}px "Inter", system-ui, sans-serif`
-  const text = pitchName(pitch)
+  const text = pitchName(pitch, v)
   const inset = gripWidth(w) + 2
   if (ctx.measureText(text).width > w - inset * 2) return
   // Dark on the accent in every theme, for the same reason the grips are.
@@ -435,7 +520,7 @@ function drawName(
 function drawGhosts(ctx: CanvasRenderingContext2D, notes: readonly Note[], v: RollView) {
   if (notes.length === 0) return
   for (const n of notes) {
-    if (n.pitch < 0 || n.pitch >= v.keys) continue
+    if (!hasRow(n.pitch, v)) continue
     // A track with a colour shows it here, so with three parts behind the one
     // being written it is plain which is the bass and which the drums.
     const hue = v.trackHues?.get(n.track)
@@ -444,7 +529,7 @@ function drawGhosts(ctx: CanvasRenderingContext2D, notes: readonly Note[], v: Ro
     ctx.fillRect(
       tickToX(n.tick, v),
       pitchToY(n.pitch, v),
-      Math.max(2, n.length * v.pxPerTick),
+      Math.max(2, spanX(n.tick, n.length, v)),
       Math.max(2, v.rowH - 1),
     )
   }
@@ -471,7 +556,7 @@ function drawVelocity(
     // The selection's bars in ink, so which of them a drag in the lane will
     // move together is plain before it starts.
     ctx.fillStyle = o.selected.has(i) ? v.colors.ink : v.colors.accent
-    ctx.fillRect(x, top + v.velH - h, Math.max(2, Math.min(5, n.length * v.pxPerTick)), h)
+    ctx.fillRect(x, top + v.velH - h, Math.max(2, Math.min(5, spanX(n.tick, n.length, v))), h)
   }
 
   ctx.strokeStyle = v.colors.rule
@@ -493,9 +578,11 @@ function drawGutter(ctx: CanvasRenderingContext2D, v: RollView, o: RollOverlay) 
 
   ctx.font = '9px "Inter", system-ui, sans-serif'
   ctx.textBaseline = 'middle'
-  for (let p = 0; p < v.keys; p++) {
+  const rows = visibleRows(v)
+  for (let p = rows.from; p <= rows.to; p++) {
     const y = pitchToY(p, v)
-    const black = isSharp(p)
+    const black = isSharp(soundedAt(p, v))
+    const isC = soundedAt(p, v) % 12 === 0
     const keyW = v.gutterW - (black ? v.gutterW * 0.35 : 0)
     ctx.fillStyle = black ? v.colors.keyBlack : v.colors.keyWhite
     ctx.fillRect(0, y, keyW, v.rowH - 1)
@@ -526,12 +613,12 @@ function drawGutter(ctx: CanvasRenderingContext2D, v: RollView, o: RollOverlay) 
     // put the labels on a pale key in a colour almost exactly as pale. Every
     // theme keeps `--key-black` dark, for the obvious reason. The Cs are
     // heavier, so the octaves still stand out when every key is named.
-    if (p % 12 === 0 || (nameAll && !black)) {
+    if (isC || (nameAll && !black)) {
       ctx.fillStyle = v.colors.keyBlack
-      ctx.globalAlpha = p % 12 === 0 ? 1 : 0.6
-      ctx.font = `${p % 12 === 0 ? '600 ' : ''}9px "Inter", system-ui, sans-serif`
+      ctx.globalAlpha = isC ? 1 : 0.6
+      ctx.font = `${isC ? '600 ' : ''}9px "Inter", system-ui, sans-serif`
       ctx.textAlign = 'right'
-      ctx.fillText(pitchName(p), v.gutterW - 4, y + v.rowH / 2)
+      ctx.fillText(pitchName(p, v), v.gutterW - 4, y + v.rowH / 2)
       ctx.globalAlpha = 1
     }
   }
@@ -584,12 +671,12 @@ function drawPreview(ctx: CanvasRenderingContext2D, v: RollView, o: RollOverlay)
   const p = o.preview
   if (!p) return
   const x = tickToX(p.tick, v)
-  const w = Math.max(2, p.length * v.pxPerTick)
+  const w = Math.max(2, spanX(p.tick, p.length, v))
   const h = Math.max(2, v.rowH - 1)
   ctx.lineWidth = 1
   ctx.setLineDash([3, 2])
   for (const pitch of p.pitches) {
-    if (pitch < 0 || pitch >= v.keys) continue
+    if (!hasRow(pitch, v)) continue
     const y = pitchToY(pitch, v)
     ctx.fillStyle = v.colors.accent
     ctx.globalAlpha = 0.22
@@ -600,7 +687,7 @@ function drawPreview(ctx: CanvasRenderingContext2D, v: RollView, o: RollOverlay)
     if (h >= 10) {
       const size = Math.min(11, Math.floor(h - 3))
       ctx.font = `600 ${size}px "Inter", system-ui, sans-serif`
-      const text = pitchName(pitch)
+      const text = pitchName(pitch, v)
       if (ctx.measureText(text).width <= w - 6) {
         ctx.fillStyle = v.colors.accent
         ctx.globalAlpha = 0.95
@@ -635,7 +722,7 @@ function drawMarquee(ctx: CanvasRenderingContext2D, o: RollOverlay, v: RollView)
 
 function drawPlayhead(ctx: CanvasRenderingContext2D, v: RollView) {
   if (v.playTick === null) return
-  const x = Math.round(tickToX(v.playTick, v)) + 0.5
+  const x = Math.round(heardToX(v.playTick, v)) + 0.5
   ctx.strokeStyle = v.colors.accentLine
   ctx.lineWidth = 1
   ctx.beginPath()

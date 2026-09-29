@@ -31,10 +31,21 @@ export interface Loop {
   to: number
 }
 
+/** A place the song jumped: at `frame`, from `before` back to `tick`. */
+export interface Seam extends Cursor {
+  before: number
+}
+
 export interface Fill {
   /** Ready to schedule, in engine time, oldest first. */
   events: SongEvent[]
   cursor: Cursor
+  /**
+   * Every time round the loop, in order: where the song went back to the
+   * start of it. A caller that has to say which tick is being heard at a
+   * given frame needs these; the arithmetic between them is a straight line.
+   */
+  seams: Seam[]
   /** The song ran off its end and is not looping. */
   ended: boolean
 }
@@ -56,10 +67,11 @@ export function fill(
   loop: Loop | null,
 ): Fill {
   const events: SongEvent[] = []
+  const seams: Seam[] = []
   const fpt = framesPerTick(song.tempo, sampleRate)
-  if (!(fpt > 0)) return { events, cursor, ended: true }
+  if (!(fpt > 0)) return { events, cursor, seams, ended: true }
   // A loop with no length would be an infinite number of passes over nothing.
-  if (loop && !(loop.to > loop.from)) return { events, cursor, ended: false }
+  if (loop && !(loop.to > loop.from)) return { events, cursor, seams, ended: false }
 
   const end = loop ? loop.to : songEnd(song)
   let { tick, frame } = cursor
@@ -86,6 +98,7 @@ export function fill(
       for (const t of song.tracks) {
         events.push({ frame: Math.round(frame), track: t.id, kind: 'off', velocity: 0 })
       }
+      seams.push({ frame, tick: loop.from, before: tick })
       tick = loop.from
       continue
     }
@@ -127,7 +140,7 @@ export function fill(
     tick = windowEnd
   }
 
-  return { events, cursor: { tick, frame }, ended }
+  return { events, cursor: { tick, frame }, seams, ended }
 }
 
 /**

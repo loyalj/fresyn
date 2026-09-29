@@ -4,6 +4,196 @@ What changed, newest first. The README says what Fresyn is now; this is how
 it got there. The older entries are the milestone notes that used to sit at
 the top of the README, moved here as they were written.
 
+## Sections slide, and can take their music with them
+
+A section being dragged now follows the pointer. Dropped in empty time, it
+slides there with its music and nothing else moves. Dropped over other
+sections, it goes into the gap between them, as before. The right-click menu
+has a second delete, **Delete section and its music**, which takes the bars
+out and closes the song up. Plain remove still keeps the music. The Song
+view no longer shows the track list: it's only needed by the roll, and the
+Mix view has a strip per track.
+
+## Folders, hiding, search and pins for tracks
+
+**+ Folder** makes a folder. Drag a track onto its row to file it, or among
+its tracks to join them. A folder is a group too: its mute and solo reach
+every track in it, and its level multiplies theirs like a VCA fader. It
+folds away with its arrow, and removing it keeps its tracks. Solo stays
+exclusive across tracks and folders. The scheduler and the desk now share
+one rule for who is heard, so live play, the bounce and the game player all
+agree.
+
+Every track has a **⋯** menu (also on right-click) with Pin to the top,
+Hide, Move to folder and Remove. Hidden tracks still play. They leave the
+track list, the Mix view and the roll's faint notes, and **Show n hidden**
+lists them again. Pinned tracks sit above a line at the top, outside their
+folder and outside any search. **Find a track** filters by track or folder
+name. The Mix view names each strip's folder.
+
+`check-song` covers folder mute, solo and level, filing, removal, hidden
+tracks still playing, search and saving. `check-tools` files a track by
+dragging it and drives folding, the folder's mute, search, hiding and
+pinning.
+
+A track dragged by its grip is now followed from the window rather than
+with a pointer capture. Reordering moved the dragged row, which lost the
+capture, so the drop landed wherever the pointer was when that happened.
+
+## Sections you can arrange with
+
+Sections have their own lengths now, so adding one no longer cuts the others
+short, and the song can have stretches with no section. On the strip: click
+empty space for a four-bar section, or drag across it for one exactly that
+long. Click a section to loop it, double-click to rename it, drag an edge to
+resize it and use its × to remove it. Right-click for colour, duplicate and
+split. Clicking a bar number splits the section over it.
+
+Dragging a section moves its music with it: the song opens up where it lands
+and closes up where it left, and clips across its edges are split there
+first. **Duplicate, with its music** repeats a section straight after itself.
+Removing, resizing and splitting touch only the labels, so no music is ever
+lost to them. Each section tints the lanes under it.
+
+Games can play sections too. `SongPlayer.playSection(name, { when, loop })`
+changes section now, on the next beat or bar, or at the end of the section
+playing, on that exact sample. `releaseSection()` lets the song play on, and
+`section` and `sections` say where it is. The player now knows which tick is
+being heard rather than scheduled, and takes back the part of its lookahead a
+change makes wrong.
+
+The Pattern menu on the dock's bar now shows only in Roll view. Song view
+has its own pattern list beside the lanes, which does the same job.
+
+Old projects' markers are read as sections running to the next marker.
+`check-song` covers moving, duplicating, removing and resizing, the file
+reader, and the player's timing to the sample. `check-tools` drives the
+strip.
+
+## A roll scroll bar you can hold
+
+The roll's scroll bar is wider, at 12 pixels, and it works like a scroll bar.
+Drag the thumb and the rows follow it pixel for pixel; click the track and
+the thumb jumps there, and you can keep dragging. The grid now stops short of
+the bar, so a click there never draws a note. A mouse wheel notch moves
+three rows and glides there over about a tenth of a second. It used to jump
+by whatever the OS called a notch, which in a short dock was most of the
+screen. A trackpad's small steps are still followed exactly. `check-roll`
+drags the bar, clicks it and times a notch mid-glide.
+
+## Clips on the playlist
+
+The playlist is now a set of lanes, and a placement is a clip. Any pattern
+goes in any lane, at any tick the snap allows: a bar, a beat, half or a
+quarter of a beat, or anywhere with Alt or snap Off. The patterns are listed
+beside the lanes, and a click paints the one that is picked. A clip moves by
+its body and trims by its edges. It splits with Ctrl+click, copies with
+Shift+drag, and is deleted with a right-click or a right-drag sweep. A clip
+drawn longer than its pattern repeats it, and trimming the front moves the
+clip's start into the pattern without moving the notes. Clips can be picked
+with a box, nudged with the arrows and copied with Ctrl+D.
+
+A placement now carries `lane`, `offset` and `length`, all optional. Leaving
+`offset` and `length` out means the whole pattern played once, so untouched
+clips still follow their pattern's length. The scheduler plays clips through
+one function, so live play, the bounce, the stems and the game player all
+hear the same cut. The project format is now 2. A version 1 file opens with a
+lane per pattern, which is how it looked. `check-song` covers trim, stretch,
+offset, split, lanes, copying and the migration. `check-tools` and
+`check-roll` drive the new playlist with the mouse.
+
+## Audio settings
+
+**Edit → Audio settings...** chooses the output device (Chrome and Edge), the
+buffer (Low, Balanced, Safe or a custom size in milliseconds) and the sample
+rate, and shows the actual delay from a key to the speaker. The settings are
+kept with the browser's preferences, not in the project. A new buffer or rate
+closes the audio context and builds another from what the engine already
+holds, the same way it recovers from a failure. A saved output that has gone
+away falls back to the default instead of stopping the engine.
+`check-audio` covers the dialog, the rebuilds and a reload.
+
+## A new key plays its own note
+
+Clicking a new key on the Keyboard panel played the key pressed before it,
+and only a second click sounded right. The press sent its gate to the audio
+thread at once, but the note went as a knob change that followed a re-render
+later, so a Keyboard with voices took its pitch from the old note. A press
+now carries its key and sends it ahead of the gate.
+
+## Tools in the roll
+
+A Tools menu beside Quantize and Humanize transforms the selected notes, or
+every note on the track: Chop into grid steps, Strum up and down, Arpeggiate
+up and down, Flam, Reverse and Randomize pitch. Each is one step of undo and
+leaves what it made selected, so they chain. Randomize lands on the song's
+key when there is one. The transforms are pure functions in the song layer,
+checked note for note.
+
+## Keys named by the notes they play
+
+The roll's rows and the Keyboard panel's keys are named by the notes you
+hear, not their place on the Keyboard. They are read off the rack: the Pitch
+knob and Octave of whatever the Keyboard's Pitch reaches, directly or through
+a Slew or a Quantizer, plus the Keyboard's own Octave. An oscillator at
+262 Hz makes the bottom key C4; flip the Keyboard's Octave and every name
+moves with it. A detuned stack counts as the note it is spread around, and a
+patch tuned between notes keeps its cents rather than being rounded, so
+`Bottom key A4 +50¢` is what a quarter-tone patch says. The song's key is now
+in real notes too, and each track shades, snaps and builds its chords from
+it through its own tuning. Every instrument in the library is checked to be
+named by the note it measurably plays.
+
+## The whole keyboard in the roll
+
+The roll has 128 rows, the span of MIDI, where it had the Keyboard's 25: four
+octaves under its bottom key and more than four above its top one. A bass line
+and a lead can share a track, and a part is no longer cut off at the edge of
+the panel it happens to be played on. Pitch still counts from the Keyboard's
+bottom key, which already played any note it was given, so songs written
+before this sound exactly as they did. The rows scroll, a track opens centred
+on its own notes, and moving, transposing and chords stop at the new edges
+rather than the Keyboard's.
+
+## Swing
+
+A Swing control on the roll's bar pushes every second step late: 50% is
+straight, about 67% a triplet feel, 75% a hard shuffle, on eighths or
+sixteenths. It belongs to the pattern and is applied as the pattern plays, so
+the notes stay on the grid they were written to and the amount can be changed
+while the loop runs. It is a warp of time across each pair of steps rather
+than a nudge of the notes on the off-step, so humanized notes swing by their
+share, note ends move with their starts, and the beat never moves. A game can
+set it too, through `SongPlayer.setSwing`. A note whose end a swing change
+carries behind the scheduler is let go of there rather than left droning.
+
+The roll draws a swung pattern where it is heard, with the off-steps of the
+grid standing late and clicks mapped back onto the written grid; View → Show
+swing in the roll turns that off. Fixed along the way: editing a pattern in
+the roll no longer copies in the notes of another pattern placed over the
+same bars.
+
+## Notices, words and small screens
+
+Messages come in three kinds: news fades, a job's progress stays for the job,
+and a failure stays until it is dismissed -- with every warning a file came
+with, not only the first. Bounces and saves take turns instead of competing.
+Files are downloaded, takes are rendered, songs are bounced, the normalize
+control is Loudness, and the dock is the Music dock throughout. On a touch
+screen the move, duplicate and remove buttons are visible and big enough to
+mean, and the Music dock never takes more than 60% of the window.
+
+## Tightening: a faster rack and one check command (502fe0c)
+
+Turning a knob re-renders its own unit rather than the whole rack, the roll
+and the meters stop drawing when nothing moves, and the first load is less
+than a third of what it was: the knob help is extracted from the manual when
+the app is built, and the library, the song dock and the bounce load when
+they are first used. `App.tsx` is split into hooks, the DSP helpers are in one
+file with the output proven sample-identical, `npm run check` runs every suite
+on a harness that starts its own server, and the theme check is honestly
+green.
+
 ## Hardening: the review fixes (5a4d100)
 
 A long review's worth of fixes, most of them to things that went wrong

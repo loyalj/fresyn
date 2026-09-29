@@ -24,51 +24,73 @@ import type { Cable, Patch, PatchModule } from '../src/patch/types'
 import { engineEvents, noteTarget } from '../src/song/bind'
 import {
   addPattern,
+  duplicatePattern,
   contextNotes,
   firstPlacement,
-  addMarker,
-  markersOf,
-  movePlacement,
   patternOnly,
-  removeMarker,
-  renameMarker,
   reorderTracks,
-  sectionAt,
   setMeter,
   updatePattern,
-  placementAt,
   removePattern,
   removeTrack,
   setPatternLength,
+  setPatternSwing,
   soloTrack,
-  togglePlacement,
 } from '../src/song/edit'
 import { fromStoredProject, toStoredProject } from '../src/song/project'
+import { addFolder, heardTracks, moveToFolder, removeFolder, soloFolder, tracksMatching, updateFolder } from '../src/song/folder'
+import { addClip, duplicateClips, moveClips, removeClips, splitClip, trimClip } from '../src/song/clip'
+import {
+  addSection,
+  colorSection,
+  duplicateSection,
+  moveSection,
+  removeSection,
+  renameSection,
+  resizeSection,
+  sectionAt,
+  deleteSectionAndMusic,
+  sectionsOf,
+  slideSection,
+  splitSection,
+} from '../src/song/section'
 import { renderSong, renderStems } from '../src/audio/renderSong'
 import { Transport } from '../src/audio/Transport'
 import type { AudioEngine } from '../src/audio/AudioEngine'
-import { setPatternNotes, updateConsole, updateStrip, updateTrack } from '../src/song/edit'
+import { setPatternNotes, trackMix, updateConsole, updateStrip, updateTrack } from '../src/song/edit'
 import { SongPlayer, loadProject } from '../src/song/runtime'
-import { framesPerTick, songEnd, songEvents, type SongEvent } from '../src/song/schedule'
+import { framesPerTick, releasedBySwing, songEnd, songEventTicks, songEvents, swungTick, unswungTick, type SongEvent } from '../src/song/schedule'
 import { fill, playheadTick } from '../src/song/transport'
 import {
+  arpeggiateNotes,
+  chopNotes,
   copyNotes,
   duplicateNotes,
+  flamNotes,
   humanizeNotes,
   moveNotes,
   notesIn,
   pasteNotes,
   quantizeNotes,
+  randomizePitches,
   removeNotes,
+  reverseNotes,
   shiftVelocity,
   stretchEnds,
   stretchStarts,
+  strumNotes,
   transposeNotes,
 } from '../src/song/noteEdit'
 import { degreesBetween, inScale, nearestInScale, stepInScale } from '../src/song/scale'
 import { chordById, chordPitches } from '../src/song/chord'
+import { midiName, midiNameCents, rowZero, scaleForRows, tuningOf } from '../src/song/tuning'
 import { parseSong } from '../src/song/serialize'
-import { barTicks, beatTicks, PPQ, type Song } from '../src/song/types'
+import { barTicks, beatTicks, PITCH_RANGE, PPQ, type Song } from '../src/song/types'
+/** The Keyboard's own reach, for the checks about what happens at an edge. */
+const TWO_OCTAVES = { low: 0, high: 24 }
+
+/** How long a song's first clip is. */
+const clipLen = (s: Song) => s.playlist[0].length ?? s.patterns[0].length
 
 const SR = 48000
 
@@ -898,30 +920,134 @@ console.log('\narrangement edits keep what depends on them')
 
   // A placement is only meaningful while its pattern exists.
   const two = addPattern(base, 'b', 'B')
-  const placed = togglePlacement(two, 'b', PPQ * 4)
+  const placed = addClip(two, 'b', PPQ * 4, 1)
   check('a pattern can be placed', placed.playlist.length === 2, `got ${placed.playlist.length}`)
-  check('clicking it again takes it off', togglePlacement(placed, 'b', PPQ * 4).playlist.length === 1)
+  check('and taken off again', removeClips(placed, [1]).playlist.length === 1)
+  check('but a pattern that is not there cannot', addClip(two, 'nope', 0, 0) === two)
   check('removing a pattern takes its placements', removePattern(placed, 'b').playlist.length === 1)
   check('the last pattern cannot be removed', removePattern(base, 'a').patterns.length === 1)
 }
 
-console.log('\nwhere a placement covers')
+console.log('\nclips: trimmed, stretched, offset and split')
 {
-  // The pattern is four beats -- one bar -- so it fills exactly one cell.
-  const one = song()
-  check('a bar-long pattern covers its own bar', placementAt(one, 'a', 0) === 0)
-  check('and not the next', placementAt(one, 'a', PPQ * 4) === null)
+  const BAR = PPQ * 4
+  // Four quarter notes on the lead, a bar long.
+  const quarters = (over: Partial<Song> = {}) =>
+    song({
+      patterns: [
+        {
+          id: 'a',
+          name: 'A',
+          length: BAR,
+          notes: [0, 1, 2, 3].map((i) => ({ track: 'lead', tick: i * PPQ, length: PPQ / 2, pitch: i, velocity: 1 })),
+        },
+      ],
+      ...over,
+    })
+  const ons = (s: Song) => songEventTicks(s, 0, 64 * BAR).filter((e) => e.kind === 'on')
+  const same = (a: Song, b: Song) => JSON.stringify(songEventTicks(a, 0, 64 * BAR)) === JSON.stringify(songEventTicks(b, 0, 64 * BAR))
 
-  // A longer one fills several, and every cell has to be able to remove it.
-  const long = setPatternLength(song(), 'a', PPQ * 8)
-  check('a two-bar pattern covers the second bar too', placementAt(long, 'a', PPQ * 4) === 0)
-  check('and reports where it starts', placementAt(long, 'a', PPQ * 7) === 0)
-  check('but not past its end', placementAt(long, 'a', PPQ * 8) === null)
+  const whole = quarters()
+  check('an untouched clip plays its pattern once', ons(whole).length === 4)
+
+  const short = trimClip(whole, 0, 'end', 2 * PPQ)
+  check('trimming the end stops it there', ons(short).length === 2, `${ons(short).length} notes`)
+  check('and the song ends with it', songEnd(short) === 2 * PPQ, String(songEnd(short)))
+  check('a trimmed clip remembers its length', short.playlist[0].length === 2 * PPQ)
+
+  const long = trimClip(whole, 0, 'end', 2 * BAR)
+  check('drawn out past its pattern, the pattern repeats', ons(long).length === 8, `${ons(long).length} notes`)
+  check('from the top, a pattern length later', ons(long)[4].tick === BAR && ons(long)[4].pitch === 0)
+
+  const late = trimClip(whole, 0, 'start', PPQ)
+  check('trimming the start moves the edge, not the notes', ons(late).map((e) => e.tick).join() === [PPQ, 2 * PPQ, 3 * PPQ].join(),
+    ons(late).map((e) => e.tick).join())
+  check('by moving the offset into the pattern', late.playlist[0].offset === PPQ && late.playlist[0].tick === PPQ)
+
+  // Pulled back past the pattern's start, the front shows the end of the
+  // repeat before -- the pattern loops both ways.
+  const placedLate = { ...whole, playlist: [{ pattern: 'a', tick: BAR }] }
+  const early = trimClip(placedLate, 0, 'start', BAR - PPQ)
+  check('the front pulled back plays the end of the pattern first', ons(early)[0].tick === BAR - PPQ && ons(early)[0].pitch === 3,
+    JSON.stringify(ons(early)[0]))
+  check('and then the pattern as it was', ons(early)[1].tick === BAR && ons(early)[1].pitch === 0)
+
+  check('no edge goes past the other', clipLen(trimClip(whole, 0, 'start', 10 * BAR)) >= 1 && clipLen(trimClip(whole, 0, 'end', -BAR)) >= 1)
+  check('nor before the start of the song', trimClip(whole, 0, 'start', -BAR) === whole)
+
+  // A split has to be inaudible: the two halves play exactly the whole.
+  const stretched = trimClip(trimClip(whole, 0, 'end', 3 * BAR), 0, 'start', PPQ / 2)
+  const halves = splitClip(stretched, 0, BAR + PPQ)
+  check('a split makes two clips', halves.playlist.length === 2)
+  check('which play exactly what the one did', same(stretched, halves))
+  check('split again between notes, still the same', same(stretched, splitClip(halves, 1, 2 * BAR + PPQ + 600)))
+  // Through a held note, the cut lets go of it: a clip's end is an end.
+  const through = splitClip(stretched, 0, 2 * BAR + 100)
+  check('a split through a held note cuts it there',
+    songEventTicks(through, 0, 4 * BAR).some((e) => e.kind === 'off' && e.tick === 2 * BAR + 100))
+  check('a split on an edge cuts nothing', splitClip(whole, 0, 0) === whole && splitClip(whole, 0, BAR) === whole)
+
+  // A note is played by the clip its start falls in, and cut at the clip's end.
+  const held = song({
+    patterns: [{ id: 'a', name: 'A', length: BAR, notes: [{ track: 'lead', tick: PPQ, length: 2 * PPQ, pitch: 7, velocity: 1 }] }],
+  })
+  const cutIn = trimClip(held, 0, 'start', 2 * PPQ)
+  check('a note whose start was trimmed off is not played', ons(cutIn).length === 0)
+  const cutOff = trimClip(held, 0, 'end', 2 * PPQ)
+  const offs = songEventTicks(cutOff, 0, BAR).filter((e) => e.kind === 'off')
+  check('a note still held at the end of the clip lets go there', offs.length === 1 && offs[0].tick === 2 * PPQ, JSON.stringify(offs))
+
+  // Windows tile a stretched, offset clip as they tile anything else.
+  let tiled: ReturnType<typeof songEventTicks> = []
+  for (let t = 0; t < 4 * BAR; t += 700) tiled = tiled.concat(songEventTicks(stretched, t, t + 700))
+  check('windows tile a stretched clip without a note lost or doubled',
+    JSON.stringify(tiled) === JSON.stringify(songEventTicks(stretched, 0, 4 * BAR)))
+
+  // Lanes are where a clip is drawn, and nothing else.
+  const laned = moveClips(whole, [0], 0, 3)
+  check('a clip moves to another lane', laned.playlist[0].lane === 3)
+  check('and sounds the same there', same(whole, laned))
+
+  // Moving and copying.
+  const pair = addClip(whole, 'a', 2 * BAR, 1)
+  const slid = moveClips(pair, [0, 1], -3 * BAR, -2)
+  check('a group held against the start keeps its shape',
+    slid.playlist[0].tick === 0 && slid.playlist[1].tick === 2 * BAR && (slid.playlist[1].lane ?? 0) === 1,
+    JSON.stringify(slid.playlist))
+  check('moving by nothing is no edit', moveClips(pair, [0], 0, 0) === pair)
+  const nudged = moveClips(pair, [1], PPQ, 0)
+  check('a clip can start part way through a bar', nudged.playlist[1].tick === 2 * BAR + PPQ)
+  check('and moving keeps every clip where it is in the list', nudged.playlist[0] === pair.playlist[0])
+  const copied = duplicateClips(pair, [0, 1], 4 * BAR, 0)
+  check('copies go on the end of the list', copied.playlist.length === 4 && copied.playlist[2].tick === 4 * BAR && copied.playlist[3].tick === 6 * BAR)
+  check('removing takes only the clips named', removeClips(copied, [0, 2]).playlist.map((p) => p.tick).join() === [2 * BAR, 6 * BAR].join())
+
+  // The roll plays and draws from the pattern's own start.
+  check('the roll lines up with the pattern, not the trimmed edge', firstPlacement(late, 'a') === 0)
+  const nearStart = moveClips(late, [0], -PPQ / 2, 0)
+  check('and with the next repeat when that would be before the song', firstPlacement(nearStart, 'a') === BAR - PPQ / 2,
+    String(firstPlacement(nearStart, 'a')))
+
+  // Kept in a file, and tidied on the way in.
+  const back = parseSong(JSON.parse(JSON.stringify(moveClips(stretched, [0], 0, 2))))!
+  const c = back.playlist[0]
+  check('a clip\'s lane, offset and length are saved', c.lane === 2 && c.offset === PPQ / 2 && c.length === 3 * BAR - PPQ / 2, JSON.stringify(c))
+  const odd = parseSong({
+    ...JSON.parse(JSON.stringify(whole)),
+    playlist: [
+      { pattern: 'a', tick: 0, offset: BAR + 10, lane: 0 },
+      { pattern: 'a', tick: 0, offset: 10 },
+      { pattern: 'a', tick: 0, lane: 1 },
+    ],
+  })!
+  check('an offset past the pattern is wrapped into it', odd.playlist[0].offset === 10)
+  check('the same clip twice is kept once', odd.playlist.length === 2, JSON.stringify(odd.playlist))
+  check('and lane 0 is left unsaid', !('lane' in odd.playlist[0]))
 }
 
 console.log('\nplaying one pattern rather than the arrangement')
 {
-  const two = togglePlacement(addPattern(song(), 'b', 'B'), 'b', PPQ * 4)
+  const two = addClip(addPattern(song(), 'b', 'B'), 'b', PPQ * 4, 1)
   const only = patternOnly(two, 'b')
   check('it holds one pattern', only.patterns.length === 1 && only.patterns[0].id === 'b')
   check('placed at the start', only.playlist.length === 1 && only.playlist[0].tick === 0)
@@ -931,9 +1057,26 @@ console.log('\nplaying one pattern rather than the arrangement')
 
 // --- the project file ---------------------------------------------------
 
+console.log('\na project from before lanes')
+{
+  // A version 1 playlist was a row per pattern, so each pattern gets a lane
+  // of its own, in the order the patterns are listed -- counting only those
+  // that were placed.
+  const old = addClip(addPattern(addPattern(song(), 'b', 'B'), 'c', 'C'), 'c', PPQ * 4, 0)
+  const racks = { lead: toStoredProject('x', song(), {}).racks.lead }
+  const v1 = fromStoredProject({ version: 1, name: 'Old', song: JSON.parse(JSON.stringify(old)), racks })
+  const v2 = fromStoredProject({ version: 2, name: 'New', song: JSON.parse(JSON.stringify(old)), racks })
+  if ('error' in v1 || 'error' in v2) {
+    check('both read', false)
+  } else {
+    check('an old project gets a lane per pattern', v1.song.playlist.map((p) => p.lane ?? 0).join() === '0,1', JSON.stringify(v1.song.playlist))
+    check('a new one keeps the lanes it has', v2.song.playlist.every((p) => (p.lane ?? 0) === 0))
+  }
+}
+
 console.log('\na project survives the round trip')
 {
-  const s = togglePlacement(addPattern(song(), 'b', 'B'), 'b', PPQ * 4)
+  const s = addClip(addPattern(song(), 'b', 'B'), 'b', PPQ * 4, 1)
   const racks = {
     lead: { patch: keysPatch, values: { 'key1.octave': -1 } },
     drum: { patch: tonePatch(220), values: {} },
@@ -1426,13 +1569,24 @@ console.log('\nediting a group of notes')
   const n = (tick: number, pitch: number, length = G) => ({ track: 't', tick, length, pitch, velocity: 0.8 })
   const notes = [n(0, 0), n(G, 4), n(2 * G, 7), n(BAR - G, 24)]
 
-  const moved = moveNotes(notes, [0, 1, 2], G, 2, BAR, 25)
+  // The roll's full range goes on under the Keyboard's bottom key, and still
+  // has a bottom row to stop at.
+  const under = moveNotes(notes, [0, 1], 0, -24, BAR, PITCH_RANGE)
+  check('in the full range a group moves on below the Keyboard',
+    under.notes[0].pitch === -24 && under.notes[1].pitch === -20, JSON.stringify(under.notes.map((x) => x.pitch)))
+  const floor = moveNotes(notes, [0, 1], 0, -500, BAR, PITCH_RANGE)
+  check('and stops at the bottom row',
+    floor.notes[0].pitch === PITCH_RANGE.low && floor.notes[1].pitch === PITCH_RANGE.low + 4,
+    JSON.stringify(floor.notes.map((x) => x.pitch)))
+  check('which is 128 rows in all', PITCH_RANGE.high - PITCH_RANGE.low + 1 === 128)
+
+  const moved = moveNotes(notes, [0, 1, 2], G, 2, BAR, TWO_OCTAVES)
   check(
     'a group moves together',
     moved.notes[0].tick === G && moved.notes[2].pitch === 9 && moved.notes[3].tick === BAR - G,
     JSON.stringify(moved.notes.map((x) => [x.tick, x.pitch])),
   )
-  const pushed = moveNotes(notes, [1, 2], BAR, 40, BAR, 25)
+  const pushed = moveNotes(notes, [1, 2], BAR, 40, BAR, TWO_OCTAVES)
   check(
     'and stops as a whole at the end and the top, rather than folding up',
     pushed.notes[2].tick === BAR - G && pushed.notes[1].tick === BAR - 2 * G &&
@@ -1520,10 +1674,10 @@ console.log('\nquantize, humanize and the key')
   check('a scale can start anywhere', inScale(9, aMinorPent) && inScale(12, aMinorPent) && !inScale(11, aMinorPent))
 
   const triad = [n(0, 0), n(0, 4), n(0, 7)]
-  const up = transposeNotes(triad, [0, 1, 2], 1, 25, (p, d) => stepInScale(p, d, cMajor))
+  const up = transposeNotes(triad, [0, 1, 2], 1, TWO_OCTAVES, (p, d) => stepInScale(p, d, cMajor))
   check('C major up one degree is D minor, which is what staying in the key means',
     up.notes.map((x) => x.pitch).join() === '2,5,9', up.notes.map((x) => x.pitch).join())
-  const top = transposeNotes([n(0, 21), n(0, 24)], [0, 1], 3, 25, (p, d) => stepInScale(p, d, cMajor))
+  const top = transposeNotes([n(0, 21), n(0, 24)], [0, 1], 3, TWO_OCTAVES, (p, d) => stepInScale(p, d, cMajor))
   check('and a group that would leave the keyboard goes as far as it can',
     top.notes.map((x) => x.pitch).join() === '21,24', top.notes.map((x) => x.pitch).join())
 
@@ -1565,11 +1719,9 @@ console.log('\npatterns and tracks, kept house')
     updatePattern(song, 'q', { color: 150 }).patterns[1].color === 150 &&
       !('color' in updatePattern(song, 'p', { color: null }).patterns[0]))
 
-  const slid = movePlacement(song, 'p', 2 * BAR, 5 * BAR)
-  check('a placement slides to another bar', slid.playlist.some((x) => x.tick === 5 * BAR) && !slid.playlist.some((x) => x.tick === 2 * BAR))
-  check('and the other placement stays put', slid.playlist.some((x) => x.tick === 0))
-  check('sliding onto another of the same pattern merges them', movePlacement(song, 'p', 2 * BAR, 0).playlist.length === 1)
-  check('and never before the start', movePlacement(song, 'p', 2 * BAR, -BAR).playlist.some((x) => x.tick === 0 && x.pattern === 'p'))
+  const slid = moveClips(song, [1], 3 * BAR, 0)
+  check('a clip slides to another bar', slid.playlist[1].tick === 5 * BAR)
+  check('and the other one stays put', slid.playlist[0].tick === 0)
 
   check('tracks go in the order asked for', reorderTracks(song, ['c', 'a', 'b']).tracks.map((t) => t.id).join() === 'c,a,b')
   check('and one the order does not mention keeps its place at the end',
@@ -1600,18 +1752,241 @@ console.log('\ntime signatures and sections')
   const saved = parseSong(JSON.parse(JSON.stringify(jig)))
   check('the time signature is saved with the song', saved?.meter?.beats === 6 && saved?.meter?.unit === 8)
 
-  let marked = addMarker(song, 0, 'Intro')
-  marked = addMarker(marked, 4 * BAR)
-  check('markers can be added, named after the sections already there',
-    markersOf(marked).map((m) => m.name).join() === 'Intro,Section 2', markersOf(marked).map((m) => m.name).join())
-  check('but not two in one place', addMarker(marked, 0) === marked)
-  check('a section runs to the next marker', JSON.stringify(sectionAt(marked, 0)) === JSON.stringify({ from: 0, to: 4 * BAR }))
-  check('and the last one to the end of the song', JSON.stringify(sectionAt(marked, 4 * BAR)) === JSON.stringify({ from: 4 * BAR, to: 6 * BAR }))
-  check('a marker can be renamed', markersOf(renameMarker(marked, 4 * BAR, 'Drop'))[1].name === 'Drop')
-  check('and removed, taking nothing else with it', markersOf(removeMarker(marked, 0)).length === 1 && removeMarker(marked, 0).playlist.length === 2)
-  check('the last one removed leaves no marker list behind', !('markers' in removeMarker(addMarker(song, 0), 0)))
-  check('markers move with the bars when the meter changes', markersOf(setMeter(marked, { beats: 3, unit: 4 }))[1].tick === 4 * 3 * PPQ)
-  check('and are saved with the song', parseSong(JSON.parse(JSON.stringify(marked)))?.markers?.length === 2)
+  let marked = addSection(song, 0, 2 * BAR, 'Intro')
+  marked = addSection(marked, 4 * BAR, 2 * BAR)
+  check('sections can be added, named after the ones already there',
+    sectionsOf(marked).map((m) => m.name).join() === 'Intro,Section 2', sectionsOf(marked).map((m) => m.name).join())
+  check('but not on top of another', addSection(marked, BAR, BAR) === marked)
+  check('a section is as long as it was made', JSON.stringify(sectionAt(marked, 0)) === JSON.stringify({ from: 0, to: 2 * BAR }))
+  check('and adding one after it does not shorten it', JSON.stringify(sectionAt(marked, 4 * BAR)) === JSON.stringify({ from: 4 * BAR, to: 6 * BAR }))
+  check('one made too long for the room stops at the next', sectionAt(addSection(marked, 3 * BAR, 4 * BAR), 3 * BAR)?.to === 4 * BAR)
+  check('a section can be renamed', sectionsOf(renameSection(marked, 4 * BAR, 'Drop'))[1].name === 'Drop')
+  check('but not to a name another has', sectionsOf(renameSection(marked, 4 * BAR, 'Intro'))[1].name === 'Intro 2')
+  check('and removed, taking nothing else with it', sectionsOf(removeSection(marked, 0)).length === 1 && removeSection(marked, 0).playlist.length === 2)
+  check('the last one removed leaves no section list behind', !('sections' in removeSection(addSection(song, 0, BAR), 0)))
+  check('sections move with the bars when the meter changes', sectionsOf(setMeter(marked, { beats: 3, unit: 4 }))[1].tick === 4 * 3 * PPQ)
+  check('and are saved with the song', parseSong(JSON.parse(JSON.stringify(colorSection(marked, 0, 120))))?.sections?.[0].color === 120)
+}
+
+console.log('\nfolders of tracks')
+{
+  // Two tracks in a folder, one loose.
+  const three: Song = {
+    ...song(),
+    tracks: [
+      { id: 'lead', name: 'Lead', patch: 'p1', gain: 1 },
+      { id: 'drum', name: 'Kick', patch: 'p2', gain: 0.5 },
+      { id: 'hat', name: 'Hat', patch: 'p3', gain: 1 },
+    ],
+  }
+  const filed = addFolder(three, 'kit', 'Drum kit', ['drum', 'hat'])
+  const heard = (s: Song) => [...heardTracks(s)].sort().join()
+  check('a folder files its tracks', filed.tracks.filter((t) => t.folder === 'kit').length === 2)
+  check('and changes nothing heard', heard(filed) === 'drum,hat,lead')
+  const muted = updateFolder(filed, 'kit', { mute: true })
+  check('muting a folder mutes its tracks', heard(muted) === 'lead', heard(muted))
+  check('and they send nothing', !songEventTicks(muted, 0, PPQ * 4).some((e) => e.track === 'drum'))
+  check('unmuted, it is the folder it was', JSON.stringify(updateFolder(muted, 'kit', { mute: false }).folders) === JSON.stringify(filed.folders))
+  const soloed = soloFolder(filed, 'kit')
+  check('soloing a folder solos its tracks', heard(soloed) === 'drum,hat', heard(soloed))
+  check('and a track\'s solo clears it: solo is exclusive', heard(soloTrack(soloed, 'lead')) === 'lead' && !soloTrack(soloed, 'lead').folders![0].solo)
+  check('and a folder\'s clears a track\'s', heard(soloFolder(soloTrack(filed, 'lead'), 'kit')) === 'drum,hat')
+  check('pressed again, it lets everything back in', heard(soloFolder(soloed, 'kit')) === 'drum,hat,lead')
+  const quiet = updateFolder(filed, 'kit', { gain: 0.5 })
+  check('a folder\'s level multiplies its tracks\'', trackMix(quiet).drum.gain === 0.25 && trackMix(quiet).lead.gain === 1,
+    JSON.stringify(trackMix(quiet).drum))
+  check('a level past the fader\'s top stops there', updateFolder(filed, 'kit', { gain: 7 }).folders![0].gain === 1)
+  check('changing a folder to what it is is no edit', updateFolder(filed, 'kit', { name: 'Drum kit', gain: 1 }) === filed)
+  check('nor is an empty name', updateFolder(filed, 'kit', { name: '  ' }) === filed)
+
+  const moved = moveToFolder(filed, ['hat'], null)
+  check('a track can leave its folder', moved.tracks.find((t) => t.id === 'hat')!.folder === undefined)
+  check('and join one', moveToFolder(moved, ['lead'], 'kit').tracks.find((t) => t.id === 'lead')!.folder === 'kit')
+  check('but not one that is not there', moveToFolder(moved, ['lead'], 'nope') === moved)
+  const unfiled = removeFolder(muted, 'kit')
+  check('removing a folder keeps its tracks', unfiled.tracks.length === 3 && unfiled.tracks.every((t) => t.folder === undefined))
+  check('and lets them be heard again', heard(unfiled) === 'drum,hat,lead')
+  check('and leaves no folder list', !('folders' in unfiled))
+
+  // Hiding is tidying: a hidden track plays on.
+  const hidden = updateTrack(filed, 'lead', { hidden: true })
+  check('a hidden track still plays', songEventTicks(hidden, 0, PPQ * 4).some((e) => e.track === 'lead'))
+
+  check('a search finds tracks by name', [...tracksMatching(filed, 'hat')].join() === 'hat')
+  check('and by their folder\'s name', [...tracksMatching(filed, 'KIT')].sort().join() === 'drum,hat')
+  check('and an empty one finds everything', tracksMatching(filed, ' ').size === 3)
+
+  const back = parseSong(JSON.parse(JSON.stringify(updateTrack(updateTrack(quiet, 'hat', { pinned: true }), 'lead', { hidden: true }))))!
+  check('folders are saved with the song', back.folders?.[0].name === 'Drum kit' && back.folders[0].gain === 0.5)
+  check('and which tracks are in them', back.tracks.find((t) => t.id === 'drum')?.folder === 'kit')
+  check('and which are hidden and pinned', back.tracks.find((t) => t.id === 'lead')?.hidden === true && back.tracks.find((t) => t.id === 'hat')?.pinned === true)
+  const dangling = parseSong({ ...JSON.parse(JSON.stringify(filed)), folders: [] })!
+  check('a track filed in a folder that is not there is filed in none', dangling.tracks.every((t) => t.folder === undefined))
+}
+
+console.log('\nsections own their bars')
+{
+  const BAR = PPQ * 4
+  // Three one-bar patterns, one note each, so where each lands can be read
+  // straight off its notes. A four-bar clip of the first straddles two
+  // sections.
+  const three: Song = {
+    tempo: 120,
+    tracks: [{ id: 't', name: 'T', patch: 't', gain: 1 }],
+    patterns: ['a', 'b', 'c'].map((id, i) => ({
+      id,
+      name: id.toUpperCase(),
+      length: BAR,
+      notes: [{ track: 't', tick: 0, length: PPQ, pitch: i, velocity: 1 }],
+    })),
+    playlist: [
+      { pattern: 'a', tick: 0, length: 3 * BAR },
+      { pattern: 'b', tick: 3 * BAR, lane: 1 },
+      { pattern: 'c', tick: 4 * BAR, lane: 2 },
+    ],
+    sections: [
+      { tick: 0, length: 2 * BAR, name: 'Intro' },
+      { tick: 2 * BAR, length: 2 * BAR, name: 'Verse' },
+      { tick: 4 * BAR, length: BAR, name: 'Chorus' },
+    ],
+  }
+  const at = (s: Song) =>
+    songEventTicks(s, 0, 16 * BAR)
+      .filter((e) => e.kind === 'on')
+      .map((e) => `${e.pitch}@${e.tick / BAR}`)
+      .join(' ')
+  check('the song as written', at(three) === '0@0 0@1 0@2 1@3 2@4', at(three))
+
+  const chorusFirst = moveSection(three, 4 * BAR, 0)
+  check('moving a section takes its music with it', at(chorusFirst) === '2@0 0@1 0@2 0@3 1@4', at(chorusFirst))
+  check('and the sections follow in their new order',
+    sectionsOf(chorusFirst).map((s) => `${s.name}@${s.tick / BAR}`).join() === 'Chorus@0,Intro@1,Verse@3',
+    sectionsOf(chorusFirst).map((s) => `${s.name}@${s.tick / BAR}`).join())
+  check('the song is as long as it was', songEnd(chorusFirst) === songEnd(three))
+  const verseLast = moveSection(three, 2 * BAR, 3)
+  check('a section moved to the end', at(verseLast) === '0@0 0@1 2@2 0@3 1@4', at(verseLast))
+  check('a clip across its edge is split there, and plays the same', at(moveSection(verseLast, 3 * BAR, 1)) === at(three),
+    at(moveSection(verseLast, 3 * BAR, 1)))
+  check('a section moved to where it already is is no edit', moveSection(three, 2 * BAR, 1) === three && moveSection(three, 2 * BAR, 2) === three)
+
+  const twice = duplicateSection(three, 2 * BAR)
+  check('duplicating a section repeats its music straight after it', at(twice) === '0@0 0@1 0@2 1@3 0@4 1@5 2@6', at(twice))
+  check('with the copy named after it', sectionsOf(twice).map((s) => s.name).join() === 'Intro,Verse,Verse 2,Chorus')
+
+  // Slid into empty time: it and its music go there, and nothing else moves.
+  const slid = slideSection(three, 4 * BAR, 6 * BAR)
+  check('a section slides into empty time with its music', at(slid) === '0@0 0@1 0@2 1@3 2@6', at(slid))
+  check('and leaves the rest where it was', sectionsOf(slid).map((s) => s.tick / BAR).join() === '0,2,6')
+  check('but not onto another section', slideSection(three, 4 * BAR, 3 * BAR) === three)
+  const chorusGone = deleteSectionAndMusic(three, 2 * BAR)
+  check('deleting a section with its music takes its bars out', at(chorusGone) === '0@0 0@1 2@2', at(chorusGone))
+  check('and closes the song up behind it', sectionsOf(chorusGone).map((s) => `${s.name}@${s.tick / BAR}`).join() === 'Intro@0,Chorus@2')
+
+  // Only the label, for everything that is not a move or a copy.
+  const gone = removeSection(three, 2 * BAR)
+  check('removing a section leaves its music', at(gone) === at(three) && sectionsOf(gone).length === 2)
+  const wider = resizeSection(three, 0, 'end', 3 * BAR, PPQ)
+  check('an edge stops at the next section', sectionAt(wider, 0)?.to === 2 * BAR)
+  const narrower = resizeSection(three, 0, 'end', BAR, PPQ)
+  check('and moving one leaves the music alone', sectionAt(narrower, 0)?.to === BAR && at(narrower) === at(three))
+  check('a start moves too, never past the end', sectionAt(resizeSection(three, 2 * BAR, 'start', 10 * BAR, PPQ), 4 * BAR - PPQ) !== null)
+  const cut = splitSection(three, BAR)
+  check('a section cuts in two at a bar', sectionsOf(cut).map((s) => `${s.name}@${s.tick / BAR}`).join() === 'Intro@0,Intro 2@1,Verse@2,Chorus@4')
+
+  // Overlaps read from a file are trimmed where the next begins.
+  const overlapped = parseSong({ ...JSON.parse(JSON.stringify(three)), sections: [{ tick: 0, length: 3 * BAR, name: 'A' }, { tick: BAR, length: BAR, name: 'B' }] })
+  check('a section running into the next is cut short there', sectionAt(overlapped!, 0)?.to === BAR)
+}
+
+console.log('\na game plays sections')
+{
+  const BAR = PPQ * 4
+  const FRAMES = 96000 // one bar at 120 bpm
+  // Silence, then a note in B, then silence: when B is heard can be read off
+  // the audio to the sample.
+  const s: Song = {
+    tempo: 120,
+    tracks: [{ id: 'lead', name: 'Lead', patch: 'p1', gain: 1 }],
+    patterns: [
+      { id: 'quiet', name: 'Quiet', length: BAR, notes: [] },
+      { id: 'loud', name: 'Loud', length: BAR, notes: [{ track: 'lead', tick: 0, length: 2 * PPQ, pitch: 12, velocity: 1 }] },
+    ],
+    playlist: [
+      { pattern: 'quiet', tick: 0, length: 2 * BAR },
+      { pattern: 'loud', tick: 2 * BAR },
+      { pattern: 'quiet', tick: 3 * BAR, length: 2 * BAR },
+    ],
+    sections: [
+      { tick: 0, length: 2 * BAR, name: 'Calm' },
+      { tick: 2 * BAR, length: BAR, name: 'Combat' },
+      { tick: 3 * BAR, length: 2 * BAR, name: 'After' },
+    ],
+  }
+  const racks = { lead: band().lead }
+  const make = () => new SongPlayer(s, racks, { sampleRate: SR, routing: { strips: true, sends: false, master: false } })
+  /**
+   * Render so many frames and hand back the left channel. In blocks of 250,
+   * which a bar, a beat and a sixteenth all divide exactly, so every run
+   * stops on the frame asked for.
+   */
+  const BLOCK = 250
+  const run = (p: SongPlayer, frames: number) => {
+    const out = new Float32Array(frames)
+    const l = new Float32Array(BLOCK)
+    const r = new Float32Array(BLOCK)
+    for (let i = 0; i < frames; i += BLOCK) {
+      p.render(l, r)
+      out.set(l.subarray(0, Math.min(BLOCK, frames - i)), i)
+    }
+    return out
+  }
+  const firstSound = (buf: Float32Array) => buf.findIndex((v) => Math.abs(v) > 1e-4)
+
+  // How long the note takes to be heard after it starts: its attack. Every
+  // timing below is that far after the moment it names.
+  const now = make()
+  run(now, FRAMES / 4)
+  now.playSection('Combat', { when: 'now' })
+  const straight = run(now, 4000)
+  const onset = firstSound(straight)
+  check('now means now', now.section === 'Combat' && onset >= 0 && onset < 200, `${now.section}, heard ${onset} frames in`)
+
+  const p = make()
+  check('it lists the sections', p.sections.map((x) => x.name).join() === 'Calm,Combat,After')
+  run(p, FRAMES / 2)
+  check('and says which one is playing', p.section === 'Calm' && p.tick === BAR / 2, `${p.section} at ${p.tick}`)
+  check('a name no section has is refused', !p.playSection('Boss'))
+  check('a section is asked for by name, in any case', p.playSection('combat'))
+  // Asked for half way through bar one: it waits for bar two to begin.
+  const wait = run(p, FRAMES / 2 - BLOCK)
+  check('it waits for the bar line, in silence', firstSound(wait) < 0 && p.section === 'Calm', `${firstSound(wait)}, ${p.section}`)
+  const then = run(p, FRAMES / 4)
+  check('and starts on it, to the sample', firstSound(then) === BLOCK + onset, `heard at ${firstSound(then)}, bar line at ${BLOCK}`)
+  check('where it says it is', p.section === 'Combat')
+  run(p, FRAMES * 2)
+  check('it loops the section until told otherwise', p.section === 'Combat', `${p.section} at ${p.tick / BAR} bars`)
+  p.releaseSection()
+  run(p, FRAMES * 1.25)
+  check('let go of, the song plays on past it', p.section === 'After', `${p.section} at ${p.tick / BAR} bars`)
+
+  const beat = make()
+  run(beat, FRAMES / 16)
+  beat.playSection('Combat', { when: 'beat' })
+  const toBeat = run(beat, FRAMES / 4)
+  check('on the next beat', firstSound(toBeat) === FRAMES / 4 - FRAMES / 16 + onset, String(firstSound(toBeat)))
+
+  const phrase = make()
+  run(phrase, FRAMES / 4)
+  phrase.playSection('After', { when: 'section' })
+  run(phrase, FRAMES)
+  check('at the end of the section playing', phrase.section === 'Calm', String(phrase.section))
+  run(phrase, FRAMES)
+  check('and not before', phrase.section === 'After', String(phrase.section))
+
+  const once = make()
+  once.playSection('Combat', { when: 'now', loop: false })
+  run(once, FRAMES + FRAMES / 2)
+  check('played once, a section runs on into the next', once.section === 'After', String(once.section))
 }
 
 console.log('\nthe song console')
@@ -1664,7 +2039,7 @@ console.log('\nthe song console')
 console.log('\nchords in the roll')
 {
   const at = (id: string, root: number, inversion = 0, scale?: { root: number; mode: string }) =>
-    chordPitches(root, chordById(id)!, inversion, scale, 25).join()
+    chordPitches(root, chordById(id)!, inversion, scale, TWO_OCTAVES).join()
   check('a major chord is a root, a major third and a fifth', at('maj', 0) === '0,4,7', at('maj', 0))
   check('a minor seventh has four notes', at('min7', 9) === '9,12,16,19', at('min7', 9))
   check('the first inversion puts the root on top', at('maj', 0, 1) === '4,7,12', at('maj', 0, 1))
@@ -1742,6 +2117,7 @@ console.log('\na file that says something the editor never would')
       { pattern: 'a', tick: 0 },
       { pattern: 'a', tick: 1920.2 },
     ],
+    // From before sections had lengths: markers, each running to the next.
     markers: [
       { tick: 0, name: 'Intro' },
       { tick: 0.2, name: 'Also intro' },
@@ -1756,7 +2132,8 @@ console.log('\na file that says something the editor never would')
     check('a pattern is never shorter than the editor allows', parsed.patterns[0].length === PPQ, String(parsed.patterns[0].length))
     check('a duplicate placement is dropped', parsed.playlist.length === 2, JSON.stringify(parsed.playlist))
     check('a placement tick is whole', parsed.playlist[1]?.tick === 1920)
-    check('two markers on one tick are one', parsed.markers?.length === 1 && parsed.markers[0].name === 'Intro')
+    check('two old markers on one tick are one section', parsed.sections?.length === 1 && parsed.sections[0].name === 'Intro',
+      JSON.stringify(parsed.sections))
     check('a track called __proto__ is refused', parsed.tracks.length === 1 && parsed.tracks[0].id === 'lead')
     check('and its notes with it', parsed.patterns[0].notes.length === 1)
     check('nothing leaked onto the prototype', Object.getPrototypeOf(parsed) === Object.prototype)
@@ -1786,12 +2163,14 @@ console.log('\na file that says something the editor never would')
     check('a track named like a built-in gets no borrowed rack', !('toString' in project.racks && Object.prototype.hasOwnProperty.call(project.racks, 'toString')))
   }
 
-  // Changing meter can fold two placements onto one bar; they merge.
+  // A clip on beat two of bar two stays on beat two of bar two, as far as the
+  // new bar reaches.
   const folded = setMeter(
-    song({ playlist: [{ pattern: 'a', tick: 0 }, { pattern: 'a', tick: PPQ }] }),
-    { beats: 1, unit: 4 },
+    song({ playlist: [{ pattern: 'a', tick: 4 * PPQ + PPQ }, { pattern: 'a', tick: 3 * PPQ }] }),
+    { beats: 3, unit: 4 },
   )
-  check('a meter change never leaves two copies on one bar', new Set(folded.playlist.map((x) => x.tick)).size === folded.playlist.length, JSON.stringify(folded.playlist))
+  check('a meter change keeps a clip on its beat', folded.playlist[0].tick === 3 * PPQ + PPQ, JSON.stringify(folded.playlist))
+  check('or at the end of a bar that no longer reaches it', folded.playlist[1].tick === 3 * PPQ - 1, JSON.stringify(folded.playlist))
 }
 
 console.log('\nsong edits that change nothing')
@@ -1808,6 +2187,251 @@ console.log('\nsong edits that change nothing')
   check('the desk set to what it already is', updateConsole(s, { master: { limiter: true }, space: {} }) === s)
   check('but a real desk change is an edit', updateConsole(s, { master: { limiter: false } }) !== s)
   check('solo on a track that is not there', soloTrack(s, 'nope') === s)
+}
+
+console.log('\nswing')
+{
+  const bar = PPQ * 4
+  const S16 = PPQ / 4
+  const straight = { length: bar }
+  const hard = { length: bar, swing: { amount: 0.75, step: S16 } }
+  check('straight leaves every tick alone', [0, 120, 240, 700].every((t) => swungTick(t, straight) === t))
+  check('the first tick of every pair stays put', [0, 480, 960, 1440].every((t) => swungTick(t, hard) === t))
+  check('the second step lands three quarters through its pair', swungTick(S16, hard) === 360, String(swungTick(S16, hard)))
+  check('a tick between steps swings by its share', swungTick(120, hard) === 180, String(swungTick(120, hard)))
+  let ordered = true
+  for (let t = 1; t < bar; t++) if (!(swungTick(t, hard) > swungTick(t - 1, hard))) ordered = false
+  check('nothing overtakes anything else', ordered)
+  let inverse = 0
+  for (let t = 0; t <= bar; t += 7) inverse = Math.max(inverse, Math.abs(unswungTick(swungTick(t, hard), hard) - t))
+  check('a moment played can be turned back into the tick written', inverse < 1e-9, `worst ${inverse}`)
+  // A pattern that stops half way through a pair would swing its last notes
+  // past its own end and over whatever comes next.
+  const ragged = { length: 480 + 240, swing: { amount: 0.75, step: S16 } }
+  check('a pair cut short by the end of the pattern is left straight', swungTick(600, ragged) === 600)
+
+  const swung = song({
+    patterns: [
+      {
+        id: 'a',
+        name: 'A',
+        length: bar,
+        notes: [
+          { track: 'lead', tick: 0, length: S16, pitch: 0, velocity: 1 },
+          { track: 'lead', tick: S16, length: S16, pitch: 2, velocity: 1 },
+        ],
+        swing: { amount: 2 / 3, step: S16 },
+      },
+    ],
+    playlist: [{ pattern: 'a', tick: 0 }],
+  })
+  const ev = songEventTicks(swung, 0, bar)
+  const on2 = ev.find((e) => e.kind === 'on' && e.pitch === 2)!.tick
+  const off1 = ev.find((e) => e.kind === 'off' && e.pitch === 0)!.tick
+  check('the off-step note plays late', Math.abs(on2 - 320) < 1e-9, String(on2))
+  check('and the note before it holds until it does', Math.abs(off1 - on2) < 1e-9, `${off1} / ${on2}`)
+
+  // Kept by the file, and only as a swing can be.
+  const back = parseSong(JSON.parse(JSON.stringify(swung)))!
+  check('a swing survives a save and a load', back.patterns[0].swing?.amount === 0.667, JSON.stringify(back.patterns[0].swing))
+  const odd = parseSong(
+    JSON.parse(
+      JSON.stringify({
+        ...swung,
+        patterns: [
+          { ...swung.patterns[0], id: 'x', swing: { amount: 3, step: 77 } },
+          { ...swung.patterns[0], id: 'y', swing: { amount: 0.4 } },
+          { ...swung.patterns[0], id: 'z', swing: 'lots' },
+        ],
+        playlist: [],
+      }),
+    ),
+  )!
+  check('too much swing is as much as there is', odd.patterns[0].swing?.amount === 0.75, JSON.stringify(odd.patterns[0].swing))
+  check('and a step that is not one of the two is sixteenths', odd.patterns[0].swing?.step === S16)
+  check('less than straight is straight', odd.patterns[1].swing === undefined)
+  check('and nonsense is nothing', odd.patterns[2].swing === undefined)
+
+  // Edits, and what undo sees of them.
+  const same = setPatternSwing(swung, 'a', 2 / 3, S16)
+  check('setting the swing it already has changes nothing', setPatternSwing(same, 'a', 0.667, S16) === same)
+  const flat = setPatternSwing(swung, 'a', 0.5, S16)
+  check('straightening it takes the swing off the pattern', !('swing' in flat.patterns[0]))
+  check('and an unknown pattern is left alone', setPatternSwing(swung, 'nope', 0.6, S16) === swung)
+  const copied = duplicatePattern(swung, 'a', 'b', 'B').patterns[1]
+  check('a copy of a pattern swings the way it did', copied.swing?.amount === swung.patterns[0].swing?.amount)
+
+  // A swing pulled back while a note holds. Swung hard, the note below
+  // starts at 360 and ends at 420; straight, it would end at 360. With the
+  // scheduler's cursor at 400 its start has gone out and its end has not --
+  // and the new end is behind the cursor, where no pass will ever send it.
+  const shortNote = song({
+    patterns: [
+      {
+        id: 'a',
+        name: 'A',
+        length: bar,
+        notes: [{ track: 'lead', tick: S16, length: S16 / 2, pitch: 7, velocity: 1 }],
+        swing: { amount: 0.75, step: S16 },
+      },
+    ],
+    playlist: [{ pattern: 'a', tick: 0 }],
+  })
+  const cursor = 400
+  const released = releasedBySwing(shortNote, setPatternSwing(shortNote, 'a', 0.5, S16), cursor)
+  check(
+    'a note whose end the swing moved behind the cursor is let go of there',
+    released.length === 1 && released[0].kind === 'off' && released[0].tick === cursor,
+    JSON.stringify(released),
+  )
+  const longNote = {
+    ...shortNote,
+    patterns: [{ ...shortNote.patterns[0], notes: [{ ...shortNote.patterns[0].notes[0], length: S16 }] }],
+  }
+  check(
+    'one whose end is still ahead is left for the scheduler',
+    releasedBySwing(longNote, setPatternSwing(longNote, 'a', 0.5, S16), cursor).length === 0,
+  )
+  check('and a change of notes is not mistaken for a change of swing', releasedBySwing(shortNote, longNote, cursor).length === 0)
+
+  // Another pattern's notes, drawn behind this one where they are heard.
+  // Under a swung pattern, the straight pattern's off-step note is handed
+  // back at the written tick this pattern would carry to the same moment.
+  const layered = song({
+    patterns: [
+      { id: 'a', name: 'A', length: bar, notes: [], swing: { amount: 0.75, step: S16 } },
+      { id: 'b', name: 'B', length: bar, notes: [{ track: 'drum', tick: S16, length: S16, pitch: 0, velocity: 1 }] },
+    ],
+    playlist: [{ pattern: 'a', tick: 0 }, { pattern: 'b', tick: 0 }],
+  })
+  const asWritten = contextNotes(layered, 'a', 0)[0]
+  const asHeard = contextNotes(layered, 'a', 0, true)[0]
+  check('behind a pattern, another is drawn as written unless asked', asWritten.tick === S16)
+  check(
+    'and where it is heard when asked',
+    Math.abs(swungTick(asHeard.tick, layered.patterns[0]) - S16) < 1e-9 &&
+      Math.abs(swungTick(asHeard.tick + asHeard.length, layered.patterns[0]) - 2 * S16) < 1e-9,
+    JSON.stringify(asHeard),
+  )
+
+  // The game's handle on it.
+  const player = new SongPlayer(swung, band(), { sampleRate: SR })
+  check('a game can swing a pattern by name', player.setSwing(0.6, 'A') && player.getSwing('A') === 0.6)
+  check('or every pattern at once', player.setSwing(0.7) && player.getSwing('a') === 0.7)
+  check('and is told when there is no such pattern', player.setSwing(0.6, 'nothing') === false)
+  const bl = new Float32Array(512)
+  const br = new Float32Array(512)
+  let finite = true
+  for (let i = 0; i < 200; i++) {
+    if (i % 20 === 0) player.setSwing(0.5 + (i % 40) / 160)
+    player.render(bl, br)
+    if (!bl.every(Number.isFinite)) finite = false
+  }
+  check('and turning it while the song plays is safe', finite)
+}
+
+console.log('\nnaming the rows by the notes they play')
+{
+  const mod = (id: string, type: string) => ({ id, type, params: {} })
+  const wire = (from: string, fromPort: string, to: string, toPort: string) => ({
+    id: `${from}-${to}-${toPort}`,
+    from: { module: from, port: fromPort },
+    to: { module: to, port: toPort },
+  })
+  type Extra = { modules?: ReturnType<typeof mod>[]; cables?: ReturnType<typeof wire>[] }
+  const C4 = 261.6256
+  const rack = (values: Record<string, number>, extra: Extra = {}) => ({
+    patch: {
+      modules: [mod('key1', 'keys'), mod('osc1', 'osc'), ...(extra.modules ?? [])],
+      cables: extra.cables ?? [wire('key1', 'pitch', 'osc1', 'fm')],
+    },
+    values,
+  })
+  const near = (a: number, b: number) => Math.abs(a - b) < 0.001
+
+  const plain = tuningOf(rack({ 'osc1.pitch': C4 }))
+  check('an oscillator at middle C names the bottom key C4',
+    !!plain && near(rowZero(plain), 60) && midiName(rowZero(plain)) === 'C4', JSON.stringify(plain))
+  check('and says which module it read', plain?.source === 'osc1')
+  const up = tuningOf(rack({ 'osc1.pitch': C4, 'osc1.octave': 1, 'key1.octave': -2 }))
+  check("the oscillator's Octave and the Keyboard's both count", !!up && near(rowZero(up), 60 + 12 - 24), JSON.stringify(up))
+  const byPitch = tuningOf(rack({ 'osc1.pitch': 440 }, { cables: [wire('key1', 'pitch', 'osc1', 'pitch')] }))
+  check('through the Pitch jack as well as FM', !!byPitch && near(rowZero(byPitch), 69))
+  const quarter = tuningOf(rack({ 'osc1.pitch': 440 * 2 ** (0.5 / 12) }))
+  check('a quarter tone is kept, not rounded', !!quarter && near(rowZero(quarter), 69.5), JSON.stringify(quarter))
+  check('and reads as the nearest note and how far off it is',
+    midiNameCents(69.26) === 'A4 +26¢' && midiNameCents(59.9) === 'C4 -10¢', `${midiNameCents(69.26)}, ${midiNameCents(59.9)}`)
+  const glide = tuningOf(rack({ 'osc1.pitch': C4 }, {
+    modules: [mod('slew1', 'slew')],
+    cables: [wire('key1', 'pitch', 'slew1', 'in'), wire('slew1', 'out', 'osc1', 'fm')],
+  }))
+  check('it follows the pitch through a Slew', !!glide && near(rowZero(glide), 60))
+  const stack = tuningOf(rack({ 'osc1.pitch': C4 * 2 ** (-0.07 / 12), 'osc2.pitch': C4 * 2 ** (0.07 / 12), 'osc3.pitch': C4 * 2 }, {
+    modules: [mod('osc2', 'osc'), mod('osc3', 'osc')],
+    cables: [wire('key1', 'pitch', 'osc1', 'fm'), wire('key1', 'pitch', 'osc2', 'fm'), wire('key1', 'pitch', 'osc3', 'fm')],
+  }))
+  check('a detuned pair reads as the note between them, and the octave above is left out',
+    !!stack && near(rowZero(stack), 60), JSON.stringify(stack))
+  check('nothing tuned on the Keyboard names nothing', tuningOf(rack({}, { cables: [] })) === null)
+  check('and neither does a drum',
+    tuningOf({ patch: { modules: [mod('gate1', 'gate'), mod('osc1', 'osc')], cables: [] }, values: {} }) === null)
+  check('untuned, the bottom key is C0 as before',
+    rowZero(null) === 12 && midiName(rowZero(null)) === 'C0' && midiName(0) === 'C-1')
+
+  const aMinor = { root: 9, mode: 'minor' }
+  check('A minor on a track tuned to A starts on its bottom row', scaleForRows(aMinor, 57)?.root === 0)
+  check('and on a track tuned to C, nothing moves', scaleForRows(aMinor, 60)?.root === 9 && scaleForRows(aMinor, 12)?.root === 9)
+}
+
+console.log('\nthe roll\'s tools')
+{
+  const G = PPQ / 4
+  const n = (tick: number, pitch: number, length = G, velocity = 0.8) => ({ track: 't', tick, length, pitch, velocity })
+  const at = (e: { notes: { tick: number; pitch: number; length: number }[] }) =>
+    [...e.notes].sort((a, b) => a.tick - b.tick || a.pitch - b.pitch).map((x) => `${x.tick}:${x.pitch}:${x.length}`).join(' ')
+
+  const chopped = chopNotes([n(0, 0, 4 * G + 100), n(0, 7)], [0], G)
+  check('Chop cuts a held note into grid steps, the last one what is left',
+    at(chopped) === `0:0:${G} 0:7:${G} ${G}:0:${G} ${2 * G}:0:${G} ${3 * G}:0:${G} ${4 * G}:0:100`, at(chopped))
+  check('and leaves the pieces selected, and nothing else', chopped.selected.length === 5 &&
+    chopped.selected.every((i) => chopped.notes[i].pitch === 0))
+
+  const chord = [n(0, 7, 960), n(0, 0, 960), n(0, 4, 960)]
+  const up = strumNotes(chord, [0, 1, 2], 30, false)
+  check('Strum up plays a chord lowest first, a string at a time', at(up) === '0:0:960 30:4:930 60:7:900', at(up))
+  const down = strumNotes(chord, [0, 1, 2], 30, true)
+  check('and down, highest first, with every end where it was', at(down) === '0:7:960 30:4:930 60:0:900', at(down))
+
+  const arp = arpeggiateNotes(chord, [0, 1, 2], G, false, 4 * PPQ)
+  check('Arpeggiate runs up the chord a step at a time for as long as it is held',
+    arp.notes.length === 4 && at(arp) === `0:0:${G} ${G}:4:${G} ${2 * G}:7:${G} ${3 * G}:0:${G}`, at(arp))
+  const arpDown = arpeggiateNotes(chord, [0, 1, 2], G, true, 4 * PPQ)
+  check('and down it, highest first', arpDown.notes.map((x) => x.pitch).join() === '7,4,0,7')
+  check('a note on its own is not arpeggiated', at(arpeggiateNotes([n(G, 5)], [0], G, false, 4 * PPQ)) === `${G}:5:${G}`)
+
+  const flam = flamNotes([n(0, 3), n(PPQ, 3)], [0, 1], 48)
+  check('Flam puts a softer grace note just before each note',
+    at(flam) === `0:3:${G} ${PPQ - 48}:3:48 ${PPQ}:3:${G}` && flam.notes.some((x) => x.tick === PPQ - 48 && x.velocity < 0.8), at(flam))
+  check('and none where there is no room before it', flam.notes.filter((x) => x.tick < 48).length === 1)
+
+  const phrase = [n(0, 0, G), n(G, 2, G), n(3 * G, 4, G)]
+  const back = reverseNotes(phrase, [0, 1, 2])
+  check('Reverse plays the phrase backwards in the same span', at(back) === `0:4:${G} ${2 * G}:2:${G} ${3 * G}:0:${G}`, at(back))
+
+  let r = 0
+  const seq = () => [0.99, 0, 0.5, 0.25][r++ % 4]
+  const cMajor = { root: 0, mode: 'major' }
+  const random = randomizePitches([n(0, 0), n(G, 0), n(2 * G, 0), n(3 * G, 0)], [0, 1, 2, 3], PITCH_RANGE,
+    (p) => nearestInScale(p, cMajor), seq)
+  const pitches = random.notes.map((x) => x.pitch)
+  check('Randomize pitch keeps the rhythm and moves the pitches within an octave of where they were',
+    random.notes.map((x) => x.tick).join() === `0,${G},${2 * G},${3 * G}` && pitches.every((p) => p >= 0 && p <= 12) &&
+      new Set(pitches).size > 1, pitches.join())
+  check('and onto the key when there is one', pitches.every((p) => inScale(p, cMajor)), pitches.join())
+
+  const others = [n(0, 9), ...chord]
+  const onlyPicked = strumNotes(others, [1, 2, 3], 30, false)
+  check('a tool leaves the notes it was not given alone', onlyPicked.notes[0].pitch === 9 && onlyPicked.notes[0].tick === 0)
 }
 
 console.log(failures === 0 ? '\nall good\n' : `\n${failures} failed\n`)

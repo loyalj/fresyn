@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { folderOf, heardTracks } from '../song/folder'
 import type { AudioEngine } from '../audio/AudioEngine'
 import type { ParamSpec } from '../patch/param'
 import { consoleOf, stripOf, updateConsole, updateStrip } from '../song/edit'
@@ -14,6 +15,8 @@ interface Props {
   onTrack: (id: string, change: Partial<Omit<Track, 'id'>>, key?: string) => void
   onSolo: (id: string) => void
   engine: AudioEngine
+  /** Whether hidden tracks get strips after all. */
+  showHidden: boolean
 }
 
 const knob = (id: string, label: string, min: number, max: number, def: number, unit: string, curve: 'lin' | 'exp' = 'lin'): ParamSpec => ({
@@ -61,9 +64,9 @@ const dbText = (gain: number) => {
  * are written straight to the page from the audio thread's reports and never
  * go through React.
  */
-export function MixView({ song, onEdit, onTrack, onSolo, engine }: Props) {
+export function MixView({ song, onEdit, onTrack, onSolo, engine, showHidden }: Props) {
   const desk = consoleOf(song)
-  const soloed = song.tracks.some((t) => t.solo)
+  const heard = heardTracks(song)
   const bars = useRef(new Map<string, HTMLDivElement>())
   const feed = useFallingMeter(FALL, (id: string, v) => fillBar(bars.current.get(id), v))
   const lufs = useRef<HTMLSpanElement>(null)
@@ -113,9 +116,12 @@ export function MixView({ song, onEdit, onTrack, onSolo, engine }: Props) {
   return (
     <div className="mix">
       <div className="mix-strips">
-        {song.tracks.map((track) => {
+        {/* A hidden track still plays, so it is still mixed -- just not
+            shown, unless the track list has been asked to list them. */}
+        {song.tracks.filter((t) => showHidden || !t.hidden).map((track) => {
           const strip = stripOf(track)
-          const silent = soloed ? !track.solo : !!track.mute
+          const silent = !heard.has(track.id)
+          const folder = folderOf(song, track)
           const set = (change: Parameters<typeof updateStrip>[2], field: string) =>
             onEdit((s) => updateStrip(s, track.id, change), `strip:${track.id}:${field}`)
           return (
@@ -124,7 +130,8 @@ export function MixView({ song, onEdit, onTrack, onSolo, engine }: Props) {
               className={`mix-strip${silent ? ' silent' : ''}${track.color !== undefined ? ' colored' : ''}`}
               style={track.color !== undefined ? ({ '--track-h': track.color } as React.CSSProperties) : undefined}
             >
-              <div className="mix-name" title={track.name}>
+              <div className="mix-name" title={folder ? `${track.name}, in ${folder.name}` : track.name}>
+                {folder && <span className="mix-folder">{folder.name}</span>}
                 {track.name}
               </div>
               <div className="mix-body">

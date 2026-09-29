@@ -8,6 +8,7 @@ import { makeZip, type ZipEntry } from '../audio/zip'
 import { downloadBytes, slug } from '../patch/storage'
 import type { Patch } from '../patch/types'
 import { DEFAULT_EXPORT, ExportPanel, type ExportSettings } from '../ui/ExportPanel'
+import { reason, warn, type SetNotice } from '../ui/notice'
 import { TakeList, type Take } from '../ui/TakeList'
 import { nextFrame } from './nextFrame'
 
@@ -20,7 +21,7 @@ interface Options {
   patchName: string
   patch: Patch
   values: Readonly<Record<string, number>>
-  setNotice: (text: string) => void
+  setNotice: SetNotice
 }
 
 /**
@@ -143,7 +144,7 @@ export function useTakes({ engine, samples, trackId, patchName, patch, values, s
               : ''),
         )
       } catch (err) {
-        setNotice(`Render failed: ${err instanceof Error ? err.message : String(err)}`)
+        setNotice(warn(`Render failed: ${reason(err)}`))
       } finally {
         setExporting(null)
       }
@@ -190,7 +191,7 @@ export function useTakes({ engine, samples, trackId, patchName, patch, values, s
 
     if (files.length === 1) downloadBytes(files[0].data, files[0].name, 'audio/wav')
     else downloadBytes(makeZip(files), `${base}.zip`, 'application/zip')
-    setNotice(`Saved ${files.length} take${files.length === 1 ? '' : 's'}`)
+    setNotice(`Downloaded ${files.length} take${files.length === 1 ? '' : 's'}`)
   }, [takes, setNotice])
 
   /**

@@ -53,6 +53,59 @@ export interface EngineStatus {
  */
 const RESUME_GRACE_MS = 250
 
+/**
+ * How long a device switch is waited on while the context is being built.
+ * Like a resume, it is not promised to settle, and a build that hung on it
+ * would leave the rack silent with nothing said.
+ */
+const SINK_GRACE_MS = 1000
+
+/**
+ * How much buffering to ask the device for. A named mode is the browser's own
+ * scale; a number is a buffer in milliseconds, which the browser rounds to
+ * whatever the hardware can do.
+ */
+export type LatencyMode = 'low' | 'balanced' | 'safe'
+
+/**
+ * How the audio device is opened. Kept by this browser, not by the project:
+ * two people opening the same file have different sound cards.
+ */
+export interface AudioSettings {
+  /** An output's `deviceId`. Absent or empty is the system's default. */
+  device?: string
+  /** Absent is `low`, which is what the rack has always opened with. */
+  latency?: LatencyMode | number
+  /** Absent is whatever the device runs at. */
+  sampleRate?: number
+}
+
+/** What the device actually gave, as opposed to what was asked for. */
+export interface AudioMeasure {
+  /** The context's own buffering, in seconds. */
+  base: number
+  /** From the context to the speaker, in seconds; 0 where the browser cannot tell. */
+  output: number
+  sampleRate: number
+}
+
+/** `setSinkId` on a context, which the DOM typings do not have yet. */
+interface Sinkable {
+  setSinkId(id: string): Promise<void>
+  readonly sinkId: string | object
+}
+
+/** Whether this browser can send a context to a chosen output (Chrome, Edge). */
+export const canChooseOutput =
+  typeof AudioContext !== 'undefined' && 'setSinkId' in AudioContext.prototype
+
+function latencyHint(latency: AudioSettings['latency']): AudioContextLatencyCategory | number {
+  if (typeof latency === 'number') return latency / 1000
+  if (latency === 'balanced') return 'balanced'
+  if (latency === 'safe') return 'playback'
+  return 'interactive'
+}
+
 interface TrackState {
   compiled: CompiledPatch
   /** Knob positions by `moduleId.paramId`, not by flat index; a recompile renumbers. */
@@ -122,9 +175,101 @@ export class AudioEngine {
   /** The track whose panels are on screen, and so the only one worth metering. */
   private watched = ''
 
-  constructor(racks: readonly RackInput[]) {
+  /** How the next context is opened. See `configure`. */
+  private settings: AudioSettings
+
+  constructor(racks: readonly RackInput[], settings: AudioSettings = {}) {
     for (const r of racks) this.setTrackPatch(r.id, r.patch, r.values)
     this.watched = racks[0]?.id ?? ''
+    this.settings = settings
+  }
+
+  /**
+   * Whether `configure(next)` would close the context and open another. The
+   * sample clock starts again at 0 when it does, so a transport has to be
+   * stopped first.
+   */
+  wouldRebuild(next: AudioSettings): boolean {
+    if (!this.ctx) return false
+    return (
+      latencyHint(next.latency) !== latencyHint(this.settings.latency) ||
+      next.sampleRate !== this.settings.sampleRate
+    )
+  }
+
+  /**
+   * Change how the device is opened.
+   *
+   * The output moves without a break where the browser allows it. Latency and
+   * sample rate are fixed when a context is built, so changing either closes
+   * this one and builds another from what is held here -- the racks, knobs,
+   * samples, mix and held gates all come across, as they do after a failure.
+   * Before anything has been played this only records the change.
+   *
+   * Resolves with a sentence to show if the output could not be moved, or
+   * `null`. Never rejects, like `start()`.
+   */
+  async configure(next: AudioSettings): Promise<string | null> {
+    const rebuild = this.wouldRebuild(next)
+    const moved = (next.device ?? '') !== (this.settings.device ?? '')
+    this.settings = next
+    const ctx = this.ctx
+    if (!ctx) return null
+    if (rebuild) {
+      this.release()
+      // The device choice is made again inside the build.
+      return (await this.start()) ? this.sinkProblem : null
+    }
+    if (moved) return this.route(ctx)
+    return null
+  }
+
+  /** Set by the last attempt to move the output, when it failed. */
+  private sinkProblem: string | null = null
+
+  /**
+   * Send the context to the chosen output. A device that is gone, or that the
+   * page may not use, leaves the context on the default and says so rather
+   * than failing the whole engine.
+   */
+  private async route(ctx: AudioContext): Promise<string | null> {
+    this.sinkProblem = null
+    if (!canChooseOutput) return null
+    const sink = ctx as AudioContext & Sinkable
+    const want = this.settings.device ?? ''
+    if ((typeof sink.sinkId === 'string' ? sink.sinkId : '') === want) return null
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        sink.setSinkId(want),
+        new Promise<void>((_, fail) => {
+          timer = setTimeout(() => fail(new Error('the device did not answer')), SINK_GRACE_MS)
+        }),
+      ])
+    } catch (err) {
+      this.sinkProblem = `Could not play through that output (${
+        err instanceof Error && err.message ? err.message : 'unavailable'
+      }), so the default is being used.`
+      if (want !== '') sink.setSinkId('').catch(() => {})
+    } finally {
+      clearTimeout(timer)
+    }
+    return this.sinkProblem
+  }
+
+  /**
+   * What the device is actually doing, or `null` before it is open. Read
+   * fresh each time: the output figure moves as the browser learns more
+   * about the device.
+   */
+  measure(): AudioMeasure | null {
+    const ctx = this.ctx
+    if (!ctx || !this.node) return null
+    return {
+      base: ctx.baseLatency ?? 0,
+      output: ctx.outputLatency ?? 0,
+      sampleRate: ctx.sampleRate,
+    }
   }
 
   private warn(id: string, compiled: CompiledPatch) {
@@ -370,10 +515,19 @@ export class AudioEngine {
     this.setStatus('starting')
     let ctx: AudioContext | undefined
     try {
-      const opened = new AudioContext({ latencyHint: 'interactive' })
+      const { sampleRate } = this.settings
+      const opened = new AudioContext({
+        latencyHint: latencyHint(this.settings.latency),
+        ...(sampleRate ? { sampleRate } : {}),
+      })
       ctx = opened
       this.ctx = opened
       opened.onstatechange = () => this.onContextState(opened)
+      // Moved here rather than passed to the constructor: a device id that
+      // has gone stale since it was saved would make the constructor throw,
+      // and one unplugged headset would leave the whole rack silent.
+      await this.route(opened)
+      if (this.ctx !== opened) return false
       await opened.audioWorklet.addModule(workletUrl)
       // Torn down while the module loaded; whatever did that has already
       // said why.
@@ -469,6 +623,12 @@ export class AudioEngine {
    * report back through `onstatechange` as a second, confusing failure.
    */
   private teardown(error: string) {
+    this.release()
+    this.setStatus('failed', error)
+  }
+
+  /** Drop the node and the context and forget the build, saying nothing. */
+  private release() {
     const ctx = this.ctx
     const node = this.node
     this.ctx = undefined
@@ -483,7 +643,6 @@ export class AudioEngine {
       ctx.onstatechange = null
       if (ctx.state !== 'closed') ctx.close().catch(() => {})
     }
-    this.setStatus('failed', error)
   }
 
   /**

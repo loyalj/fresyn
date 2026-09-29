@@ -271,14 +271,18 @@ async function rollGeometry() {
       w: el.clientWidth,
       h: el.clientHeight,
       rowH: Number(el.dataset.rowH),
+      high: Number(el.dataset.high),
+      rows: Number(el.dataset.rows),
       scroll: Number(el.dataset.scroll),
+      scrollW: Number(el.dataset.scrollW),
     }
   })
   const project = await stored()
   const length = project?.song?.patterns?.[0]?.length ?? 3840
-  const pxPerTick = (r.w - 40) / length
+  // The grid stops short of the scroll bar, when there is one.
+  const pxPerTick = (r.w - 40 - r.scrollW) / length
   const room = r.h - 16 - 34 - 2
-  const viewH = Math.min(room, 25 * r.rowH)
+  const viewH = Math.min(room, r.rows * r.rowH)
   // Borders: the canvas has a one-pixel one, which getBoundingClientRect
   // includes and the drawing does not.
   const top = r.y + 1 + 16
@@ -287,10 +291,41 @@ async function rollGeometry() {
     top,
     bottom: top + viewH,
     tickX: (tick) => r.x + 1 + 40 + tick * pxPerTick,
-    pitchY: (pitch) => top - r.scroll + (24 - pitch) * r.rowH + r.rowH / 2,
+    pitchY: (pitch) => top - r.scroll + (r.high - pitch) * r.rowH + r.rowH / 2,
   }
 }
 
+/**
+ * Scroll the rows so `pitch` is in the middle of the view, the way a hand
+ * would with the wheel, and say where everything is now. The roll has far
+ * more rows than fit, so a row has to be brought into view before it is
+ * aimed at.
+ */
+async function rollAround(pitch) {
+  const g = await rollGeometry()
+  const mid = (g.top + g.bottom) / 2
+  await page.mouse.move(g.tickX(0) + 4, mid)
+  // In a trackpad's small steps, which the roll follows to the pixel; a
+  // mouse wheel's notches only ever move it a few rows.
+  let left = g.pitchY(pitch) - mid
+  while (Math.abs(left) >= 1) {
+    const step = Math.sign(left) * Math.min(40, Math.abs(left))
+    await page.mouse.wheel({ deltaY: step })
+    left -= step
+  }
+  await wait(50)
+  return rollGeometry()
+}
+
+/** The rows at rest: no wheel notch still gliding. */
+const glided = () => waitUntil(page, () => !document.querySelector('.roll-canvas')?.dataset.gliding)
+
+const laneAt = (bar, lane) =>
+  page.evaluate((bar, lane) => {
+    const r = document.querySelector('.playlist-layer').getBoundingClientRect()
+    const w = parseFloat(getComputedStyle(document.querySelector('.playlist-grid')).getPropertyValue('--bar-w'))
+    return { x: r.left + bar * w, y: r.top + lane * 24 + 12 }
+  }, bar, lane)
 const press = async (key, mods = []) => {
   for (const m of mods) await page.keyboard.down(m)
   await page.keyboard.press(key)
@@ -302,6 +337,7 @@ console.log('\nselecting, copying and stretching')
 {
   const g = await rollGeometry()
   check('rows are a comfortable height to aim at', g.rowH >= 16, `${g.rowH.toFixed(1)}px`)
+  check('the roll has a row for every one of 128 notes', g.rows === 128, `${g.rows} rows`)
   const [first] = await notesOf()
   const noteX = g.tickX(first.tick + first.length / 2)
   const noteY = g.pitchY(first.pitch)
@@ -360,16 +396,36 @@ console.log('\nselecting, copying and stretching')
   check('dragging an end stretches the whole selection by the same amount',
     grown[0] > 0 && grown.every((d) => d === grown[0]), `grew by ${grown.join(', ')}`)
 
+  // The rows go on past the Keyboard's two octaves: two more octaves down
+  // takes the notes under its bottom key, and the view goes with them.
+  await press('ArrowDown', ['Shift'])
+  await press('ArrowDown', ['Shift'])
+  notes = await notesOf()
+  const deep = await rollGeometry()
+  check('notes go on down past the bottom of the Keyboard',
+    notes[0].pitch < 0 && notes.every((n) => n.pitch === first.pitch - 36), JSON.stringify(notes.map((n) => n.pitch)))
+  check('and the view scrolls down to them', deep.pitchY(notes[0].pitch) > deep.top && deep.pitchY(notes[0].pitch) < deep.bottom,
+    `row at ${deep.pitchY(notes[0].pitch).toFixed(0)}, view ${deep.top.toFixed(0)}..${deep.bottom.toFixed(0)}`)
+  await press('ArrowUp', ['Shift'])
+  await press('ArrowUp', ['Shift'])
+
   // The wheel scrolls the rows when they do not all fit, and Ctrl+wheel
   // makes them taller.
-  if (g.bottom - g.top < 25 * g.rowH) {
+  if (g.bottom - g.top < g.rows * g.rowH) {
     await page.mouse.move(g.tickX(2000), (g.top + g.bottom) / 2)
+    // From where the rows are now: the octave move above scrolled them.
+    const was = await rollGeometry()
     await page.mouse.wheel({ deltaY: 120 })
-    await wait(150)
+    // Part way through its glide, it is between rows: smooth, not stepped.
+    await frames(page)
+    const mid = await rollGeometry()
+    await glided()
     const after = await rollGeometry()
-    check('the wheel scrolls the rows', after.scroll !== g.scroll, `${g.scroll} -> ${after.scroll}`)
-    await page.mouse.wheel({ deltaY: -2000 })
-    await wait(150)
+    check('a wheel notch scrolls the rows three rows', Math.abs(after.scroll - was.scroll - 3 * was.rowH) < 0.01,
+      `${was.scroll} -> ${after.scroll}, rows ${was.rowH}`)
+    check('gliding there rather than jumping', mid.scroll > was.scroll && mid.scroll < after.scroll, `${was.scroll} -> ${mid.scroll} -> ${after.scroll}`)
+    for (let i = 0; i < 60; i++) await page.mouse.wheel({ deltaY: -120 })
+    await glided()
     check('and stops at the top', (await rollGeometry()).scroll === 0)
 
     // Wheeling on past the end is still the roll's: whatever scrolls behind
@@ -397,8 +453,37 @@ console.log('\nselecting, copying and stretching')
     const behindAfter = await scrolled()
     check('and the rack behind does not scroll with it', behind > 0 && behindAfter === behind,
       `${behind} before, ${behindAfter} after`)
-    await page.mouse.wheel({ deltaY: -4000 })
-    await wait(150)
+    for (let i = 0; i < 60; i++) await page.mouse.wheel({ deltaY: -120 })
+    await glided()
+
+    // The scroll bar down the right is a scroll bar: dragged, it scrolls;
+    // clicked, it jumps; and neither lays a note.
+    const bar = await rollGeometry()
+    const notesBefore = (await notesOf(0)).length
+    const barX = bar.x + bar.w - bar.scrollW / 2
+    await page.mouse.click(barX, bar.bottom - 4)
+    await frames(page)
+    const jumped = await rollGeometry()
+    check('a click low on the scroll bar jumps the rows down', jumped.scroll > bar.scroll + 100, `${bar.scroll} -> ${jumped.scroll}`)
+    check('and lays no note', (await notesOf(0)).length === notesBefore)
+    await page.mouse.move(barX, bar.bottom - 4)
+    await page.mouse.down()
+    await page.mouse.move(barX, bar.top + 4, { steps: 8 })
+    await page.mouse.up()
+    await frames(page)
+    check('dragging the thumb back up scrolls back to the top', (await rollGeometry()).scroll === 0, String((await rollGeometry()).scroll))
+    // Taken hold of by the thumb, which is at the top now.
+    await page.mouse.move(barX, bar.top + 10)
+    await page.mouse.down()
+    await page.mouse.move(barX, bar.top + 17, { steps: 3 })
+    await page.mouse.up()
+    await frames(page)
+    const nudged = (await rollGeometry()).scroll
+    check('by as little as a pixel of the thumb', nudged > 0 && nudged < 20 * bar.rowH && nudged !== Math.round(nudged / bar.rowH) * bar.rowH,
+      String(nudged))
+    check('and still no note', (await notesOf(0)).length === notesBefore)
+    for (let i = 0; i < 60; i++) await page.mouse.wheel({ deltaY: -120 })
+    await glided()
   } else {
     check('the wheel scrolls the rows', false, 'the dock is tall enough to show every row, so nothing to scroll')
   }
@@ -422,8 +507,8 @@ console.log('\nselecting, copying and stretching')
   // Alt+drag paints a note on every step it crosses, spaced by the last
   // length drawn; a right-drag sweeps them away again.
   {
-    const p = await rollGeometry()
     const row = 20
+    const p = await rollAround(row)
     const y = p.pitchY(row)
     const before = (await notesOf()).length
     await page.keyboard.down('Alt')
@@ -470,7 +555,7 @@ console.log('\nselecting, copying and stretching')
       await wait(200)
     }
     await pick('1/8 T')
-    const p = await rollGeometry()
+    const p = await rollAround(22)
     const before = (await notesOf()).length
     await page.mouse.click(p.tickX(330), p.pitchY(22))
     await edited()
@@ -505,11 +590,16 @@ console.log('\nselecting, copying and stretching')
     await edited()
     check('the key is saved with the song', JSON.stringify((await stored()).song.scale) === '{"root":0,"mode":"major","snap":true}',
       JSON.stringify((await stored()).song.scale))
-    const p = await rollGeometry()
-    await page.mouse.click(p.tickX(2900), p.pitchY(13))
+    // The key is in the notes you hear, and the rows are named from this
+    // track's tuning, so the row that sounds a C# is worked out from it.
+    const zero = Math.round(await page.$eval('.roll-canvas', (el) => Number(el.dataset.rowZero)))
+    const cSharp = 12 + (((1 - zero) % 12) + 12) % 12
+    const p = await rollAround(cSharp)
+    await page.mouse.click(p.tickX(2900), p.pitchY(cSharp))
     await edited()
     const onKey = (await notesOf()).find((n) => n.tick === 2880)
-    check('a note drawn on C# with C major snapped lands on D', onKey?.pitch === 14, `pitch ${onKey?.pitch}`)
+    check('a note drawn on C# with C major snapped lands on D', onKey?.pitch === cSharp + 1,
+      `row ${onKey?.pitch}, C# is row ${cSharp}`)
     await page.select('.roll-tools select[aria-label="Scale"]', '')
     await edited()
     check('and No scale takes the key off the song', (await stored()).song.scale === undefined)
@@ -520,7 +610,7 @@ console.log('\nselecting, copying and stretching')
   {
     await page.select('.roll-tools select[aria-label="Chord"]', 'min7')
     await wait(200)
-    const p = await rollGeometry()
+    const p = await rollAround(14)
     const y = p.pitchY(14)
     await page.mouse.move(p.tickX(3360 + 20), y)
     await page.mouse.down()
@@ -561,7 +651,8 @@ console.log('\nselecting, copying and stretching')
       }
       return best
     })
-  await page.mouse.move(g.x + 10, g.pitchY(12))
+  const keys = await rollAround(12)
+  await page.mouse.move(keys.x + 10, keys.pitchY(12))
   await page.mouse.down()
   let heard = 0
   for (let i = 0; i < 10; i++) {
@@ -682,8 +773,8 @@ console.log('\npatterns and the playlist')
   // the pointer over the roll the keys are the roll's, even though the last
   // thing clicked was the dropdown.
   {
-    const g = await rollGeometry()
     const [lead] = await notesOf(1)
+    const g = await rollAround(lead.pitch)
     await page.mouse.click(g.tickX(lead.tick + lead.length / 2), g.pitchY(lead.pitch))
     await wait(100)
     await press('KeyC', ['Control'])
@@ -711,29 +802,29 @@ console.log('\npatterns and the playlist')
   )
   await songButton.asElement().click()
   await wait(300)
-  check('the playlist shows', (await page.$('.playlist-cell')) !== null)
-  check('with a row per pattern', (await page.$$('.playlist-row')).length === 2)
+  check('the playlist shows', (await page.$('.playlist-layer')) !== null)
+  check('with the patterns listed beside it', (await page.$$('.playlist-pattern')).length === 2)
+  check('and the one being written chosen to paint with', (await page.$$('.playlist-pattern.on')).length === 1)
 
-  // Place the second pattern in bar three. Indexed among the rows rather than
-  // by nth-child, since the ruler and the playhead are children too.
-  const rows = await page.$$('.playlist-row')
-  const cells = await rows[1].$$('.playlist-cell')
-  check('the second row has cells', cells.length > 3, `got ${cells.length}`)
-  await cells[2].click()
+  // Paint the chosen pattern -- the second, picked from the dropdown above --
+  // into bar three of the second lane. Part way into the bar: a click paints
+  // from the start of the snap it falls in.
+  const at = await laneAt(2.3, 1)
+  await page.mouse.click(at.x, at.y)
   await edited()
   const placed = (await stored()).song.playlist
   const second = (await stored()).song.patterns[1].id
   check('a click places it', placed.length === 2, JSON.stringify(placed))
   check(
-    'the second pattern, at the bar clicked',
-    placed.some((p) => p.pattern === second && p.tick === 960 * 4 * 2),
+    'the second pattern, at the bar and in the lane clicked',
+    placed.some((p) => p.pattern === second && p.tick === 960 * 4 * 2 && p.lane === 1),
     JSON.stringify(placed),
   )
 
-  await cells[2].click()
+  await page.mouse.click(at.x, at.y, { button: 'right' })
   await edited()
-  check('and clicking again takes it off', (await stored()).song.playlist.length === 1)
-  await cells[2].click()
+  check('and a right-click takes it off', (await stored()).song.playlist.length === 1)
+  await page.mouse.click(at.x, at.y)
   await wait(400)
 }
 
@@ -838,6 +929,112 @@ console.log('\nit all comes back')
   check('the playlist survives', project.song.playlist.length === 2)
   check('and every rack with them', Object.keys(project.racks).length === 2)
   check('the dock reopens as it was', (await page.$('.roll-canvas')) !== null || (await page.$('.playlist')) !== null)
+}
+
+console.log('\nswing, drawn where it is heard')
+{
+  // One swung bar with one note on its second sixteenth, and a second
+  // pattern placed over the same bar with a note of its own.
+  const P = 12
+  await page.evaluate((P) => {
+    const project = JSON.parse(localStorage.getItem('fresyn.project.v1'))
+    const song = project.song
+    const track = song.tracks[0].id
+    const [a, b] = song.patterns
+    a.length = 3840
+    a.notes = [{ track, tick: 240, length: 240, pitch: P, velocity: 1 }]
+    a.swing = { amount: 0.75, step: 240 }
+    b.length = 3840
+    b.notes = [{ track, tick: 1440, length: 240, pitch: P + 3, velocity: 1 }]
+    song.playlist = [{ pattern: a.id, tick: 0 }, { pattern: b.id, tick: 0 }]
+    localStorage.setItem('fresyn.project.v1', JSON.stringify(project))
+  }, P)
+  await page.reload({ waitUntil: 'networkidle0' })
+  await waitUntil(page, () => !!document.querySelector('.dock-toggle'))
+  const roll = await page.evaluateHandle(() =>
+    [...document.querySelectorAll('.dock-toggle')].find((b) => b.textContent.trim() === 'Roll'),
+  )
+  await roll.asElement()?.click()
+  await waitUntil(page, () => !!document.querySelector('.roll-canvas'))
+  await frames(page)
+  const g = await rollAround(P)
+  // The right button erases whatever is under it, and nothing where there
+  // is nothing -- which is the question being asked.
+  const erase = async (tick) => {
+    await page.mouse.click(g.tickX(tick), g.pitchY(P), { button: 'right' })
+    await edited()
+  }
+
+  // Swung hard, the note written at 240 plays from 360 to 480. Where it
+  // would sit on a straight grid is empty; where it plays is the note.
+  await erase(300)
+  check('swung, the grid where the note was written is empty', (await notesOf()).length === 1)
+  await erase(420)
+  check('and the note is where it is heard', (await notesOf()).length === 0)
+  await press('KeyZ', ['Control'])
+
+  // A click in the swung second cell still lands on the written grid.
+  await drawNote(0, g.tickX(400) - g.x, g.tickX(470) - g.x)
+  await edited()
+  const drawn = (await notesOf()).find((n) => n.pitch !== P)
+  check('a note drawn in a swung cell is written on the grid', drawn?.tick === 240, JSON.stringify(drawn))
+
+  // The other pattern's note is drawn behind this one, and none of that
+  // edit is allowed to copy it in.
+  check(
+    'and the pattern behind it was not copied into this one',
+    !(await notesOf()).some((n) => n.pitch === P + 3),
+    JSON.stringify((await notesOf()).map((n) => n.pitch)),
+  )
+  check('while it keeps its own note', (await notesOf(1)).some((n) => n.pitch === P + 3))
+
+  // Off, the roll is the written grid again.
+  check('the View menu can show the written grid', await pickMenu('View', 'Show swing in the roll'))
+  await frames(page)
+  const before = (await notesOf()).length
+  await erase(300)
+  check('and then the note is where it was written', (await notesOf()).length === before - 1)
+  await pickMenu('View', 'Show swing in the roll')
+}
+
+console.log('\nthe rows are named by the notes they play')
+{
+  const text = (sel) => page.$eval(sel, (el) => el.textContent.trim())
+  // Clicked in the page rather than by the mouse: the dock sits over the
+  // bottom of the rack, and the Keyboard may be under it.
+  const tap = (sel) => page.$eval(sel, (el) => el.click())
+  const octaveOf = (s) => Number(/[A-G]#?(-?\d+)/.exec(s)?.[1])
+  const osc = await text('[data-module="osc1"] .osc-wave-note')
+  const line = await text('.roll-tools-tuning')
+  check('the roll names its bottom key by the note the oscillator is tuned to', line.startsWith(`Bottom key ${osc} · osc1`),
+    `"${line}" against the oscillator's ${osc}`)
+  const panel = await text('[data-module="key1"] .keys-key-name')
+  check('and the Keyboard panel names its bottom key the same', osc.startsWith(panel), `${panel} against ${osc}`)
+
+  await tap('[data-module="key1"] button[aria-label="Octave up"]')
+  await wait(200)
+  const raised = await text('.roll-tools-tuning')
+  check("the Keyboard's Octave moves the roll's names an octave", octaveOf(raised) === octaveOf(line) + 1, `${line} -> ${raised}`)
+  const raisedPanel = await text('[data-module="key1"] .keys-key-name')
+  check('and the panel with it', octaveOf(raisedPanel) === octaveOf(panel) + 1, `${panel} -> ${raisedPanel}`)
+  await tap('[data-module="key1"] button[aria-label="Octave down"]')
+  await wait(200)
+  check('and back', (await text('.roll-tools-tuning')) === line)
+}
+
+console.log('\nthe Tools menu')
+{
+  const tools = '.roll-tools select[aria-label="Tools"]'
+  const before = await notesOf()
+  await page.select(tools, 'flam')
+  await edited()
+  const after = await notesOf()
+  const room = before.filter((n) => n.tick >= 48).length
+  check('Flam from the Tools menu puts a grace note before every note with room for one',
+    room > 0 && after.length === before.length + room, `${before.length} notes -> ${after.length}`)
+  check('and the menu goes back to its label, ready for the next', (await page.$eval(tools, (el) => el.value)) === '')
+  await press('KeyZ', ['Control'])
+  check('one Ctrl+Z takes it back', (await notesOf()).length === before.length)
 }
 
 console.log('\nthe rack survives it')

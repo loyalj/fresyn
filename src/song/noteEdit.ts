@@ -1,4 +1,4 @@
-import { MIN_VELOCITY, type Note } from './types'
+import { MIN_VELOCITY, type Note, type PitchRange } from './types'
 
 /**
  * Edits to a group of notes in one pattern, for the roll.
@@ -24,7 +24,7 @@ export function moveNotes(
   dTick: number,
   dPitch: number,
   lengthTicks: number,
-  keys: number,
+  range: PitchRange,
 ): Edited {
   const group = selected.map((i) => notes[i]).filter(Boolean)
   if (group.length === 0) return { notes: [...notes], selected: [...selected] }
@@ -35,7 +35,7 @@ export function moveNotes(
   const low = Math.min(...group.map((n) => n.pitch))
   const high = Math.max(...group.map((n) => n.pitch))
   const t = clamp(dTick, -first, Math.max(-first, lengthTicks - last))
-  const p = clamp(dPitch, -low, keys - 1 - high)
+  const p = clamp(dPitch, range.low - low, range.high - high)
   const out = [...notes]
   for (const i of selected) {
     const n = out[i]
@@ -243,19 +243,19 @@ export function humanizeNotes(
  * The group moved up or down by a number of scale degrees, each note along
  * the scale rather than by the same number of semitones -- so a C major triad
  * moved up one becomes D minor, which is what staying in the key means. Held
- * back as a whole, a degree at a time, if any note would leave the keyboard.
+ * back as a whole, a degree at a time, if any note would leave the range.
  */
 export function transposeNotes(
   notes: readonly Note[],
   selected: readonly number[],
   degrees: number,
-  keys: number,
+  range: PitchRange,
   step: (pitch: number, degrees: number) => number,
 ): Edited {
   const group = selected.filter((i) => notes[i])
   for (let d = degrees; d !== 0; d -= Math.sign(d)) {
     const pitches = group.map((i) => step(notes[i].pitch, d))
-    if (pitches.every((p) => p >= 0 && p < keys)) {
+    if (pitches.every((p) => p >= range.low && p <= range.high)) {
       const out = [...notes]
       group.forEach((i, k) => (out[i] = { ...out[i], pitch: pitches[k] }))
       return { notes: out, selected: [...selected] }
@@ -264,5 +264,157 @@ export function transposeNotes(
   return { notes: [...notes], selected: [...selected] }
 }
 
+
+// --- transforms -----------------------------------------------------------
+//
+// The roll's Tools menu. Each takes the group and hands back the notes with
+// the group replaced by what it became, which is selected -- so a transform
+// can be followed by another, or undone as one step. Notes outside the group
+// keep their places in the list and their order.
+
+/** Everything but the group, and the group itself, in time order. */
+function split(notes: readonly Note[], selected: readonly number[]) {
+  const picked = new Set(selected.filter((i) => notes[i]))
+  const rest = notes.filter((_, i) => !picked.has(i))
+  const group = [...picked].map((i) => notes[i]).sort((a, b) => a.tick - b.tick || a.pitch - b.pitch)
+  return { rest, group }
+}
+
+/** The rest, and what the group became after them, selected. */
+function rejoin(rest: readonly Note[], made: readonly Note[]): Edited {
+  return { notes: [...rest, ...made], selected: made.map((_, i) => rest.length + i) }
+}
+
+/** Notes that start together, which is what a chord is to a strum or an arpeggio. */
+function chordsOf(group: readonly Note[]): Note[][] {
+  const byTick = new Map<number, Note[]>()
+  for (const n of group) {
+    const at = byTick.get(n.tick)
+    if (at) at.push(n)
+    else byTick.set(n.tick, [n])
+  }
+  return [...byTick.values()]
+}
+
+/**
+ * Each note cut into pieces a grid step long, the last one whatever is left
+ * -- a held note turned into a repeated one, which is how a pad becomes a
+ * pulse. A note no longer than a step is already one piece.
+ */
+export function chopNotes(notes: readonly Note[], selected: readonly number[], grid: number): Edited {
+  const { rest, group } = split(notes, selected)
+  const made: Note[] = []
+  for (const n of group) {
+    const end = n.tick + n.length
+    for (let t = n.tick; t < end; t += grid) made.push({ ...n, tick: t, length: Math.min(grid, end - t) })
+  }
+  return rejoin(rest, made)
+}
+
+/**
+ * Every chord played a string at a time: each note `step` ticks after the one
+ * under it, or over it for a down-strum, as a guitar is. The ends stay where
+ * they were, so the chord still lets go together.
+ */
+export function strumNotes(notes: readonly Note[], selected: readonly number[], step: number, down: boolean): Edited {
+  const { rest, group } = split(notes, selected)
+  const made: Note[] = []
+  for (const chord of chordsOf(group)) {
+    const order = [...chord].sort((a, b) => (down ? b.pitch - a.pitch : a.pitch - b.pitch))
+    order.forEach((n, k) => {
+      const late = Math.min(k * step, n.length - 1)
+      made.push({ ...n, tick: n.tick + late, length: n.length - late })
+    })
+  }
+  return rejoin(rest, made)
+}
+
+/**
+ * Every chord played as a run: its notes one at a time, a grid step each,
+ * lowest first or highest first, round and round for as long as the chord
+ * was held. A note on its own is left as it is -- there is nothing to run
+ * through.
+ */
+export function arpeggiateNotes(
+  notes: readonly Note[],
+  selected: readonly number[],
+  grid: number,
+  down: boolean,
+  lengthTicks: number,
+): Edited {
+  const { rest, group } = split(notes, selected)
+  const made: Note[] = []
+  for (const chord of chordsOf(group)) {
+    if (chord.length < 2) {
+      made.push(...chord)
+      continue
+    }
+    const order = [...chord].sort((a, b) => (down ? b.pitch - a.pitch : a.pitch - b.pitch))
+    const start = chord[0].tick
+    const end = Math.min(lengthTicks, start + Math.max(...chord.map((n) => n.length)))
+    for (let t = start, k = 0; t < end; t += grid, k++) {
+      const n = order[k % order.length]
+      made.push({ ...n, tick: t, length: Math.min(grid, end - t) })
+    }
+  }
+  return rejoin(rest, made)
+}
+
+/**
+ * A grace note `gap` ticks before each note, on the same key and softer: a
+ * drummer's flam, or a guitarist's pick-up. A note too near the start of the
+ * pattern for one to fit before it is left alone.
+ */
+export function flamNotes(notes: readonly Note[], selected: readonly number[], gap: number): Edited {
+  const { rest, group } = split(notes, selected)
+  const made: Note[] = []
+  for (const n of group) {
+    if (n.tick >= gap) {
+      made.push({ ...n, tick: n.tick - gap, length: gap, velocity: round2(clamp(n.velocity * 0.6, MIN_VELOCITY, 1)) })
+    }
+    made.push(n)
+  }
+  return rejoin(rest, made)
+}
+
+/**
+ * The group played backwards: mirrored in time across the span it covers,
+ * so the phrase fills the same bars and its last note is now its first.
+ */
+export function reverseNotes(notes: readonly Note[], selected: readonly number[]): Edited {
+  const { rest, group } = split(notes, selected)
+  if (group.length === 0) return rejoin(rest, [])
+  const first = Math.min(...group.map((n) => n.tick))
+  const last = Math.max(...group.map((n) => n.tick + n.length))
+  const made = group
+    .map((n) => ({ ...n, tick: first + last - (n.tick + n.length) }))
+    .sort((a, b) => a.tick - b.tick || a.pitch - b.pitch)
+  return rejoin(rest, made)
+}
+
+/**
+ * New pitches, drawn from the rows the group already spans -- an octave of
+ * them at least, so a repeated note has somewhere to go -- with the rhythm and
+ * the dynamics kept. `snap` lands each on the key when there is one.
+ *
+ * `random` is handed in so a check can pin it down, as Humanize's is.
+ */
+export function randomizePitches(
+  notes: readonly Note[],
+  selected: readonly number[],
+  range: PitchRange,
+  snap: (pitch: number) => number,
+  random: () => number,
+): Edited {
+  const { rest, group } = split(notes, selected)
+  if (group.length === 0) return rejoin(rest, [])
+  const low = Math.max(range.low, Math.min(...group.map((n) => n.pitch)))
+  const high = Math.min(range.high, Math.max(low + 12, ...group.map((n) => n.pitch)))
+  const made = group.map((n) => ({
+    ...n,
+    pitch: clamp(snap(low + Math.floor(random() * (high - low + 1))), range.low, range.high),
+  }))
+  return rejoin(rest, made)
+}
 const clamp = (n: number, lo: number, hi: number) => (n < lo ? lo : n > hi ? hi : n)
 const round2 = (n: number) => Math.round(n * 100) / 100

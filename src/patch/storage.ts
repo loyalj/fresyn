@@ -1,3 +1,4 @@
+import type { AudioSettings } from '../audio/AudioEngine'
 import type { StoredSample } from '../audio/sampleStore'
 import {
   fromStoredProject,
@@ -145,10 +146,19 @@ export interface Prefs {
   rollPlays?: 'pattern' | 'song'
   grid?: number
   rowZoom?: number
+  /** The playlist's snap, by name, and its width of a bar in pixels. */
+  playlistSnap?: 'bar' | 'beat' | 'half' | 'quarter' | 'off'
+  playlistZoom?: number
+  /** Whether hidden tracks are listed after all. */
+  showHiddenTracks?: boolean
   chord?: { id: string; inversion: number }
   cableColors?: 'signal' | 'module'
   compact?: boolean
   knobHelp?: boolean
+  /** Whether the roll draws a swung pattern as it sounds, or on its written grid. */
+  showSwing?: boolean
+  /** How the audio device is opened: this machine's, never the project's. */
+  audio?: AudioSettings
 }
 
 let prefsCache: Prefs | null = null

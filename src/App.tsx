@@ -12,6 +12,7 @@ import { Transport } from './audio/Transport'
 import { SampleLibrary } from './audio/SampleLibrary'
 import { askToPersist, pruneSamples } from './audio/sampleStore'
 import { useBounce } from './hooks/useBounce'
+import { useJob } from './hooks/useJob'
 import { useCableDrag } from './hooks/useCableDrag'
 import { loadInitialDoc, useDocument } from './hooks/useDocument'
 import { useProjectFiles } from './hooks/useProjectFiles'
@@ -47,13 +48,14 @@ import {
 import { canRedo, canUndo } from './patch/history'
 import { loadDock, saveDock, saveLocalProject, loadPrefs, savePrefs } from './patch/storage'
 import { noteTarget, type NoteTarget } from './song/bind'
+import { tuningOf } from './song/tuning'
 import { songEnd } from './song/schedule'
+import { sectionAt } from './song/section'
 import {
   addPattern,
   addTrack,
   duplicatePattern,
   firstPlacement,
-  sectionAt,
   nextPatternId,
   nextTrackId,
   patternOnly,
@@ -73,6 +75,7 @@ import { SampleContext } from './ui/SampleContext'
 import { UnitBoundary } from './ui/ErrorBoundary'
 import { jackKey } from './ui/Jack'
 import { ModuleSearch, type SearchPick } from './ui/ModuleSearch'
+import { asNotice, NOTICE_FADE_MS, warn, type NoticeInput } from './ui/notice'
 import { KnobHelpCard, KnobHelpOn } from './ui/KnobHelp'
 import { saveMyPatch } from './patch/myLibrary'
 import { MenuBar } from './ui/Menu'
@@ -80,9 +83,11 @@ import { buildMenus } from './ui/menus'
 import { RackIndex } from './ui/RackIndex'
 import { rackShares } from './ui/rackLayout'
 import { RackUnit, type RackActions } from './ui/RackUnit'
+import { AudioSettingsDialog } from './ui/AudioSettingsDialog'
 import { SongDock } from './ui/SongDock'
 import { ThemeContext, useAppearanceState } from './ui/ThemeContext'
 import { UnitSpine } from './ui/UnitSpine'
+import { dockHeightWithin, useDockMax } from './ui/useDockMax'
 import { useRackDrag } from './ui/useRackDrag'
 
 /**
@@ -153,6 +158,17 @@ export default function App() {
     stepForward,
   } = useDocument(initialDoc)
 
+  // What the benched Keyboard plays, to name the roll's rows and the panel's
+  // keys by. Kept by its three numbers, so turning any other knob in the
+  // rack leaves the roll and the Keyboard alone.
+  const tuningNow = tuningOf({ patch, values })
+  const tuningKey = tuningNow ? `${tuningNow.source}|${tuningNow.base}|${tuningNow.octave}` : ''
+  const tuning = useMemo(
+    () => tuningNow,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tuningKey],
+  )
+
   // The engine outlives any single patch; it is rewired, never replaced.
   const engine = useMemo(
     () =>
@@ -162,6 +178,7 @@ export default function App() {
           patch: initialDoc.racks[t.id].patch,
           values: initialDoc.racks[t.id].values,
         })),
+        loadPrefs().audio,
       ),
     [initialDoc],
   )
@@ -190,7 +207,16 @@ export default function App() {
   const running = engineStatus.state === 'running'
   /** Which failure the card is showing, so dismissing one does not hide the next. */
   const [audioDismissed, setAudioDismissed] = useState<EngineStatus | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
+  /**
+   * The message in the card, and whether the whole of a long one is showing.
+   * Set with a plain string for news, or through `warn` and `progress` for a
+   * message that has to stay up (see ui/notice.ts).
+   */
+  const [noticeInput, setNotice] = useState<NoticeInput | null>(null)
+  const notice = noticeInput === null ? null : asNotice(noticeInput)
+  const [noticeOpen, setNoticeOpen] = useState(false)
+  /** One bounce or save at a time; `busy` says which, for greying the menu. */
+  const { busy, run: runJob } = useJob(setNotice)
 
   // A rebuilt worklet starts its sample clock again at 0, so a schedule
   // written against the old one would land nowhere. Stop, and let the next
@@ -224,6 +250,7 @@ export default function App() {
    * menu would scroll the page and a bound key would play the instrument.
    */
   const [menuOpen, setMenuOpen] = useState(false)
+  const [audioOpen, setAudioOpen] = useState(false)
   /** True while the patch library is up, which takes the keyboard with it. */
   const [libraryOpen, setLibraryOpen] = useState(false)
   const [LibraryDialog, setLibraryDialog] = useState<LibraryDialogType | null>(null)
@@ -233,7 +260,7 @@ export default function App() {
       (dialog) => setLibraryDialog(() => dialog),
       () => {
         setLibraryOpen(false)
-        setNotice('Could not load the library -- check the connection and try again')
+        setNotice(warn('Could not load the library -- check the connection and try again'))
       },
     )
   }, [])
@@ -254,6 +281,7 @@ export default function App() {
    * the cards stayed out of the way. Remembered either way.
    */
   const [knobHelp, setKnobHelp] = useState(() => loadPrefs().knobHelp ?? true)
+  const [showSwing, setShowSwing] = useState(() => loadPrefs().showSwing ?? true)
   /** Smaller units, to see more of a long rack at once. */
   const [compact, setCompact] = useState(() => loadPrefs().compact ?? false)
   /** How cables without a colour of their own are coloured. */
@@ -263,6 +291,9 @@ export default function App() {
   /** Matches the width at which the rack itself drops to a single column. */
   const [narrow, setNarrow] = useState(false)
   const [dock, setDock] = useState(() => loadDock() ?? { open: false, height: 300 })
+  /** The dock as drawn: its saved height, within what this window allows. */
+  const dockMax = useDockMax()
+  const dockHeight = dockHeightWithin(dock.height, dockMax)
   /**
    * Whether the dock is showing the roll or the playlist.
    *
@@ -358,7 +389,7 @@ export default function App() {
         engine.setSamples(samples.records())
         editPatch((p) => setSample(p, id, { id: loaded.id, name: loaded.name }))
       } catch {
-        setNotice(`${file.name} is not audio this browser can read`)
+        setNotice(warn(`${file.name} is not audio this browser can read`))
       }
     },
     [editPatch, engine, samples],
@@ -635,11 +666,14 @@ export default function App() {
     return () => clearTimeout(t)
   }, [dock])
 
+  // Only news fades. A failure stays until it is dismissed, and a job's
+  // progress until the job says something else.
   useEffect(() => {
-    if (!notice) return
-    const t = setTimeout(() => setNotice(null), 4000)
+    setNoticeOpen(false)
+    if (!noticeInput || asNotice(noticeInput).kind !== 'info') return
+    const t = setTimeout(() => setNotice(null), NOTICE_FADE_MS)
     return () => clearTimeout(t)
-  }, [notice])
+  }, [noticeInput])
 
   /**
    * Keep the message card just above the dock, whatever height it is.
@@ -861,8 +895,9 @@ export default function App() {
     setSelected,
     setPatternId,
     setNotice,
+    runJob,
   })
-  const bounce = useBounce({ song, racks, name, engine, samples, transport, setNotice })
+  const bounce = useBounce({ song, racks, name, engine, samples, transport, setNotice, runJob })
   const { recorder } = useTakes({ engine, samples, trackId, patchName, patch, values, setNotice })
   const triggers = useTriggers(engine, trackId, patch, values)
 
@@ -914,7 +949,7 @@ export default function App() {
     const name = song.tracks.find((t) => t.id === trackId)?.name || 'Untitled'
     const saved = saveMyPatch(name, patch, values)
     if (!saved) {
-      setNotice('Could not save to the library: this browser is not letting the page store anything')
+      setNotice(warn('Could not save to the library: this browser is not letting the page store anything'))
       return null
     }
     setNotice(saved.updated ? `Updated ${name} in My patches` : `Saved ${name} to My patches`)
@@ -999,7 +1034,7 @@ export default function App() {
   useInput({
     // A cap waiting for a key needs the keyboard to itself, or the key being
     // assigned would fire whatever it is already bound to on the way past.
-    suspended: menuOpen || libraryOpen || search !== null || triggers.listening !== null,
+    suspended: menuOpen || libraryOpen || audioOpen || search !== null || triggers.listening !== null,
     bindings: [
       { code: FLIP_KEY, onDown: flip },
       ...triggers.triggerKeys,
@@ -1059,7 +1094,18 @@ export default function App() {
       if (e.button === 0) setPicked(new Set([id]))
       rack.start(id, e)
     },
-    gate: (id, open) => (open ? triggers.gateOn(id) : triggers.gateOff(id)),
+    gate: (id, open, ahead) => {
+      // Sent now rather than with the next render's sync, so they arrive
+      // before the gate does: the audio thread takes messages in order. The
+      // sync afterwards finds them already sent and sends nothing.
+      if (ahead) {
+        const values: Record<string, number> = {}
+        for (const [param, value] of Object.entries(ahead)) values[`${id}.${param}`] = value
+        engine.setValues(trackId, values)
+      }
+      if (open) triggers.gateOn(id)
+      else triggers.gateOff(id)
+    },
     press: (id) => triggers.press(id),
     release: (id) => triggers.release(id),
     listen: (id, on) => triggers.setListening(on ? id : null),
@@ -1122,6 +1168,7 @@ export default function App() {
     saveProject: (saveAs) => void files.saveProject(saveAs),
     bounceSong: () => void bounce.bounceSong(),
     bounceStems: (mix) => void bounce.bounceStems(mix),
+    busy: busy !== null,
     canUndo: canUndo(history),
     canRedo: canRedo(history),
     undo: stepBack,
@@ -1130,6 +1177,7 @@ export default function App() {
     canPaste: hasClip,
     copy: copyPicked,
     paste: pasteClip,
+    openAudioSettings: () => setAudioOpen(true),
     openLibrary,
     openPatch: () => files.pickPatch(false),
     addPatchAsTrack: () => files.pickPatch(true),
@@ -1141,6 +1189,11 @@ export default function App() {
     flip,
     dockOpen: dock.open,
     toggleDock,
+    showSwing,
+    setShowSwing: (on) => {
+      setShowSwing(on)
+      savePrefs({ showSwing: on })
+    },
     knobHelp,
     setKnobHelp: (on) => {
       setKnobHelp(on)
@@ -1218,7 +1271,7 @@ export default function App() {
           underneath it or the last unit in a long patch cannot be scrolled to. */}
       <div
         className="app"
-        style={{ '--dock-h': `${dock.open ? dock.height + 76 : 44}px` } as React.CSSProperties}
+        style={{ '--dock-h': `${dock.open ? dockHeight + 76 : 44}px` } as React.CSSProperties}
       >
 
         {/* A card in the bottom corner, just above the dock, not a line in
@@ -1271,8 +1324,30 @@ export default function App() {
               </div>
             )}
           {notice && (
-            <div className="notice">
-              <span className="notice-text">{notice}</span>
+            <div className={`notice${notice.kind === 'warn' ? ' notice-warn' : ''}`}>
+              <span className="notice-text">
+                {notice.text}
+                {notice.details && (
+                  <>
+                    {' '}
+                    <button
+                      className="notice-more"
+                      type="button"
+                      aria-expanded={noticeOpen}
+                      onClick={() => setNoticeOpen((o) => !o)}
+                    >
+                      {noticeOpen ? 'less' : `+${notice.details.length} more`}
+                    </button>
+                    {noticeOpen && (
+                      <ul className="notice-details">
+                        {notice.details.map((d, i) => (
+                          <li key={i}>{d}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </>
+                )}
+              </span>
               <button
                 className="notice-close"
                 onClick={() => setNotice(null)}
@@ -1288,6 +1363,15 @@ export default function App() {
 
         {libraryOpen && LibraryDialog && (
           <LibraryDialog onPick={onPickTemplate} onClose={() => setLibraryOpen(false)} onSave={onSaveToLibrary} />
+        )}
+
+        {audioOpen && (
+          <AudioSettingsDialog
+            engine={engine}
+            transport={transport}
+            status={engineStatus}
+            onClose={() => setAudioOpen(false)}
+          />
         )}
 
         {search && (
@@ -1343,6 +1427,7 @@ export default function App() {
                     isOccupied={isOccupied}
                     isCandidate={cables.isCandidate}
                     actions={rackActions}
+                    tuning={defOf(m.type).playable ? tuning?.base : undefined}
                   />
                 </UnitBoundary>
               ))}
@@ -1384,6 +1469,7 @@ export default function App() {
             onAddPattern={onAddPattern}
             onRemovePattern={onRemovePattern}
             targets={targets}
+            tuning={tuning}
             view={dockView}
             onView={setDockView}
             onEdit={editSong}
@@ -1396,8 +1482,9 @@ export default function App() {
             onLooping={setLooping}
             open={dock.open}
             onOpenChange={setDockOpen}
-            height={dock.height}
+            height={dockHeight}
             onHeight={setDockHeight}
+            showSwing={showSwing}
           />
         </ThemeContext.Provider>
 

@@ -41,10 +41,15 @@ const SCROLL_KEYS = new Set([
 
 const TEXT_ENTRY = /^(input|textarea|select)$/i
 
-/** Typing into a field always wins over any binding. */
+/**
+ * Typing into a field always wins over any binding. A read-only field is not
+ * being typed into: a track's name, picked with a click and not yet being
+ * renamed, leaves the keys to the rack.
+ */
 function isTextEntry(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false
   if (target.isContentEditable) return true
+  if (target instanceof HTMLInputElement && target.readOnly) return false
   return TEXT_ENTRY.test(target.tagName)
 }
 
