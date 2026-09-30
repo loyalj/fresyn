@@ -14,6 +14,12 @@ export interface PortDef {
    * it means something else entirely: which menu the module is listed under.
    */
   block?: string
+  /**
+   * Wired by the compiler and never by a cable: not drawn on the back panel,
+   * and refused by `connect`. The Drum Kit's slot returns, which carry each
+   * slot's sound into the kit from the rack the slot holds.
+   */
+  hidden?: true
 }
 
 /**
@@ -119,6 +125,26 @@ export interface PatchModule {
    * sound it was.
    */
   bypass?: true
+  /**
+   * What a Drum Kit's pads hold, one entry per slot, null for an empty one.
+   * Only on a kit; see `KitSlot`.
+   */
+  slots?: (KitSlot | null)[]
+}
+
+/**
+ * One pad of a Drum Kit: a whole rack, copied in, and the note that plays it.
+ *
+ * A copy rather than a reference to the library, so a kit is a thing of its
+ * own -- saved, shared and edited without anything else changing under it --
+ * and its knobs are baked into the copy's modules, as a saved patch's are.
+ */
+export interface KitSlot {
+  /** What the pad says: the library name it was loaded from, to begin with. */
+  name: string
+  /** The MIDI note that plays it: 36 for a kick, as General MIDI lays a kit out. */
+  note: number
+  patch: Patch
 }
 
 export interface Cable {

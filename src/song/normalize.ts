@@ -1,3 +1,4 @@
+import { cleanTimings } from './timing'
 import { MIN_VELOCITY, minPatternLength, type Folder, type Placement, type Section, type Song, type Track } from './types'
 
 /**
@@ -20,7 +21,10 @@ import { MIN_VELOCITY, minPatternLength, type Folder, type Placement, type Secti
  * whatever hangs off them: nothing the app makes is called that, so a file
  * that says so was not written by it.
  */
-export function normalizeSong(song: Song): Song {
+export function normalizeSong(input: Song): Song {
+  // The tempo and meter changes first: the shortest a pattern can be depends
+  // on the meters there are.
+  const song = cleanTimings(input)
   const tracks: Track[] = []
   const trackIds = new Set<string>()
   for (const t of song.tracks) {

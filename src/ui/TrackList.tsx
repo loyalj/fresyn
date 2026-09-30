@@ -329,6 +329,11 @@ export function TrackList({
             T
           </span>
         )}
+        {target?.kind === 'kit' && (
+          <span className="track-kind" title="A Drum Kit: each row of the roll plays one of its pads">
+            K
+          </span>
+        )}
 
         <input
           className="track-gain"

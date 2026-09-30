@@ -275,13 +275,15 @@ async function rollGeometry() {
       rows: Number(el.dataset.rows),
       scroll: Number(el.dataset.scroll),
       scrollW: Number(el.dataset.scrollW),
+      scrollX: Number(el.dataset.scrollX),
+      pxPerTick: Number(el.dataset.pxPerTick),
+      hScroll: Number(el.dataset.hScroll),
     }
   })
-  const project = await stored()
-  const length = project?.song?.patterns?.[0]?.length ?? 3840
-  // The grid stops short of the scroll bar, when there is one.
-  const pxPerTick = (r.w - 40 - r.scrollW) / length
-  const room = r.h - 16 - 34 - 2
+  // Read off the canvas rather than worked out here: the roll fits a short
+  // pattern to its width and scrolls a long or zoomed one, and says which.
+  const pxPerTick = r.pxPerTick
+  const room = r.h - 16 - 34 - 2 - r.hScroll
   const viewH = Math.min(room, r.rows * r.rowH)
   // Borders: the canvas has a one-pixel one, which getBoundingClientRect
   // includes and the drawing does not.
@@ -290,7 +292,7 @@ async function rollGeometry() {
     ...r,
     top,
     bottom: top + viewH,
-    tickX: (tick) => r.x + 1 + 40 + tick * pxPerTick,
+    tickX: (tick) => r.x + 1 + 40 - r.scrollX + tick * pxPerTick,
     pitchY: (pitch) => top - r.scroll + (r.high - pitch) * r.rowH + r.rowH / 2,
   }
 }
@@ -1263,6 +1265,56 @@ console.log('\nrecording notes played in')
   await page.evaluate(() =>
     [...document.querySelectorAll('.context-menu .menu-item')].find((e) => e.textContent.includes('Quantize while recording'))?.click(),
   )
+}
+
+console.log('\nzooming and scrolling across')
+{
+  await page.select('.dock-bar select[aria-label="Pattern"]', 'p1').catch(() => {})
+  const g0 = await rollGeometry()
+  const length = await page.$eval('.roll-canvas', (el) => Number(el.dataset.length))
+  const across = g0.w - 40 - g0.scrollW
+  check('a short pattern fills the width, with nothing to scroll',
+    Math.abs(g0.pxPerTick * length - across) < 3 && g0.hScroll === 0 && g0.scrollX === 0,
+    `${g0.pxPerTick * length} vs ${across}`)
+  const zoomIn = () => page.click('.roll-zoom button[aria-label="Zoom in across"]')
+  for (let i = 0; i < 4; i++) await zoomIn()
+  await edited()
+  const g1 = await rollGeometry()
+  check('zoomed in, the pattern is wider than the roll', g1.pxPerTick * length > across + 10, `${g1.pxPerTick}`)
+  check('and a scroll bar comes along the bottom', g1.hScroll > 0)
+  // Sideways with Shift and the wheel.
+  await page.mouse.move(g1.x + 300, g1.top + 40)
+  await page.keyboard.down('Shift')
+  await page.mouse.wheel({ deltaY: 120 })
+  await page.keyboard.up('Shift')
+  await edited()
+  const g2 = await rollGeometry()
+  check('Shift+wheel scrolls across', g2.scrollX > 0, String(g2.scrollX))
+  // A note drawn while scrolled lands under the pointer.
+  // Whichever pattern the roll is on: every pattern's notes, before and after.
+  const allNotes = async () => (await stored()).song.patterns.flatMap((p) => p.notes)
+  const before = await allNotes()
+  const tick = Math.round(g2.scrollX / g2.pxPerTick / 240 + 2) * 240
+  const pitch = Math.round((g2.high - (g2.scroll + (g2.bottom - g2.top) / 2) / g2.rowH))
+  await page.mouse.click(g2.tickX(tick) + 3, g2.pitchY(pitch))
+  await edited()
+  const added = (await allNotes()).find((n) => !before.some((b) => b.tick === n.tick && b.pitch === n.pitch))
+  check('a note drawn scrolled along lands where it was drawn', added?.tick === tick && added?.pitch === pitch,
+    `${JSON.stringify(added)} wanted ${tick}/${pitch}`)
+  await press('KeyZ', ['Control'])
+  // Alt+wheel zooms back out, around the pointer.
+  await page.keyboard.down('Alt')
+  await page.mouse.wheel({ deltaY: 120 })
+  await page.keyboard.up('Alt')
+  await edited()
+  const g3 = await rollGeometry()
+  check('Alt+wheel zooms out across', g3.pxPerTick < g2.pxPerTick, `${g3.pxPerTick} < ${g2.pxPerTick}`)
+  await page.click('.roll-zoom .roll-fit')
+  await edited()
+  const g4 = await rollGeometry()
+  check('Fit puts the whole pattern back across the roll',
+    Math.abs(g4.pxPerTick * length - (g4.w - 40 - g4.scrollW)) < 3 && g4.scrollX === 0 && g4.hScroll === 0,
+    `${g4.pxPerTick * length} ${g4.scrollX} ${g4.hScroll}`)
 }
 
 console.log('\nthe rack survives it')

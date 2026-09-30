@@ -1,5 +1,6 @@
 import { hasScale, inScale, isRoot, type Scale } from '../song/scale'
 import { swungTick, unswungTick } from '../song/schedule'
+import type { Bars } from '../song/timeline'
 import { midiName } from '../song/tuning'
 import type { Note, Swing } from '../song/types'
 
@@ -76,11 +77,29 @@ export interface RollView {
    */
   rowZero: number
   pxPerTick: number
-  /** The pattern's length, which is the whole width of the roll. */
+  /**
+   * How far the pattern is scrolled from its start, in pixels. Nothing, for
+   * a pattern that fits the width, which is most of them.
+   */
+  scrollX: number
+  /**
+   * The height of the scroll bar across the bottom: `H_SCROLL_H` when the
+   * pattern is wider than the roll, and nothing when it fits.
+   */
+  hScrollH: number
+  /**
+   * A Drum Kit's pads, by the row that plays each: the gutter names the rows
+   * by pad rather than by note, and the rows no pad is on are shaded out.
+   */
+  rowNames?: ReadonlyMap<number, string>
+  /** The pattern's length, which is the whole width of the roll when it fits. */
   lengthTicks: number
-  /** Ticks per beat, for the beat lines, and per bar, for the bar lines and numbers. */
-  beat: number
-  bar: number
+  /**
+   * The pattern's bars, from its own tick zero: where the bar lines and
+   * numbers go, and how long a beat is in each -- which a change of meter
+   * part way through the pattern changes.
+   */
+  bars: Bars
   /** What a note snaps to, in ticks. */
   grid: number
   /** Where the playhead is, or null when nothing is playing. */
@@ -130,6 +149,8 @@ export interface RollOverlay {
   preview: { tick: number; length: number; pitches: number[] } | null
   /** The scroll bar, lit while the pointer is over it or dragging it. */
   scrollbar?: 'hover' | 'drag' | null
+  /** The same, for the scroll bar across the bottom. */
+  hScrollbar?: 'hover' | 'drag' | null
 }
 
 export const NO_OVERLAY: RollOverlay = {
@@ -160,10 +181,10 @@ export function partAt(x: number, left: number, width: number): NotePart {
 
 /** Where a written tick is drawn -- where it plays, when swing is shown. */
 export const tickToX = (tick: number, v: RollView) =>
-  v.gutterW + (v.swing ? swungTick(tick, swingOf(v)) : tick) * v.pxPerTick
+  v.gutterW - v.scrollX + (v.swing ? swungTick(tick, swingOf(v)) : tick) * v.pxPerTick
 /** The written tick under an x position: `tickToX` backwards. */
 export const xToTick = (x: number, v: RollView) => {
-  const heard = (x - v.gutterW) / v.pxPerTick
+  const heard = (x - v.gutterW + v.scrollX) / v.pxPerTick
   return v.swing ? unswungTick(heard, swingOf(v)) : heard
 }
 /**
@@ -174,7 +195,7 @@ export const xToTick = (x: number, v: RollView) => {
 export const spanX = (tick: number, length: number, v: RollView) =>
   tickToX(tick + length, v) - tickToX(tick, v)
 /** Where a moment of playback is drawn: the playhead runs in heard time. */
-const heardToX = (tick: number, v: RollView) => v.gutterW + tick * v.pxPerTick
+const heardToX = (tick: number, v: RollView) => v.gutterW - v.scrollX + tick * v.pxPerTick
 const swingOf = (v: RollView) => ({ length: v.lengthTicks, swing: v.swing })
 /** The top row's pitch. */
 export const highPitch = (v: RollView) => v.low + v.keys - 1
@@ -185,6 +206,18 @@ export const pitchToY = (pitch: number, v: RollView) =>
   v.rulerH - v.scrollY + (highPitch(v) - pitch) * v.rowH
 export const yToPitch = (y: number, v: RollView) =>
   highPitch(v) - Math.floor((y - v.rulerH + v.scrollY) / v.rowH)
+/**
+ * The written ticks that can be seen across, with a grid step to spare either
+ * side. Generous rather than exact: swing moves a tick by less than a step.
+ */
+const visibleTicks = (v: RollView) => {
+  const from = (v.scrollX - v.grid) / v.pxPerTick
+  // A roll is never wider than a very wide screen; anything past that is
+  // off it whatever the scroll.
+  const to = (v.scrollX + 8192) / v.pxPerTick + v.grid
+  return { from, to }
+}
+
 /**
  * The rows that can be seen, bottom and top, for loops that would otherwise
  * paint all of them: most of a full range is scrolled out of sight.
@@ -235,24 +268,29 @@ export function drawRoll(
 
   // Everything that scrolls with the rows is drawn inside their window, so a
   // row half scrolled away is cut at the ruler rather than drawn over it.
-  clipToRows(ctx, width, v, () => {
-    drawRows(ctx, width, v)
-    drawHover(ctx, v, o)
-    drawGrid(ctx, v)
-    // The other tracks' notes, behind and faint: this pattern's, and whatever
-    // the rest of the song plays over the same bars. Writing a bass line
-    // against a drum part you cannot see is writing it blind, and they are
-    // deliberately not clickable: this is a guide, not a second editor.
-    drawGhosts(ctx, ghosts, v)
-    drawNotes(ctx, notes, v, o)
-    drawPreview(ctx, v, o)
-  })
-  drawVelocity(ctx, notes, v, o)
+  clipToRows(ctx, width, v, () =>
+    clipToTime(ctx, width, v, () => {
+      drawRows(ctx, width, v)
+      drawHover(ctx, v, o)
+      drawGrid(ctx, v)
+      // The other tracks' notes, behind and faint: this pattern's, and whatever
+      // the rest of the song plays over the same bars. Writing a bass line
+      // against a drum part you cannot see is writing it blind, and they are
+      // deliberately not clickable: this is a guide, not a second editor.
+      drawGhosts(ctx, ghosts, v)
+      drawNotes(ctx, notes, v, o)
+      drawPreview(ctx, v, o)
+    }),
+  )
+  clipToTime(ctx, width, v, () => drawVelocity(ctx, notes, v, o))
   clipToRows(ctx, width, v, () => drawGutter(ctx, v, o))
   drawScrollbar(ctx, width, v, o.scrollbar ?? null)
+  drawHScrollbar(ctx, width, v, o.hScrollbar ?? null)
   drawRuler(ctx, width, v, o)
-  drawMarquee(ctx, o, v)
-  drawPlayhead(ctx, v)
+  clipToTime(ctx, width, v, () => {
+    drawMarquee(ctx, o, v)
+    drawPlayhead(ctx, v)
+  })
 
   ctx.restore()
 }
@@ -266,8 +304,61 @@ function clipToRows(ctx: CanvasRenderingContext2D, width: number, v: RollView, d
   ctx.restore()
 }
 
+/**
+ * Everything that scrolls sideways is drawn between the keys and the rows'
+ * scroll bar, so a pattern scrolled along slides under the keys rather than
+ * over them.
+ */
+function clipToTime(ctx: CanvasRenderingContext2D, width: number, v: RollView, draw: () => void) {
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(v.gutterW, 0, Math.max(0, width - v.scrollW - v.gutterW), velTop(v) + v.velH)
+  ctx.clip()
+  draw()
+  ctx.restore()
+}
+
 /** How wide the rows' scroll bar is, in pixels: wide enough to grab without aiming. */
 export const SCROLL_W = 12
+/** How tall the scroll bar across the bottom is, when the pattern is wider than the roll. */
+export const H_SCROLL_H = 12
+
+/** How many pixels of the pattern can be seen across: the roll between the keys and the rows' bar. */
+export const timeWidth = (v: RollView, width: number) => Math.max(1, width - v.scrollW - v.gutterW)
+/** How far the pattern can scroll sideways: none when it fits. */
+export const maxScrollX = (v: RollView, width: number) =>
+  Math.max(0, v.lengthTicks * v.pxPerTick - timeWidth(v, width))
+
+/**
+ * Where the bottom scroll bar's thumb is, or null when the whole pattern
+ * fits and there is no bar. The same shape as `scrollThumb`, turned on its
+ * side.
+ */
+export function hScrollThumb(v: RollView, width: number) {
+  const max = maxScrollX(v, width)
+  if (!v.hScrollH || max <= 0.5) return null
+  const left = v.gutterW
+  const span = timeWidth(v, width)
+  const total = span + max
+  const w = Math.max(24, (span / total) * span)
+  const range = span - w
+  return { left, top: velTop(v) + v.velH + 1, x: left + (v.scrollX / max) * range, w, span, range, max }
+}
+
+function drawHScrollbar(ctx: CanvasRenderingContext2D, width: number, v: RollView, state: 'hover' | 'drag' | null) {
+  const bar = hScrollThumb(v, width)
+  if (!bar) return
+  const inset = 2
+  const h = v.hScrollH - inset * 2
+  ctx.fillStyle = v.colors.bg
+  ctx.fillRect(bar.left, bar.top, bar.span, v.hScrollH)
+  ctx.fillStyle = v.colors.inkFaint
+  ctx.globalAlpha = 0.12
+  roundRect(ctx, bar.left + inset, bar.top + inset, bar.span - inset * 2, h, h / 2)
+  ctx.globalAlpha = state === 'drag' ? 0.9 : state === 'hover' ? 0.75 : 0.5
+  roundRect(ctx, bar.x + inset, bar.top + inset, bar.w - inset * 2, h, h / 2)
+  ctx.globalAlpha = 1
+}
 
 /**
  * Where the scroll bar's thumb is, or null when every row fits and there is
@@ -324,6 +415,15 @@ function drawRows(ctx: CanvasRenderingContext2D, width: number, v: RollView) {
   const rows = visibleRows(v)
   for (let p = rows.from; p <= rows.to; p++) {
     const y = pitchToY(p, v)
+    // A kit's rows are its pads: the rest are shaded as off the scale are.
+    if (v.rowNames) {
+      if (!v.rowNames.has(p)) {
+        ctx.globalAlpha = 0.3
+        ctx.fillStyle = v.colors.keyBlack
+        ctx.fillRect(v.gutterW, y, w, v.rowH)
+      }
+      continue
+    }
     const dark = keyed ? !inScale(p, v.scale) : isSharp(soundedAt(p, v))
     if (dark) {
       ctx.globalAlpha = keyed ? 0.3 : 0.16
@@ -370,19 +470,33 @@ function drawGrid(ctx: CanvasRenderingContext2D, v: RollView) {
 
   // Every division of the snap grid, then beats over the top of them, then
   // bars over those: three weights, so the eye can count without reading the
-  // numbers along the ruler.
-  for (let tick = 0; tick <= v.lengthTicks; tick += v.grid) {
-    const onBar = tick % v.bar === 0
-    const onBeat = tick % v.beat === 0
-    ctx.strokeStyle = onBar ? v.colors.rule : v.colors.hairline
-    ctx.globalAlpha = onBar ? 1 : onBeat ? 0.8 : 0.35
-    ctx.lineWidth = 1
+  // numbers along the ruler. Beats are counted from the start of the bar
+  // they are in, since a bar cut short by a change of meter moves the beats
+  // after it.
+  const line = (tick: number) => {
     const x = Math.round(tickToX(tick, v)) + 0.5
     ctx.beginPath()
     ctx.moveTo(x, top)
     ctx.lineTo(x, bottom)
     ctx.stroke()
   }
+  ctx.lineWidth = 1
+  ctx.strokeStyle = v.colors.hairline
+  // Only the stretch on screen: a long pattern zoomed in is thousands of
+  // grid lines, and all but a few dozen of them are scrolled away.
+  const seen = visibleTicks(v)
+  const first = Math.max(0, Math.floor(seen.from / v.grid) * v.grid)
+  for (let tick = first; tick <= Math.min(v.lengthTicks, seen.to); tick += v.grid) {
+    const bar = v.bars.at(tick)
+    if (bar.tick === tick) continue
+    ctx.globalAlpha = (tick - bar.tick) % bar.beat === 0 ? 0.8 : 0.35
+    line(tick)
+  }
+  // The bar lines on their own, so a bar the grid does not divide -- a short
+  // one before a change of meter, or triplets across 7/8 -- still has one.
+  ctx.strokeStyle = v.colors.rule
+  ctx.globalAlpha = 1
+  for (const bar of v.bars.between(Math.max(0, seen.from), Math.min(v.lengthTicks, seen.to) + 1)) line(bar.tick)
 
   // An octave line under every C, so the rows do not read as one
   // undifferentiated field.
@@ -568,10 +682,62 @@ function drawVelocity(
   ctx.globalAlpha = 1
 }
 
+/**
+ * A Drum Kit's gutter: a key for each pad, named for it, and nothing but a
+ * faint note name for the rows no pad is on -- a kit is played by its pads,
+ * and the other hundred rows are only there to be scrolled past.
+ */
+function drawPadNames(ctx: CanvasRenderingContext2D, v: RollView, names: ReadonlyMap<number, string>, o: RollOverlay) {
+  ctx.textBaseline = 'middle'
+  const rows = visibleRows(v)
+  for (let p = rows.from; p <= rows.to; p++) {
+    const y = pitchToY(p, v)
+    const name = names.get(p)
+    if (name) {
+      ctx.fillStyle = v.colors.keyWhite
+      ctx.fillRect(0, y, v.gutterW, v.rowH - 1)
+    }
+    if (o.pressedKey === p || o.hover?.pitch === p) {
+      ctx.fillStyle = v.colors.accent
+      ctx.globalAlpha = o.pressedKey === p ? 0.85 : 0.35
+      ctx.fillRect(0, y, v.gutterW, v.rowH - 1)
+      ctx.globalAlpha = 1
+    }
+    if (name) {
+      ctx.fillStyle = v.colors.keyBlack
+      ctx.font = '600 9px "Inter", system-ui, sans-serif'
+      ctx.textAlign = 'left'
+      ctx.fillText(fit(ctx, name, v.gutterW - 8), 4, y + v.rowH / 2)
+    } else if (v.rowH >= 13 && soundedAt(p, v) % 12 === 0) {
+      ctx.fillStyle = v.colors.inkFaint
+      ctx.font = '9px "Inter", system-ui, sans-serif'
+      ctx.textAlign = 'right'
+      ctx.fillText(pitchName(p, v), v.gutterW - 4, y + v.rowH / 2)
+    }
+  }
+  ctx.strokeStyle = v.colors.rule
+  ctx.beginPath()
+  ctx.moveTo(Math.round(v.gutterW) + 0.5, gridTop(v))
+  ctx.lineTo(Math.round(v.gutterW) + 0.5, gridBottom(v))
+  ctx.stroke()
+}
+
+/** Text cut to a width, with an ellipsis where it was cut. */
+function fit(ctx: CanvasRenderingContext2D, text: string, width: number): string {
+  if (ctx.measureText(text).width <= width) return text
+  let t = text
+  while (t.length > 1 && ctx.measureText(`${t}…`).width > width) t = t.slice(0, -1)
+  return `${t}…`
+}
+
 /** The keyboard down the left, which is what says which row is which note. */
 function drawGutter(ctx: CanvasRenderingContext2D, v: RollView, o: RollOverlay) {
   ctx.fillStyle = v.colors.gutter
   ctx.fillRect(0, gridTop(v), v.gutterW, v.viewH)
+  if (v.rowNames) {
+    drawPadNames(ctx, v, v.rowNames, o)
+    return
+  }
   // Every white key is named once the rows are tall enough to carry it;
   // below that only the Cs, which are enough to count from.
   const nameAll = v.rowH >= 13
@@ -633,27 +799,49 @@ function drawGutter(ctx: CanvasRenderingContext2D, v: RollView, o: RollOverlay) 
 function drawRuler(ctx: CanvasRenderingContext2D, width: number, v: RollView, o: RollOverlay) {
   ctx.fillStyle = v.colors.gutter
   ctx.fillRect(0, 0, width, v.rulerH)
+  ctx.font = '9px "Inter", system-ui, sans-serif'
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'left'
+
+  // A pattern with a change of meter in it says so, over the bar it starts:
+  // the number alone would not tell a 3/4 bar from a 4/4 one.
+  const all = v.bars.between(0, v.lengthTicks)
+  const changes = all.some((b) => b.meter !== all[0].meter)
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(v.gutterW, 0, Math.max(0, width - v.scrollW - v.gutterW), v.rulerH)
+  ctx.clip()
   if (o.hover && o.hover.tick !== null) {
     ctx.fillStyle = v.colors.inkFaint
     ctx.globalAlpha = 0.25
     ctx.fillRect(tickToX(o.hover.tick, v), 0, cellWidth(o.hover.tick, v), v.rulerH)
     ctx.globalAlpha = 1
   }
-  ctx.font = '9px "Inter", system-ui, sans-serif'
-  ctx.textBaseline = 'middle'
-  ctx.textAlign = 'left'
-
-  const bar = v.bar
-  for (let tick = 0, n = 1; tick < v.lengthTicks; tick += bar, n++) {
-    const x = tickToX(tick, v)
+  // At a zoom where the numbers would run into each other, only every so
+  // many are written; every bar still has its line.
+  const barPx = (v.bars.bar(0).length || 1) * v.pxPerTick
+  const every = barPx >= 22 ? 1 : barPx >= 12 ? 2 : barPx >= 6 ? 4 : 8
+  const seen = visibleTicks(v)
+  all.forEach((b, i) => {
+    if (b.tick + b.length < seen.from || b.tick > seen.to) return
+    const x = tickToX(b.tick, v)
     ctx.strokeStyle = v.colors.rule
     ctx.beginPath()
     ctx.moveTo(Math.round(x) + 0.5, 0)
     ctx.lineTo(Math.round(x) + 0.5, v.rulerH)
     ctx.stroke()
     ctx.fillStyle = v.colors.inkFaint
-    ctx.fillText(String(n), x + 3, v.rulerH / 2)
-  }
+    const n = String(i + 1)
+    const change = changes && (i === 0 || b.meter !== all[i - 1].meter)
+    if (i % every !== 0 && !change) return
+    ctx.fillText(n, x + 3, v.rulerH / 2)
+    if (change) {
+      ctx.globalAlpha = 0.7
+      ctx.fillText(`${b.meter.beats}/${b.meter.unit}`, x + 3 + ctx.measureText(n).width + 4, v.rulerH / 2)
+      ctx.globalAlpha = 1
+    }
+  })
+  ctx.restore()
 
   ctx.strokeStyle = v.colors.rule
   ctx.beginPath()

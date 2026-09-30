@@ -1,6 +1,7 @@
-import type { ModuleDef } from '../patch/types'
+import type { KitSlot, ModuleDef } from '../patch/types'
 import { Control } from './Control'
 import { KeysFace } from './KeysFace'
+import { KitFace, type KitHandlers } from './KitFace'
 import { FilterFace, LADDER, SVF } from './FilterFace'
 import { LfoFace } from './LfoFace'
 import { MacroFace } from './MacroFace'
@@ -34,6 +35,8 @@ interface Props {
   onChanges?: (values: Record<string, number>) => void
   /** For a Keyboard: the note its bottom key plays, to name its keys by. */
   tuning?: number
+  /** For a Drum Kit: what its pads hold, and what to do with them. */
+  kit?: KitHandlers & { slots: (KitSlot | null)[] | undefined }
 }
 
 /**
@@ -56,6 +59,7 @@ export function ModulePanel({
   sample,
   onSample,
   tuning,
+  kit,
 }: Props) {
   return (
     <div className="unit">
@@ -150,6 +154,9 @@ export function ModulePanel({
           tuning={tuning}
         />
       )
+    }
+    if (def.type === 'kit' && kit) {
+      return <KitFace def={def} valueOf={valueOf} onChange={onChange} {...kit} />
     }
     if (def.type === 'seq') {
       return (

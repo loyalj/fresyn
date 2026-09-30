@@ -14,6 +14,7 @@ import { FormantModule } from './Formant'
 import { GateModule } from './Gate'
 import { GranularModule } from './Granular'
 import { KeysModule } from './Keys'
+import { KitModule } from './Kit'
 import { LadderModule } from './Ladder'
 import { LfoModule } from './Lfo'
 import { MacroModule } from './Macro'
@@ -45,6 +46,7 @@ export const MODULE_FACTORIES: Record<string, Factory> = {
   sampler: (c) => new SamplerModule(c),
   voice: (c) => new VoiceModule(c),
   keys: (c) => new KeysModule(c),
+  kit: (c) => new KitModule(c),
   noise: (c) => new NoiseModule(c),
   dust: (c) => new DustModule(c),
   lfo: (c) => new LfoModule(c),

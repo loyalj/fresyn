@@ -35,16 +35,21 @@ import {
   stepInScale,
   type Scale,
 } from '../song/scale'
+import type { Bars } from '../song/timeline'
 import { midiNameCents, rowZero, scaleForRows, type Tuning } from '../song/tuning'
-import { PITCH_RANGE, type Note, type Swing } from '../song/types'
+import { PITCH_RANGE, PPQ, type Note, type Swing } from '../song/types'
 import {
   drawRoll,
   gridBottom,
   gridTop,
+  H_SCROLL_H,
   highPitch,
+  hScrollThumb,
   maxScroll,
+  maxScrollX,
   SCROLL_W,
   scrollThumb,
+  timeWidth,
   partAt,
   pitchToY,
   spanX,
@@ -69,6 +74,8 @@ const LOW = PITCH_RANGE.low
 const HIGH = PITCH_RANGE.high
 const ROWS = HIGH - LOW + 1
 const GUTTER_W = 40
+/** The gutter on a Drum Kit's track, where the rows are named by pad. */
+const KIT_GUTTER_W = 92
 const RULER_H = 16
 const VEL_H = 34
 /**
@@ -79,6 +86,18 @@ const VEL_H = 34
 const MIN_ROW_H = 10
 const MAX_ROW_H = 32
 const DEFAULT_ROW_H = 16
+/**
+ * How narrow a bar of 4/4 is allowed to get before the roll stops squeezing
+ * the pattern into its width and scrolls instead. A pattern short enough to
+ * fit at this or wider opens fitted, as every pattern always has; a long one
+ * opens at this and scrolls.
+ */
+const MIN_FIT_BAR_PX = 48
+const MIN_FIT_PPT = MIN_FIT_BAR_PX / (PPQ * 4)
+/** As far in as the roll zooms: a thirty-second note sixty pixels wide. */
+const MAX_PPT = 60 / (PPQ / 8)
+/** How much one step of the zoom buttons, or one notch of Alt+wheel, zooms. */
+const ZOOM_STEP = 1.25
 /** The row an empty track opens centred on: C1, the middle of the Keyboard. */
 const HOME_PITCH = 12
 /**
@@ -86,7 +105,9 @@ const HOME_PITCH = 12
  * whole range to scroll through they could be anywhere, or the Keyboard's
  * middle when it has none yet.
  */
-const middleOf = (notes: readonly Note[]) => {
+const middleOf = (notes: readonly Note[], pads?: ReadonlyMap<number, string>) => {
+  // A kit with nothing written yet opens on its pads.
+  if (notes.length === 0 && pads?.size) notes = [...pads.keys()].map((pitch) => ({ pitch }) as Note)
   if (notes.length === 0) return HOME_PITCH
   let low = Infinity
   let high = -Infinity
@@ -189,9 +210,13 @@ interface Props {
   lengthTicks: number
   /** What notes snap to, in ticks, and what the grid lines are drawn at. */
   grid: number
-  /** Ticks in a bar and in a beat, which the song's time signature decides. */
-  bar: number
-  beat: number
+  /** A Drum Kit's pads by row, to name the rows by; see `RollView.rowNames`. */
+  rowNames?: ReadonlyMap<number, string>
+  /**
+   * The pattern's bars, from its own tick zero: in the meter it sits in, and
+   * changing where the song's meter does. See `patternBars`.
+   */
+  bars: Bars
   /**
    * The grid is only drawn: notes go exactly where they are put, as though
    * Shift were held through every drag.
@@ -229,6 +254,8 @@ interface Props {
 type Gesture =
   /** The scroll bar's thumb, held `grab` pixels below its top. */
   | { kind: 'scrollbar'; grab: number }
+  /** The bottom scroll bar's thumb, held `grab` pixels in from its left. */
+  | { kind: 'hscroll'; grab: number }
   | {
       kind: 'move'
       origin: Note[]
@@ -321,8 +348,8 @@ export function PianoRoll({
   track,
   lengthTicks,
   grid,
-  bar,
-  beat,
+  bars,
+  rowNames,
   snapOff,
   scale: songScale,
   swing,
@@ -389,6 +416,14 @@ export function PianoRoll({
   const [rowZoom, setRowZoom] = useState(() => clamp(loadPrefs().rowZoom ?? DEFAULT_ROW_H, MIN_ROW_H, MAX_ROW_H))
   /** Pixels scrolled from the top row, or null to sit centred on `homePitch`. */
   const [scroll, setScroll] = useState<number | null>(null)
+  /**
+   * How wide a tick is drawn, or null for the roll's own choice: the whole
+   * pattern fitted to the width, unless that would squeeze its bars past
+   * `MIN_FIT_BAR_PX`, when it scrolls instead.
+   */
+  const [zoomX, setZoomX] = useState<number | null>(null)
+  /** Pixels scrolled from the start of the pattern. Held to what there is to scroll by the view. */
+  const [scrollX, setScrollX] = useState(0)
   /** The MIDI note the bottom key sounds, and the key as this track's rows count it. */
   const zero = rowZero(tuning)
   const scale = useMemo(() => scaleForRows(songScale, zero), [songScale, zero])
@@ -397,25 +432,43 @@ export function PianoRoll({
    * comes onto the bench rather than worked out afresh from the notes, or the
    * rows would slide under the pointer with every note drawn.
    */
-  const [homePitch, setHomePitch] = useState(() => middleOf(notes))
+  const [homePitch, setHomePitch] = useState(() => middleOf(notes, rowNames))
   const [benched, setBenched] = useState(track)
   if (benched !== track) {
     setBenched(track)
     setScroll(null)
-    setHomePitch(middleOf(notes))
+    setHomePitch(middleOf(notes, rowNames))
   }
 
   const view = useMemo<RollView>(() => {
-    const room = Math.max(1, size.h - RULER_H - VEL_H - 2)
-    // Never shorter than asked, and taller when the dock has room to spare
-    // -- a tall dock with the rows huddled at the top of it would be space
-    // thrown away.
-    const rowH = Math.min(MAX_ROW_H, Math.max(rowZoom, room / ROWS))
-    const viewH = Math.min(room, ROWS * rowH)
-    const top = Math.max(0, ROWS * rowH - viewH)
+    const length = Math.max(1, lengthTicks)
+    /** The rows, and the width across, with or without a scroll bar along the bottom. */
+    const layout = (hScrollH: number) => {
+      const room = Math.max(1, size.h - RULER_H - VEL_H - 2 - hScrollH)
+      // Never shorter than asked, and taller when the dock has room to spare
+      // -- a tall dock with the rows huddled at the top of it would be space
+      // thrown away.
+      const rowH = Math.min(MAX_ROW_H, Math.max(rowZoom, room / ROWS))
+      const viewH = Math.min(room, ROWS * rowH)
+      const top = Math.max(0, ROWS * rowH - viewH)
+      const across = Math.max(1, size.w - (rowNames ? KIT_GUTTER_W : GUTTER_W) - (top > 0.5 ? SCROLL_W : 0))
+      // Fitted, as it always has been, unless that squeezes the bars too
+      // narrow to write in: then the pattern scrolls. Zoomed out, never
+      // narrower than the whole pattern fitted.
+      const fit = across / length
+      const natural = Math.max(fit, MIN_FIT_PPT)
+      const ppt = zoomX === null ? natural : clamp(zoomX, Math.min(fit, natural), Math.max(MAX_PPT, fit))
+      return { rowH, viewH, top, across, ppt }
+    }
+    let l = layout(0)
+    const wide = l.ppt * length > l.across + 0.5
+    if (wide) l = layout(H_SCROLL_H)
+    const { rowH, viewH, top, ppt } = l
     const home = (HIGH - homePitch) * rowH + rowH / 2 - viewH / 2
     return {
-      gutterW: GUTTER_W,
+      // Wide enough for a pad's name, on a kit.
+      gutterW: rowNames ? KIT_GUTTER_W : GUTTER_W,
+      rowNames,
       rulerH: RULER_H,
       rowH,
       viewH,
@@ -428,10 +481,11 @@ export function PianoRoll({
       // The pattern always fills the width. With one pattern on the bench
       // there is nothing to scroll to, and a roll that fits is a roll whose
       // every note can be reached without moving anything first.
-      pxPerTick: (size.w - GUTTER_W - (top > 0.5 ? SCROLL_W : 0)) / Math.max(1, lengthTicks),
+      pxPerTick: ppt,
+      scrollX: clamp(scrollX, 0, Math.max(0, ppt * length - l.across)),
+      hScrollH: wide ? H_SCROLL_H : 0,
       lengthTicks,
-      beat,
-      bar,
+      bars,
       grid,
       playTick: null,
       scale,
@@ -439,7 +493,7 @@ export function PianoRoll({
       colors: colors.current,
       swing,
     }
-  }, [size, lengthTicks, grid, bar, beat, rowZoom, scroll, homePitch, zero, scale, trackHues, swing])
+  }, [size, lengthTicks, grid, bars, rowNames, rowZoom, scroll, zoomX, scrollX, homePitch, zero, scale, trackHues, swing])
 
   const viewRef = useRef(view)
   viewRef.current = view
@@ -557,10 +611,48 @@ export function PianoRoll({
         // at either edge while the song plays something else would read as
         // this pattern being stuck there.
         const local = state.tick - offsetRef.current
-        playTick.current = local >= 0 && local < viewRef.current.lengthTicks ? local : null
+        const v = viewRef.current
+        playTick.current = local >= 0 && local < v.lengthTicks ? local : null
+        // A pattern wider than the roll turns the page as the playhead
+        // reaches the edge of what can be seen -- and back to the start when
+        // the loop comes round -- unless a hand is busy in it.
+        const canvas = canvasRef.current
+        if (playTick.current === null || !canvas || gesture.current || v.hScrollH === 0) return
+        const at = local * v.pxPerTick - v.scrollX
+        const across = timeWidth(v, canvas.clientWidth)
+        if (at < 0 || at > across - 4) setScrollX(Math.max(0, local * v.pxPerTick - across * 0.05))
       }),
     [transport],
   )
+
+  // --- zoom across ---------------------------------------------------
+
+  /**
+   * Zoom across by a factor, keeping the tick at `x` -- a position across
+   * the roll, from the keys -- where it is. The view holds the zoom inside
+   * what it allows, so the anchor is worked out against that.
+   */
+  const zoomAround = useCallback((factor: number, x?: number) => {
+    const v = viewRef.current
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const across = timeWidth(v, canvas.clientWidth)
+    const into = x === undefined ? across / 2 : clamp(x, 0, across)
+    const tick = (v.scrollX + into) / v.pxPerTick
+    const fit = across / Math.max(1, v.lengthTicks)
+    const next = clamp(v.pxPerTick * factor, Math.min(fit, MIN_FIT_PPT), Math.max(MAX_PPT, fit))
+    if (next === v.pxPerTick) return
+    setZoomX(next)
+    setScrollX(Math.max(0, tick * next - into))
+  }, [])
+  /** The whole pattern across the roll, however dense that makes it. */
+  const fitAll = useCallback(() => {
+    const v = viewRef.current
+    const canvas = canvasRef.current
+    if (!canvas) return
+    setZoomX(timeWidth(v, canvas.clientWidth) / Math.max(1, v.lengthTicks))
+    setScrollX(0)
+  }, [])
 
   // --- scrolling -----------------------------------------------------
 
@@ -619,6 +711,26 @@ export function PianoRoll({
       const y = e.clientY - rect.top
       const dy = e.deltaY
 
+      // Alt+wheel zooms across, around the tick under the pointer.
+      if (e.altKey && !(e.ctrlKey || e.metaKey)) {
+        e.preventDefault()
+        const d = dy || e.deltaX
+        if (d) zoomAround(Math.pow(ZOOM_STEP, -Math.sign(d)), e.clientX - rect.left - v.gutterW)
+        return
+      }
+
+      // Sideways: a trackpad's swipe, a tilt wheel, or Shift with the wheel.
+      const dx = Math.abs(e.deltaX) > Math.abs(dy) ? e.deltaX : e.shiftKey && !(e.ctrlKey || e.metaKey) ? dy : 0
+      if (dx) {
+        e.preventDefault()
+        const most = maxScrollX(v, rect.width)
+        if (most <= 0) return
+        // A notch moves an eighth of what can be seen; a trackpad, by the pixel.
+        const by = e.deltaMode !== 0 || Math.abs(dx) >= NOTCH_PX ? (Math.sign(dx) * timeWidth(v, rect.width)) / 8 : dx
+        setScrollX(clamp(v.scrollX + by, 0, most))
+        return
+      }
+
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault()
         // One notch is about a tenth taller or shorter, whatever the device
@@ -656,7 +768,7 @@ export function PianoRoll({
     }
     canvas.addEventListener('wheel', onWheel, { passive: false })
     return () => canvas.removeEventListener('wheel', onWheel)
-  }, [glideTo, scrollTo])
+  }, [glideTo, scrollTo, zoomAround])
 
   // --- editing -------------------------------------------------------
 
@@ -777,6 +889,15 @@ export function PianoRoll({
       const list = draftRef.current ?? notesRef.current
       const inGrid = y >= gridTop(v) && y <= gridBottom(v)
 
+      // Over the bottom scroll bar, likewise.
+      const hbar = canvas ? hScrollThumb(v, canvas.clientWidth) : null
+      if (hbar && y >= hbar.top) {
+        overlay.current = { ...overlay.current, hover: null, hoverNote: null, preview: null, hScrollbar: 'hover' }
+        if (canvas && canvas.style.cursor !== 'default') canvas.style.cursor = 'default'
+        return
+      }
+      if (overlay.current.hScrollbar) overlay.current = { ...overlay.current, hScrollbar: null }
+
       // Over the scroll bar there is nothing to draw or pick: the bar lights.
       const bar = canvas ? scrollThumb(v, canvas.clientWidth) : null
       if (bar && x >= bar.x && inGrid) {
@@ -844,6 +965,21 @@ export function PianoRoll({
       if (e.button === 1) return
       const ctrl = e.ctrlKey || e.metaKey
       const selected = overlay.current.selected
+
+      // The bottom scroll bar, the same way round on its side. Nothing below
+      // the velocity lane is anything else.
+      const hbar = hScrollThumb(v, e.currentTarget.clientWidth)
+      if (hbar && y >= hbar.top) {
+        if (e.button !== 0 || x < hbar.left || x > hbar.left + hbar.span) return
+        e.currentTarget.setPointerCapture(e.pointerId)
+        const onThumb = x >= hbar.x && x <= hbar.x + hbar.w
+        const grab = onThumb ? x - hbar.x : hbar.w / 2
+        gesture.current = { kind: 'hscroll', grab }
+        overlay.current = { ...overlay.current, hover: null, hoverNote: null, preview: null, hScrollbar: 'drag' }
+        if (!onThumb) setScrollX(clamp(((x - grab - hbar.left) / hbar.range) * hbar.max, 0, hbar.max))
+        return
+      }
+      if (y > velTop(v) + v.velH) return
 
       // The scroll bar: the thumb is dragged from wherever it was taken hold
       // of, and a click on the track jumps it there, centred, and keeps hold.
@@ -1060,6 +1196,11 @@ export function PianoRoll({
         if (bar) scrollTo(clamp(((y - g.grab - bar.top) / bar.range) * bar.max, 0, bar.max))
         return
       }
+      if (g.kind === 'hscroll') {
+        const bar = hScrollThumb(v, e.currentTarget.clientWidth)
+        if (bar) setScrollX(clamp(((x - g.grab - bar.left) / bar.range) * bar.max, 0, bar.max))
+        return
+      }
 
       if (g.kind === 'key') {
         const pitch = clamp(yToPitch(y, v), LOW, HIGH)
@@ -1205,6 +1346,12 @@ export function PianoRoll({
       overlay.current = { ...overlay.current, scrollbar: over && bar && over.x >= bar.x ? 'hover' : null }
       return
     }
+    if (g.kind === 'hscroll') {
+      const over = pointer.current
+      const bar = hScrollThumb(viewRef.current, canvasRef.current?.clientWidth ?? 0)
+      overlay.current = { ...overlay.current, hScrollbar: over && bar && over.y >= bar.top ? 'hover' : null }
+      return
+    }
 
     if (g.kind === 'key') {
       unhear(g.pitch)
@@ -1269,6 +1416,17 @@ export function PianoRoll({
    * the arrow keys, which would otherwise walk an octave off the top of the
    * view and leave you pressing keys at something you cannot see.
    */
+  const revealTicks = useCallback((ticks: number[]) => {
+    const v = viewRef.current
+    const canvas = canvasRef.current
+    if (ticks.length === 0 || !canvas || v.hScrollH === 0) return
+    const across = timeWidth(v, canvas.clientWidth)
+    const from = Math.min(...ticks) * v.pxPerTick
+    const to = Math.max(...ticks) * v.pxPerTick
+    if (from < v.scrollX) setScrollX(from)
+    else if (to > v.scrollX + across - 16) setScrollX(Math.min(from, to - across + 16))
+  }, [])
+
   const reveal = useCallback((pitches: number[]) => {
     if (pitches.length === 0) return
     const v = viewRef.current
@@ -1311,9 +1469,15 @@ export function PianoRoll({
       } else if (key === 'escape') {
         select([])
       } else if (!ctrl && (key === 'arrowleft' || key === 'arrowright')) {
-        // A grid step, or a whole bar with Shift.
-        const step = e.shiftKey ? bar : grid
-        if (sel.length) commit(moveNotes(list, sel, key === 'arrowleft' ? -step : step, 0, lengthTicks, PITCH_RANGE))
+        // A grid step, or with Shift the length of the bar the first picked
+        // note is in -- a whole bar, in whatever meter it is.
+        const first = Math.min(...sel.map((i) => list[i].tick))
+        const step = e.shiftKey ? bars.at(Number.isFinite(first) ? first : 0).length : grid
+        if (sel.length) {
+          const out = moveNotes(list, sel, key === 'arrowleft' ? -step : step, 0, lengthTicks, PITCH_RANGE)
+          commit(out)
+          revealTicks(out.selected.map((i) => out.notes[i].tick))
+        }
       } else if (!ctrl && (key === 'arrowup' || key === 'arrowdown')) {
         // A semitone, or an octave with Shift -- or with the key as a rail, a
         // step along the scale.
@@ -1335,7 +1499,7 @@ export function PianoRoll({
         e.stopPropagation()
       }
     },
-    [commit, select, reveal, track, lengthTicks, grid, bar, railed, degreeStep],
+    [commit, select, reveal, revealTicks, track, lengthTicks, grid, bars, railed, degreeStep],
   )
 
   // --- the tools over the roll -----------------------------------------
@@ -1568,7 +1732,21 @@ export function PianoRoll({
           </select>
         </label>
 
-        <span className="roll-tools-hint">Alt+drag paints · right-drag erases · Ctrl+drag selects</span>
+        {/* Zoom across. The rows have Ctrl+wheel; across is Alt+wheel, and
+            these for anyone without a wheel. */}
+        <span className="roll-zoom" role="group" aria-label="Zoom across">
+          <button className="playlist-zoom" onClick={() => zoomAround(1 / ZOOM_STEP)} title="Zoom out across (Alt+wheel)" aria-label="Zoom out across" type="button">
+            −
+          </button>
+          <button className="playlist-zoom" onClick={() => zoomAround(ZOOM_STEP)} title="Zoom in across (Alt+wheel)" aria-label="Zoom in across" type="button">
+            +
+          </button>
+          <button className="dock-toggle roll-fit" onClick={fitAll} title="The whole pattern across the roll" type="button">
+            Fit
+          </button>
+        </span>
+
+        <span className="roll-tools-hint">Alt+drag paints · right-drag erases · Ctrl+drag selects · Shift+wheel scrolls across</span>
         <span
           className="roll-tools-tuning"
           title={
@@ -1593,6 +1771,11 @@ export function PianoRoll({
           data-row-zero={zero}
           data-scroll={view.scrollY}
           data-scroll-w={view.scrollW}
+          data-scroll-x={view.scrollX}
+          data-px-per-tick={view.pxPerTick}
+          data-h-scroll={view.hScrollH}
+          data-length={view.lengthTicks}
+          data-gutter={view.gutterW}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={finish}

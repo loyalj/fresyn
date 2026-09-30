@@ -5,6 +5,7 @@ import type { MixLevels, TrackEvent, TrackMix } from '../dsp/SongEngine'
 import type { Console } from '../song/types'
 import { compile, type CompiledPatch } from '../patch/compile'
 import { initialValues } from '../patch/edit'
+import { flattenKits } from '../patch/kit'
 import type { Patch } from '../patch/types'
 
 /** One frame of captured samples per scope module, keyed by module id. */
@@ -752,7 +753,8 @@ export class AudioEngine {
 
 /** The subset of held values whose module is still in the patch. */
 function pick(values: Record<string, number>, patch: Patch) {
-  const live = new Set(patch.modules.map((m) => m.id))
+  // A Drum Kit's pads are modules too, by their laid-in ids.
+  const live = new Set(flattenKits(patch).modules.map((m) => m.id))
   const out: Record<string, number> = {}
   for (const [key, value] of Object.entries(values)) {
     if (live.has(key.slice(0, key.lastIndexOf('.')))) out[key] = value

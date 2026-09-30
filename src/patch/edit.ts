@@ -1,4 +1,5 @@
 import { defOf } from './defs'
+import { kitSlots, padPrefix } from './kit'
 import type { Cable, Patch, PatchModule } from './types'
 
 export interface PortRef {
@@ -16,6 +17,20 @@ export function initialValues(patch: Patch): Record<string, number> {
   for (const m of patch.modules) {
     for (const spec of defOf(m.type).params) {
       values[`${m.id}.${spec.id}`] = m.params[spec.id] ?? spec.default
+    }
+    // A Drum Kit's pads have knobs too, turned on the bench while a pad is
+    // open, and kept here under the pad's own ids -- the ids the compiled
+    // rack plays them by.
+    if (m.type === 'kit') {
+      kitSlots(m).forEach((pad, i) => {
+        if (!pad) return
+        const prefix = padPrefix(m.id, i)
+        for (const inner of pad.patch.modules) {
+          for (const spec of defOf(inner.type).params) {
+            values[`${prefix}${inner.id}.${spec.id}`] = inner.params[spec.id] ?? spec.default
+          }
+        }
+      })
     }
   }
   return values
@@ -41,7 +56,9 @@ export function portKind(patch: Patch, ref: PortRef): 'input' | 'output' | null 
   const m = patch.modules.find((x) => x.id === ref.module)
   if (!m) return null
   const def = defOf(m.type)
-  if (def.inputs.some((p) => p.id === ref.port)) return 'input'
+  // A hidden input is the compiler's to wire: no cable, from a hand or a
+  // file, can land on one.
+  if (def.inputs.some((p) => p.id === ref.port && !p.hidden)) return 'input'
   if (def.outputs.some((p) => p.id === ref.port)) return 'output'
   return null
 }

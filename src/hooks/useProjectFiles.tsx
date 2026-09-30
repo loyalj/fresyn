@@ -4,6 +4,7 @@ import type { SampleLibrary } from '../audio/SampleLibrary'
 import { getSample, type StoredSample } from '../audio/sampleStore'
 import { initialValues } from '../patch/edit'
 import { canUseFileHandles, pickFileToOpen, pickFileToSave, writeFile } from '../patch/fileAccess'
+import { sampleIdsIn } from '../patch/sampleRefs'
 import { toStored } from '../patch/serialize'
 import {
   downloadProject,
@@ -102,9 +103,8 @@ export function useProjectFiles({
    * the file that was dropped in.
    */
   const gatherSamples = useCallback(async (patches: readonly Patch[]) => {
-    const ids = [
-      ...new Set(patches.flatMap((p) => p.modules.map((m) => m.sample?.id)).filter(Boolean)),
-    ] as string[]
+    // Every module that names one, a Drum Kit's pads included.
+    const ids = [...sampleIdsIn(patches)]
     const found: StoredSample[] = []
     for (const id of ids) {
       const s = await getSample(id)

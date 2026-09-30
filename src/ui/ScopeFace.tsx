@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { SCOPE_CAPTURE } from '../dsp/modules/Scope'
 import type { ModuleDef } from '../patch/types'
-import { useEngine } from './EngineContext'
+import { useEngine, useEngineId } from './EngineContext'
 import { drawScope, type ScopeView } from './scopeDraw'
 import { useAppearance } from './ThemeContext'
 import { useFace } from './useFace'
@@ -25,6 +25,8 @@ const KNOBS = ['timebase', 'gain', 'mode']
  */
 export function ScopeFace({ def, moduleId, valueOf, onChange }: Props) {
   const engine = useEngine()
+  /** How the engine reports this module: by its id in the track, a pad's included. */
+  const engineId = useEngineId(moduleId)
   const appearance = useAppearance()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const frame = useRef<Float32Array | null>(null)
@@ -63,7 +65,7 @@ export function ScopeFace({ def, moduleId, valueOf, onChange }: Props) {
   useEffect(() => {
     if (!engine) return
     return engine.onScopeFrame((frames) => {
-      const next = frames[moduleId]
+      const next = frames[engineId]
       // B arrives as its own entry, and only while something is patched to
       // it, so a frame without one means the jack is empty rather than quiet.
       const nextB = frames[`${moduleId}.b`] ?? null
@@ -72,7 +74,7 @@ export function ScopeFace({ def, moduleId, valueOf, onChange }: Props) {
       frameB.current = nextB
       dirty.current = true
     })
-  }, [engine, moduleId])
+  }, [engine, engineId])
 
   // Colours belong in the stylesheet; a canvas cannot read a CSS variable on
   // its own, so they are declared on the element and pulled off here. Reading

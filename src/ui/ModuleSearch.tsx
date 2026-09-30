@@ -25,6 +25,8 @@ interface Props {
    * other way round. Absent, it is a plain search for a module to add.
    */
   cable?: 'input' | 'output'
+  /** Module types not to offer: what a Drum Kit's pad cannot hold, while one is open. */
+  exclude?: ReadonlySet<string>
   onPick: (pick: SearchPick) => void
   onClose: () => void
 }
@@ -42,13 +44,13 @@ interface Props {
  * captured on the window ahead of whatever has focus, so this has to be
  * something the rack stands down for, and it takes the keys it needs itself.
  */
-export function ModuleSearch({ cable, onPick, onClose }: Props) {
+export function ModuleSearch({ cable, exclude, onPick, onClose }: Props) {
   const [query, setQuery] = useState('')
   const [at, setAt] = useState(0)
   const input = useRef<HTMLInputElement>(null)
   const list = useRef<HTMLUListElement>(null)
 
-  const entries = useMemo(() => buildEntries(cable), [cable])
+  const entries = useMemo(() => buildEntries(cable, exclude), [cable, exclude])
   const shown = useMemo(() => filter(entries, query), [entries, query])
 
   useEffect(() => input.current?.focus(), [])
@@ -141,13 +143,13 @@ function modes(def: (typeof MODULE_DEFS)[string]) {
  * which jack is the whole question: a filter's In and its CV are different
  * cables.
  */
-function buildEntries(cable?: 'input' | 'output'): Entry[] {
+function buildEntries(cable?: 'input' | 'output', exclude?: ReadonlySet<string>): Entry[] {
   const groupName = new Map(MODULE_GROUPS.map((g) => [g.id, g.name]))
   const out: Entry[] = []
   let order = 0
   for (const g of MODULE_GROUPS) {
     for (const def of Object.values(MODULE_DEFS)) {
-      if (def.group !== g.id) continue
+      if (def.group !== g.id || exclude?.has(def.type)) continue
       const group = groupName.get(def.group) ?? ''
       if (!cable) {
         out.push({
@@ -162,6 +164,7 @@ function buildEntries(cable?: 'input' | 'output'): Entry[] {
       // The loose end is an output, so it wants an input; and the other way.
       const ports = cable === 'output' ? def.inputs : def.outputs
       for (const p of ports) {
+        if (p.hidden) continue
         out.push({
           type: def.type,
           port: p.id,

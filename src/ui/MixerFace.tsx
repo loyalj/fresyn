@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { MIXER_CHANNELS } from '../patch/defs'
 import type { ModuleDef } from '../patch/types'
-import { useEngine } from './EngineContext'
+import { useEngine, useEngineId } from './EngineContext'
 import { FALL, fillBar, scale } from './meter'
 import { useFace } from './useFace'
 import { useFallingMeter } from './useFallingMeter'
@@ -27,6 +27,8 @@ const BARS = MIXER_CHANNELS.length + 1
  */
 export function MixerFace({ def, moduleId, valueOf, onChange }: Props) {
   const engine = useEngine()
+  /** How the engine reports this module: by its id in the track, a pad's included. */
+  const engineId = useEngineId(moduleId)
   const { read, control } = useFace(def, valueOf, onChange)
   /** A mute or solo, which is stored as a number and read as a state. */
   const isOn = (id: string) => read(id) >= 0.5
@@ -42,7 +44,7 @@ export function MixerFace({ def, moduleId, valueOf, onChange }: Props) {
   useEffect(() => {
     if (!engine) return
     return engine.onLevels((levels) => {
-      const next = levels[moduleId]
+      const next = levels[engineId]
       if (!next) return
       for (let i = 0; i < BARS; i++) feed(i, scale(next[i] ?? 0))
       // Short-term, the three-second reading, because it is the one steady
@@ -61,7 +63,7 @@ export function MixerFace({ def, moduleId, valueOf, onChange }: Props) {
         }
       }
     })
-  }, [engine, moduleId, feed])
+  }, [engine, engineId, feed])
 
   return (
     <div className="mixer">

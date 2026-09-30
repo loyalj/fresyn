@@ -1,7 +1,8 @@
 import type { EngineEvent } from '../dsp/GraphEngine'
 import type { TrackEvent } from '../dsp/SongEngine'
 import { defOf } from '../patch/defs'
-import type { Patch } from '../patch/types'
+import { kitSlots, padModuleId, padTarget } from '../patch/kit'
+import type { Patch, PatchModule } from '../patch/types'
 import type { SongEvent } from './schedule'
 
 /**
@@ -19,8 +20,33 @@ import type { SongEvent } from './schedule'
  */
 export interface NoteTarget {
   module: string
-  kind: 'note' | 'trigger'
+  /**
+   * A Keyboard, a Trigger, or a Drum Kit -- whose notes each play whichever
+   * of its pads is on that note, and nothing where no pad is.
+   */
+  kind: 'note' | 'trigger' | 'kit'
+  /** For a kit: its pads, by the row a note is written on. See `KitHit`. */
+  pads?: ReadonlyMap<number, readonly KitHit[]>
 }
+
+/** One pad of a kit, as a note on its row reaches it. */
+export interface KitHit {
+  /** Which pad, from nought: what the kit is told, for its choke groups. */
+  slot: number
+  /** The module inside the pad the note is played on, by its laid-in id. */
+  module: string
+  /** A Keyboard, which is played its bottom key; a Trigger takes no pitch. */
+  pitched: boolean
+  name: string
+}
+
+/**
+ * The row a note on a pad is written on: the pad's MIDI note, counted the
+ * way the roll counts rows on a track with no tuning to read, so the row a
+ * kick is on reads C2 -- MIDI 36, where General MIDI puts a kick.
+ */
+export const KIT_ROW_ZERO = 12
+export const kitRow = (note: number) => note - KIT_ROW_ZERO
 
 export function noteTarget(patch: Patch): NoteTarget | null {
   // A keyboard first, wherever it sits in the rack: a patch with both is
@@ -28,6 +54,11 @@ export function noteTarget(patch: Patch): NoteTarget | null {
   // by rather than a second instrument.
   for (const m of patch.modules) {
     if (defOf(m.type).playable) return { module: m.id, kind: 'note' }
+  }
+  // A Drum Kit before a Trigger: a rack built round a kit often has a
+  // Trigger on Space to audition it, and the roll is for the kit.
+  for (const m of patch.modules) {
+    if (m.type === 'kit') return { module: m.id, kind: 'kit', pads: kitPads(m) }
   }
   // `keyed` and not `trigger`, because half the rack has a trigger button --
   // the sequencer, the burst, the envelope -- and firing one of those from
@@ -56,6 +87,7 @@ export function noteTarget(patch: Patch): NoteTarget | null {
  * offer, and the Trigger keeps its velocity and throws the pitch away.
  */
 export function engineEvents(events: readonly SongEvent[], target: NoteTarget): EngineEvent[] {
+  if (target.kind === 'kit') return kitEvents(events, target)
   return events.map((e) =>
     e.kind === 'on'
       ? {
@@ -72,6 +104,48 @@ export function engineEvents(events: readonly SongEvent[], target: NoteTarget): 
         ? { frame: e.frame, kind: 'noteOff' as const, module: target.module }
         : { frame: e.frame, kind: 'noteOff' as const, module: target.module, pitch: e.pitch },
   )
+}
+
+/** A Drum Kit as a target in its own right, whatever else is in its rack: for auditioning a pad. */
+export function kitTarget(kit: PatchModule): NoteTarget {
+  return { module: kit.id, kind: 'kit', pads: kitPads(kit) }
+}
+
+/** A kit's pads by row, from what is loaded in it. */
+function kitPads(kit: PatchModule): Map<number, KitHit[]> {
+  const pads = new Map<number, KitHit[]>()
+  kitSlots(kit).forEach((slot, i) => {
+    if (!slot) return
+    const target = padTarget(slot.patch)
+    if (!target) return
+    const row = kitRow(slot.note)
+    const hit = { slot: i, module: padModuleId(kit.id, i, target.module), pitched: target.pitched, name: slot.name }
+    pads.set(row, [...(pads.get(row) ?? []), hit])
+  })
+  return pads
+}
+
+/**
+ * A kit's notes: each to the pads on its row, by the module inside the pad,
+ * and the kit told which pad was struck so it can choke the rest of its
+ * group. A note on a row no pad is on plays nothing. A release for every
+ * note -- a loop's seam -- lets go of every pad.
+ */
+function kitEvents(events: readonly SongEvent[], target: NoteTarget): EngineEvent[] {
+  const out: EngineEvent[] = []
+  const pads = target.pads ?? new Map<number, readonly KitHit[]>()
+  for (const e of events) {
+    if (e.kind === 'on') {
+      for (const hit of pads.get(e.pitch ?? NaN) ?? []) {
+        out.push({ frame: e.frame, kind: 'noteOn', module: target.module, pitch: hit.slot, velocity: e.velocity })
+        out.push({ frame: e.frame, kind: 'noteOn', module: hit.module, pitch: 0, velocity: e.velocity })
+      }
+    } else {
+      const hits = e.pitch === undefined ? [...pads.values()].flat() : (pads.get(e.pitch) ?? [])
+      for (const hit of hits) out.push({ frame: e.frame, kind: 'noteOff', module: hit.module, pitch: 0 })
+    }
+  }
+  return out
 }
 
 /**

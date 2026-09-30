@@ -45,6 +45,8 @@ function blocksOf(def: ModuleDef): Block[] {
 
   const gather = (ports: PortDef[], kind: JackKind) => {
     for (const port of ports) {
+      // The compiler's to wire, and nobody's to see.
+      if (port.hidden) continue
       const label = port.block ?? DEFAULT_BLOCK[kind]
       let block = byLabel.get(label)
       if (!block) {

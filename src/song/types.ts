@@ -24,8 +24,19 @@ import type { Scale } from './scale'
 export const PPQ = 960
 
 export interface Song {
-  /** Beats per minute. One tempo for the whole song, for now. */
+  /** Beats per minute at the start of the song. See `tempos` for any change after. */
   tempo: number
+  /**
+   * Where the tempo changes after the start, earliest first, each tick after
+   * zero and each a different tempo from the one before it. Absent is none:
+   * the whole song at `tempo`. A change is a step, heard from its tick on --
+   * which is all a MIDI file can say, and so all one can bring in.
+   *
+   * Only the clock moves with it. Ticks, and so every note, clip and bar,
+   * stay where they were: a change of tempo makes the music faster, never
+   * longer or shorter in beats.
+   */
+  tempos?: TempoChange[]
   tracks: Track[]
   /** Folders for the track list, in no particular order. See `Folder`. */
   folders?: Folder[]
@@ -41,6 +52,18 @@ export interface Song {
    * in any meter.
    */
   meter?: Meter
+  /**
+   * Where the time signature changes after the start, earliest first, each
+   * tick after zero and each a different meter from the one before it.
+   * Absent is none: the whole song in `meter`.
+   *
+   * A change starts a new bar where it is. The editor only puts one on a
+   * barline, but one that arrives anywhere else -- from a file, or from
+   * time taken out in front of it -- is not moved: the bar before it is
+   * simply cut short there, which is how the bars look in the playlist and
+   * how they are counted everywhere else.
+   */
+  meters?: MeterChange[]
   /** The song's mixing desk. Absent is the default one: see `DEFAULT_CONSOLE`. */
   console?: Console
   /**
@@ -254,11 +277,47 @@ export interface PitchRange {
 export const PITCH_RANGE: PitchRange = { low: -48, high: 79 }
 
 export interface Meter {
-  /** Beats to the bar: the top of the time signature. */
+  /** Beats to the bar: the top of the time signature. From 1 to `METER_BEATS_MAX`. */
   beats: number
-  /** What a beat is -- a quarter note (4) or an eighth (8): the bottom. */
-  unit: 4 | 8
+  /**
+   * What a beat is, the bottom of the time signature: a half note (2), a
+   * quarter (4), an eighth (8), a sixteenth (16) -- any of `METER_UNITS`.
+   */
+  unit: MeterUnit
 }
+
+/**
+ * The notes a beat can be, as a time signature writes them: a whole note down
+ * to a thirty-second. Every one is a whole number of ticks, and so is a bar
+ * of any number of them.
+ */
+export type MeterUnit = 1 | 2 | 4 | 8 | 16 | 32
+export const METER_UNITS: readonly MeterUnit[] = [1, 2, 4, 8, 16, 32]
+/** The most beats a bar can have: 32/16 is two bars of 4/4, and past that nobody writes one bar. */
+export const METER_BEATS_MAX = 32
+
+/** A meter as it may be kept, or null for one that cannot be. */
+export function validMeter(beats: unknown, unit: unknown): Meter | null {
+  if (typeof beats !== 'number' || !Number.isInteger(beats) || beats < 1 || beats > METER_BEATS_MAX) return null
+  if (!METER_UNITS.includes(unit as MeterUnit)) return null
+  return { beats, unit: unit as MeterUnit }
+}
+
+/** The tempo from `tick` on, in beats per minute. */
+export interface TempoChange {
+  tick: number
+  bpm: number
+}
+
+/** The time signature from `tick` on, where a new bar starts. */
+export interface MeterChange {
+  tick: number
+  meter: Meter
+}
+
+/** The tempos a song can be at: the field's range, and the file reader's. */
+export const TEMPO_MIN = 20
+export const TEMPO_MAX = 300
 
 export interface Section {
   /** Where it starts, in ticks. */
@@ -282,8 +341,10 @@ export function barTicks(song: { meter?: Meter }): number {
  * allowed in any meter. Shared by the length picker and the file reader, so a
  * pattern the editor would refuse cannot arrive through a file instead.
  */
-export function minPatternLength(song: { meter?: Meter }): number {
-  return Math.min(PPQ, barTicks(song))
+export function minPatternLength(song: { meter?: Meter; meters?: MeterChange[] }): number {
+  let shortest = barTicks(song)
+  for (const c of song.meters ?? []) shortest = Math.min(shortest, barTicks(c))
+  return Math.min(PPQ, shortest)
 }
 
 /**

@@ -21,7 +21,12 @@ import { GraphEngine, type EngineEvent } from '../src/dsp/GraphEngine'
 import { SongEngine } from '../src/dsp/SongEngine'
 import { compile } from '../src/patch/compile'
 import type { Cable, Patch, PatchModule } from '../src/patch/types'
-import { engineEvents, noteTarget } from '../src/song/bind'
+import { engineEvents, kitRow, noteTarget } from '../src/song/bind'
+import { flattenKits, kitSlots, padView, setKitSlot, updateKitSlot, withPadView } from '../src/patch/kit'
+import { templateById } from '../src/patch/library'
+import { fromStored, toStored } from '../src/patch/serialize'
+import { connect as wireUp, initialValues, reconcileValues } from '../src/patch/edit'
+import { sampleIdsIn } from '../src/patch/sampleRefs'
 import {
   addPattern,
   duplicatePattern,
@@ -57,10 +62,12 @@ import {
 import { renderSong, renderStems } from '../src/audio/renderSong'
 import { Transport } from '../src/audio/Transport'
 import type { AudioEngine } from '../src/audio/AudioEngine'
-import { setPatternNotes, trackMix, updateConsole, updateStrip, updateTrack } from '../src/song/edit'
+import { playlistBars, setPatternNotes, trackMix, updateConsole, updateStrip, updateTrack } from '../src/song/edit'
 import { SongPlayer, loadProject } from '../src/song/runtime'
 import { framesPerTick, releasedBySwing, songEnd, songEventTicks, songEvents, swungTick, unswungTick, type SongEvent } from '../src/song/schedule'
 import { fill, playheadTick } from '../src/song/transport'
+import { barsIn, barsOf, patternBars, secondsAt, tempoAt, tempoMap } from '../src/song/timeline'
+import { cleanTimings, METER, moveAt, removeAt, removeBetween, setAt, TEMPO } from '../src/song/timing'
 import {
   arpeggiateNotes,
   chopNotes,
@@ -91,7 +98,7 @@ import { parseSong } from '../src/song/serialize'
 import { describeEdit } from '../src/hooks/describeEdit'
 import { defaultPatch } from '../src/patch/defaultPatch'
 import { initialValues as rackValues } from '../src/patch/edit'
-import { barTicks, beatTicks, benchSong, PITCH_RANGE, PPQ, type Song } from '../src/song/types'
+import { barTicks, beatTicks, benchSong, minPatternLength, PITCH_RANGE, PPQ, type Song } from '../src/song/types'
 import { defOf } from '../src/patch/defs'
 /** The Keyboard's own reach, for the checks about what happens at an edge. */
 const TWO_OCTAVES = { low: 0, high: 24 }
@@ -100,6 +107,8 @@ const TWO_OCTAVES = { low: 0, high: 24 }
 const clipLen = (s: Song) => s.playlist[0].length ?? s.patterns[0].length
 
 const SR = 48000
+/** The plain 120 bpm clock most of these checks count against. */
+const T120 = tempoMap({ tempo: 120 }, SR)
 
 let failures = 0
 
@@ -644,18 +653,18 @@ console.log('\nthe playhead')
   const loop = { from: 0, to: PPQ }
   check(
     'it advances with the frames',
-    playheadTick(12000, 0, 0, 120, SR, null) === PPQ / 2,
-    `got ${playheadTick(12000, 0, 0, 120, SR, null)}`,
+    playheadTick(12000, 0, 0, T120, null) === PPQ / 2,
+    `got ${playheadTick(12000, 0, 0, T120, null)}`,
   )
   check(
     'it wraps at the end of the loop',
-    playheadTick(36000, 0, 0, 120, SR, loop) === PPQ / 2,
-    `got ${playheadTick(36000, 0, 0, 120, SR, loop)}`,
+    playheadTick(36000, 0, 0, T120, loop) === PPQ / 2,
+    `got ${playheadTick(36000, 0, 0, T120, loop)}`,
   )
   check(
     'it stays inside the loop before the start frame',
-    playheadTick(-12000, 0, 0, 120, SR, loop) === PPQ / 2,
-    `got ${playheadTick(-12000, 0, 0, 120, SR, loop)}`,
+    playheadTick(-12000, 0, 0, T120, loop) === PPQ / 2,
+    `got ${playheadTick(-12000, 0, 0, T120, loop)}`,
   )
 }
 
@@ -731,13 +740,13 @@ console.log('\nthe playhead around a loop')
   const loop = { from: PPQ * 2, to: PPQ * 3 }
   check(
     'a start before the loop plays up to it unwrapped',
-    playheadTick(24000, 0, 0, 120, SR, loop) === PPQ,
-    `got ${playheadTick(24000, 0, 0, 120, SR, loop)}`,
+    playheadTick(24000, 0, 0, T120, loop) === PPQ,
+    `got ${playheadTick(24000, 0, 0, T120, loop)}`,
   )
   check(
     'and wraps once it is past the end',
-    playheadTick(24000 * 3.5, 0, 0, 120, SR, loop) === PPQ * 2.5,
-    `got ${playheadTick(24000 * 3.5, 0, 0, 120, SR, loop)}`,
+    playheadTick(24000 * 3.5, 0, 0, T120, loop) === PPQ * 2.5,
+    `got ${playheadTick(24000 * 3.5, 0, 0, T120, loop)}`,
   )
 
   // Through the transport itself, with an engine that is only a clock.
@@ -2586,6 +2595,458 @@ console.log('\nthe History list names each edit')
     song: { ...base.song, playlist: [{ pattern: 'main', tick: 0, length: 960 }, { pattern: 'main', tick: 960, offset: 960, length: 2880 }] },
   }
   check('a split clip is a split', describeEdit(base, split) === 'Split clip', describeEdit(base, split))
+}
+
+console.log('\ntempo changes')
+{
+  const BAR = PPQ * 4
+  // 120 for two bars, then 60: a quarter is 24000 samples, then 48000.
+  const slow = song({
+    tempos: [{ tick: 2 * BAR, bpm: 60 }],
+    patterns: [
+      {
+        id: 'a',
+        name: 'A',
+        length: 4 * BAR,
+        notes: [
+          { track: 'lead', tick: 0, length: PPQ, pitch: 0, velocity: 1 },
+          { track: 'lead', tick: 2 * BAR, length: PPQ, pitch: 1, velocity: 1 },
+          { track: 'lead', tick: 2 * BAR + PPQ, length: PPQ, pitch: 2, velocity: 1 },
+          // Across the change: starts at 120, lets go at 60.
+          { track: 'drum', tick: 2 * BAR - PPQ / 2, length: PPQ, pitch: 0, velocity: 1 },
+        ],
+      },
+    ],
+  })
+  const time = tempoMap(slow, SR)
+  check('before the change, the old clock', time.frameAt(BAR) === 96000, `got ${time.frameAt(BAR)}`)
+  check('the change lands where two bars at 120 end', time.frameAt(2 * BAR) === 192000, `got ${time.frameAt(2 * BAR)}`)
+  check('and a beat after it takes twice as long', time.frameAt(2 * BAR + PPQ) === 240000, `got ${time.frameAt(2 * BAR + PPQ)}`)
+  check('frames back to ticks, either side', time.tickAt(96000) === BAR && time.tickAt(240000) === 2 * BAR + PPQ)
+  check('a span across the change is the sum of both sides', time.span(BAR, 2 * BAR + PPQ) === 144000)
+  check('and advancing across it lands where the frames say', time.advance(BAR, 144000) === 2 * BAR + PPQ)
+  check('the tempo at a tick is the last change before it', tempoAt(slow, 2 * BAR - 1) === 120 && tempoAt(slow, 2 * BAR) === 60)
+  check('and a tick is in seconds from the start', secondsAt(slow, 2 * BAR + PPQ) === 5, `got ${secondsAt(slow, 2 * BAR + PPQ)}`)
+  check('one tempo is the same clock as ever', T120.frameAt(12345) === 12345 * 25 && T120.span(10, 20) === 250)
+  check('the map is kept while the tempo is', tempoMap(slow, SR) === time && tempoMap({ tempo: slow.tempo, tempos: slow.tempos }, SR) === time)
+
+  const events = songEvents(slow, SR, 0, 4 * BAR)
+  const onAt = (pitch: number) => events.find((e) => e.track === 'lead' && e.kind === 'on' && e.pitch === pitch)?.frame
+  check('a note after the change is heard on the slower clock', onAt(1) === 192000 && onAt(2) === 240000, `${onAt(1)} ${onAt(2)}`)
+  const drumOff = events.find((e) => e.track === 'drum' && e.kind === 'off')?.frame
+  check('a note across the change lets go on the slower clock', drumOff === 192000 + 24000, `got ${drumOff}`)
+
+  // The transport's windows, however they fall, have to agree with the whole.
+  for (const step of [997, 4800, 24000]) {
+    const tiled: SongEvent[] = []
+    let cursor = { tick: 0, frame: 0 }
+    for (let until = step; ; until += step) {
+      const out = fill(slow, SR, cursor, until, null)
+      tiled.push(...out.events)
+      cursor = out.cursor
+      if (out.ended) break
+    }
+    const key = (e: SongEvent) => `${e.frame}/${e.track}/${e.kind}/${e.pitch}`
+    const whole = songEvents(slow, SR, 0, 4 * BAR + 1)
+    check(`windows of ${step} frames schedule what the whole song does`,
+      tiled.map(key).join() === whole.map(key).join(), `${tiled.length} vs ${whole.length}`)
+  }
+
+  // A loop across the change goes round in the frames the change makes it.
+  const loop = { from: BAR, to: 3 * BAR }
+  const pass = time.span(loop.from, loop.to)
+  check('a pass of a loop across the change is a bar at each tempo', pass === 96000 + 192000, `got ${pass}`)
+  const looped = fill(slow, SR, { tick: BAR, frame: 0 }, pass * 2 + 10, loop)
+  const second = looped.events.filter((e) => e.track === 'lead' && e.kind === 'on' && e.pitch === 1).map((e) => e.frame)
+  check('and comes round to the same note a pass later', second.length === 2 && second[1] - second[0] === pass, JSON.stringify(second))
+  check('the playhead follows the slower clock', playheadTick(96000 + 48000, 0, BAR, time, null) === 2 * BAR + PPQ)
+  check('and wraps a loop by its frames, not its ticks', playheadTick(pass + 96000 + 48000, 0, BAR, time, loop) === 2 * BAR + PPQ)
+  check('a start before the loop plays up to it first', playheadTick(96000, 0, 0, time, loop) === BAR && playheadTick(96000 + pass, 0, 0, time, loop) === BAR)
+  check('and a frame before the start is still inside the loop', playheadTick(-48000, 0, BAR, time, loop) === 3 * BAR - PPQ,
+    `got ${playheadTick(-48000, 0, BAR, time, loop)}`)
+
+  // A game hears the tick the tempo says.
+  const player = new SongPlayer(slow, band(), { sampleRate: SR })
+  const l = new Float32Array(192000 + 48000)
+  const r = new Float32Array(l.length)
+  player.render(l, r)
+  check('the game hears the tick the tempo says', Math.abs(player.tick - (2 * BAR + PPQ)) < 1, `got ${player.tick}`)
+}
+
+console.log('\nmeter changes')
+{
+  const BAR = PPQ * 4
+  // Two bars of 4/4, then 3/4.
+  const s = song({ meters: [{ tick: 2 * BAR, meter: { beats: 3, unit: 4 } }] })
+  const bars = barsOf(s)
+  check('the bars before the change are 4/4', bars.bar(1).tick === BAR && bars.bar(1).length === BAR)
+  check('the change starts a bar of 3/4', bars.bar(2).tick === 2 * BAR && bars.bar(2).length === 3 * PPQ)
+  check('and the next is three beats on', bars.bar(3).tick === 2 * BAR + 3 * PPQ, `got ${bars.bar(3).tick}`)
+  check('a tick finds its bar', bars.at(2 * BAR + 4 * PPQ).index === 3)
+  check('the meter at a tick', bars.meterAt(2 * BAR).beats === 3 && bars.meterAt(2 * BAR - 1).beats === 4)
+  check('snapping to a bar uses the bar it is in', bars.snapBar(2 * BAR + PPQ, 'ceil') === 2 * BAR + 3 * PPQ)
+  check('and rounds to the nearer barline', bars.snapBar(2 * BAR + 2 * PPQ) === 2 * BAR + 3 * PPQ && bars.snapBar(BAR + PPQ) === BAR)
+  check('a beat is counted from the start of its bar', bars.snapIn(2 * BAR + PPQ + 100, PPQ, 'floor') === 2 * BAR + PPQ)
+  check('the bars between two ticks', bars.between(BAR, 2 * BAR + 4 * PPQ).map((b) => b.index).join() === '1,2,3')
+  check('the playlist counts bars through the change',
+    barsIn(bars, 2 * BAR + 3 * PPQ) === 3 && barsIn(bars, 2 * BAR + 3 * PPQ + 1) === 4)
+
+  // A change that is not on a barline cuts the bar before it short.
+  const odd = barsOf({ meters: [{ tick: BAR + 2 * PPQ, meter: { beats: 3, unit: 4 } }] })
+  check('a change off the barline cuts the bar before it short', odd.bar(1).length === 2 * PPQ && odd.bar(2).tick === BAR + 2 * PPQ)
+
+  // A pattern is ruled in the meter it first sits in.
+  check('a pattern placed after the change is in 3/4', patternBars(s, 2 * BAR).bar(0).length === 3 * PPQ)
+  check('one placed across it sees the change where it falls',
+    patternBars(s, BAR).bar(1).tick === BAR && patternBars(s, BAR).bar(1).length === 3 * PPQ)
+  check('and one not placed is in the opening meter', patternBars(s, null).bar(0).length === BAR)
+  check('the shortest a pattern can be allows for the shortest bar',
+    minPatternLength({ meters: [{ tick: BAR, meter: { beats: 1, unit: 8 } }] }) === PPQ / 2)
+  check('the song view reaches a bar past the end, counted in the bars there are', playlistBars(s, 1) === 2)
+  const waltzEnd = song({ meters: [{ tick: 1, meter: { beats: 3, unit: 4 } }] })
+  check('and counts them in the meter they are in', playlistBars(waltzEnd, 1) === 4, String(playlistBars(waltzEnd, 1)))
+}
+
+console.log('\nediting tempo and meter changes')
+{
+  const BAR = PPQ * 4
+  const s = song()
+  const faster = setAt(TEMPO, s, 2 * BAR, 140)
+  check('a tempo change is added at its tick', JSON.stringify(faster.tempos) === JSON.stringify([{ tick: 2 * BAR, bpm: 140 }]))
+  check('setting it again changes it in place', setAt(TEMPO, faster, 2 * BAR, 90).tempos?.[0].bpm === 90)
+  check('one that changes nothing is not kept', !('tempos' in setAt(TEMPO, s, 2 * BAR, 120)))
+  check('at zero it is the opening tempo', setAt(TEMPO, faster, 0, 100).tempo === 100 && setAt(TEMPO, faster, 0, 100).tempos === faster.tempos)
+  check('and held to the range', setAt(TEMPO, s, BAR, 999).tempos?.[0].bpm === 300)
+  check('it is taken away', !('tempos' in removeAt(TEMPO, faster, 2 * BAR)))
+  check('the opening tempo cannot be', removeAt(TEMPO, faster, 0) === faster)
+  check('it moves', moveAt(TEMPO, faster, 2 * BAR, 3 * BAR).tempos?.[0].tick === 3 * BAR)
+  const ramp = { ...s, tempos: Array.from({ length: 16 }, (_, i) => ({ tick: BAR + i * 120, bpm: 121 + i })) }
+  const thinned = removeBetween(TEMPO, ramp, BAR, BAR + 8 * 120)
+  check('a stretch of changes goes at once', thinned.tempos?.length === 8 && thinned.tempos[0].tick === BAR + 8 * 120, JSON.stringify(thinned.tempos?.[0]))
+  check('and all of them, leaving the tempo at the start', !('tempos' in removeBetween(TEMPO, ramp, 1, Infinity)) && removeBetween(TEMPO, ramp, 1, Infinity).tempo === 120)
+  check('a stretch with none in it changes nothing', removeBetween(TEMPO, ramp, 0, BAR) === ramp)
+  check('but never onto the start', moveAt(TEMPO, faster, 2 * BAR, 0) === faster)
+  const two = setAt(TEMPO, faster, 3 * BAR, 160)
+  check('moved onto another, it replaces it', JSON.stringify(moveAt(TEMPO, two, 2 * BAR, 3 * BAR).tempos) === JSON.stringify([{ tick: 3 * BAR, bpm: 140 }]))
+  check('a change back to what was before it goes', JSON.stringify(setAt(TEMPO, two, 3 * BAR, 140).tempos) === JSON.stringify([{ tick: 2 * BAR, bpm: 140 }]))
+
+  const waltz = setAt(METER, s, BAR, { beats: 3, unit: 4 })
+  check('a meter change is added', waltz.meters?.[0].meter.beats === 3)
+  check('a meter that cannot be is refused', setAt(METER, s, BAR, { beats: 0, unit: 4 }) === s && setAt(METER, s, BAR, { beats: 3, unit: 5 as 4 }) === s)
+  check('at zero it is the opening meter', setAt(METER, waltz, 0, { beats: 6, unit: 8 }).meter?.unit === 8)
+  check('a beat can be a half note', barTicks({ meter: { beats: 2, unit: 2 } }) === 4 * PPQ && beatTicks({ meter: { beats: 3, unit: 2 } }) === 2 * PPQ)
+  check('or a sixteenth', barTicks({ meter: { beats: 5, unit: 16 } }) === 5 * PPQ / 4 && beatTicks({ meter: { beats: 7, unit: 16 } }) === PPQ / 4)
+  check('up to thirty-two of them to a bar', !!setAt(METER, s, BAR, { beats: 32, unit: 32 }).meters && setAt(METER, s, BAR, { beats: 33, unit: 16 }) === s)
+  check('but only of a note a time signature can say', setAt(METER, s, BAR, { beats: 3, unit: 3 as 4 }) === s && setAt(METER, s, BAR, { beats: 3, unit: 64 as 4 }) === s)
+  const odd = parseSong(JSON.parse(JSON.stringify({ ...s, meter: { beats: 3, unit: 2 }, meters: [{ tick: 12 * PPQ, meter: { beats: 7, unit: 16 } }] })))
+  check('and they are saved with the song', odd?.meter?.unit === 2 && odd?.meters?.[0].meter.unit === 16, JSON.stringify({ m: odd?.meter, ms: odd?.meters }))
+  check('a bar of 7/16 after two of 3/2', barsOf(odd!).bar(2).tick === 12 * PPQ && barsOf(odd!).bar(2).length === 7 * PPQ / 4)
+  check('and 4/4 there is no meter at all', !('meter' in setAt(METER, setAt(METER, s, 0, { beats: 6, unit: 8 }), 0, { beats: 4, unit: 4 })))
+
+  const messy = { ...s, tempos: [{ tick: 3 * BAR, bpm: 90 }, { tick: 0, bpm: 100 }, { tick: BAR, bpm: 100 }, { tick: 3 * BAR, bpm: 95 }, { tick: 2.4 * BAR + 0.3, bpm: 110 }] }
+  const tidy = cleanTimings(messy)
+  check('changes are kept in order, whole, one to a tick and each a change',
+    tidy.tempo === 100 && JSON.stringify(tidy.tempos) === JSON.stringify([{ tick: Math.round(2.4 * BAR + 0.3), bpm: 110 }, { tick: 3 * BAR, bpm: 95 }]),
+    JSON.stringify(tidy.tempos))
+  check('and a song already tidy is handed back as it was', cleanTimings(tidy) === tidy && cleanTimings(s) === s)
+
+  // With changes along the way, the opening meter moves only the barlines.
+  const changing = setAt(METER, s, 2 * BAR, { beats: 3, unit: 4 })
+  const opened = setMeter(changing, { beats: 2, unit: 4 })
+  check('the opening meter of a song that changes meter moves no music',
+    opened.meter?.beats === 2 && opened.patterns === changing.patterns && opened.playlist === changing.playlist)
+
+  const retimed = setMeter(setAt(TEMPO, s, 2 * BAR + PPQ, 150), { beats: 3, unit: 4 })
+  check('a whole-song change of meter keeps a tempo change in its bar, on its beat',
+    retimed.tempos?.[0].tick === 2 * 3 * PPQ + PPQ, JSON.stringify(retimed.tempos))
+  const saved = parseSong(JSON.parse(JSON.stringify(setAt(TEMPO, changing, BAR, 150))))
+  check('changes are saved with the song', saved?.tempos?.[0].bpm === 150 && saved?.meters?.[0].meter.beats === 3)
+  const junk = parseSong({
+    ...JSON.parse(JSON.stringify(s)),
+    tempos: [{ tick: BAR, bpm: 'fast' }, { tick: -5, bpm: 90 }, { tick: 2 * BAR, bpm: 1000 }, { tick: 0, bpm: 80 }],
+    meters: [{ tick: BAR, meter: { beats: 40, unit: 3 } }, { tick: 2 * BAR }, 'x'],
+  })
+  check('a file\'s changes are read as the editor would have made them',
+    junk?.tempo === 80 && JSON.stringify(junk?.tempos) === JSON.stringify([{ tick: 2 * BAR, bpm: 300 }]) &&
+      JSON.stringify(junk?.meters) === JSON.stringify([{ tick: BAR, meter: { beats: 32, unit: 4 } }]),
+    JSON.stringify({ t: junk?.tempo, ts: junk?.tempos, ms: junk?.meters }))
+
+  // Time put in, taken out and copied carries its tempo and meter.
+  const timed = setAt(METER, setAt(TEMPO, s, 2 * BAR, 90), 2 * BAR, { beats: 3, unit: 4 })
+  const later = insertTime(timed, BAR, BAR)
+  check('bars put in before a change move it later', later.tempos?.[0].tick === 3 * BAR && later.meters?.[0].tick === 3 * BAR)
+  check('and the new bars are at the tempo before them', tempoAt(later, BAR) === 120)
+  const cut = deleteTime(timed, { from: BAR, to: 2 * BAR + PPQ })
+  check('taking out bars with a change in them keeps what it changed to after them',
+    JSON.stringify(cut.tempos) === JSON.stringify([{ tick: BAR, bpm: 90 }]) && cut.meters?.[0].tick === BAR,
+    JSON.stringify({ t: cut.tempos, m: cut.meters }))
+  const twice = duplicateTime(timed, { from: 2 * BAR, to: 2 * BAR + 3 * PPQ })
+  check('a copied bar keeps its tempo and meter, and the song goes on as it was after',
+    tempoAt(twice, 2 * BAR + 3 * PPQ) === 90 && twice.meters?.length === 1, JSON.stringify({ t: twice.tempos, m: twice.meters }))
+  const early = duplicateTime(timed, { from: 0, to: BAR })
+  check('a copy of a bar before the change is at its own tempo, and the change still follows',
+    tempoAt(early, BAR) === 120 && early.tempos?.[0].tick === 3 * BAR, JSON.stringify(early.tempos))
+  const pasted = pasteTime(timed, 4 * BAR, copyTime(timed, { from: 2 * BAR, to: 3 * BAR })!)
+  check('pasted bars bring their tempo', tempoAt(pasted, 4 * BAR) === 90 && tempoAt(pasted, 5 * BAR) === 90)
+  const intoSlow = pasteTime(timed, 4 * BAR, copyTime(timed, { from: 0, to: BAR })!)
+  check('and the song picks up where it was after them', tempoAt(intoSlow, 4 * BAR) === 120 && tempoAt(intoSlow, 5 * BAR) === 90,
+    JSON.stringify(intoSlow.tempos))
+  check('clearing bars leaves the changes', clearTime(timed, { from: 0, to: 4 * BAR }).tempos === timed.tempos)
+
+  // So does a section, when its music moves.
+  const sectioned = addSection(addSection(timed, 0, 2 * BAR, 'A'), 2 * BAR, BAR, 'B')
+  const doubled = duplicateSection(sectioned, 2 * BAR)
+  check('a duplicated section is at its tempo', tempoAt(doubled, 3 * BAR) === 90 && barsOf(doubled).meterAt(3 * BAR).beats === 3)
+  const swapped = moveSection(sectioned, 2 * BAR, 0)
+  check('a section moved takes its tempo and meter with it',
+    tempoAt(swapped, 0) === 90 && swapped.meter?.beats === 3 && tempoAt(swapped, BAR) === 120 && barsOf(swapped).meterAt(BAR).beats === 4,
+    JSON.stringify({ t: swapped.tempo, ts: swapped.tempos, m: swapped.meter, ms: swapped.meters }))
+  const gone = deleteSectionAndMusic(sectioned, 0)
+  check('a section deleted with its music leaves the tempo after it', gone.tempo === 90 && !('tempos' in gone), JSON.stringify(gone.tempos))
+
+  // And the history says what happened.
+  const patch = defaultPatch()
+  const doc = (x: Song) => ({ name: 'P', song: x, racks: { bench: { patch, values: rackValues(patch) } } })
+  check('adding a tempo change is named', describeEdit(doc(s), doc(faster)) === 'Add tempo change')
+  check('moving one', describeEdit(doc(faster), doc(moveAt(TEMPO, faster, 2 * BAR, BAR))) === 'Move tempo change')
+  check('and a meter change', describeEdit(doc(s), doc(waltz)) === 'Add meter change')
+}
+
+console.log('\nthe drum kit')
+{
+  const kitBuilt = templateById('drumkit')!.build()
+  const kp = kitBuilt.patch
+  const kit = kp.modules.find((m) => m.type === 'kit')!
+  const pads = kitSlots(kit)
+  check('the library kit has sixteen pads loaded', pads.every(Boolean))
+  check('on the notes General MIDI puts them on', pads[0]?.note === 36 && pads[1]?.note === 38 && pads[2]?.note === 42 && pads[3]?.note === 46)
+  check('named for what is in them', pads[0]?.name === 'Kick' && pads[1]?.name === 'Snare')
+  check('with the hats in one choke group', kitBuilt.values['kit1.choke3'] === 1 && kitBuilt.values['kit1.choke4'] === 1)
+  check('a pad holds a copy, with its knobs in its modules', pads[0]!.patch.modules.every((m) => !m.key) &&
+    pads[0]!.patch.modules.some((m) => Object.keys(m.params).length > 0))
+
+  const compiled = compile(kp)
+  check('it compiles clean', compiled.warnings.length === 0, compiled.warnings.join('; '))
+  check('each pad laid in under its own name', compiled.modules.some((m) => m.id === 'kit1/1/gate1') && compiled.modules.some((m) => m.id === 'kit1/16/gate1'))
+  check('and described so it can sleep', compiled.pads?.length === 16 && compiled.pads[0].wake.includes('kit1/1/gate1'))
+  const k = compiled.modules.find((m) => m.id === 'kit1')!
+  const retAt = defOf('kit').inputs.findIndex((p) => p.id === 'ret1l')
+  check('each pad comes back into the kit, not to the speakers', k.ins[retAt] > 0 && compiled.monitors.length === 1)
+  check('a patch with no pads loaded is left as it was', flattenKits({ modules: [{ id: 'kit1', type: 'kit', params: {} }], cables: [] }).modules.length === 1)
+
+  const bare = { modules: [{ id: 'gate1', type: 'gate', params: {} }, { id: 'kit1', type: 'kit', params: {} }], cables: [] }
+  check('no cable can reach a pad\'s return', wireUp(bare, { module: 'gate1', port: 'gate' }, { module: 'kit1', port: 'ret1l' }) === bare)
+  check('but a Trig jack takes one', wireUp(bare, { module: 'gate1', port: 'gate' }, { module: 'kit1', port: 'trig1' }).cables.length === 1)
+
+  // Saved and read back.
+  const saved = fromStored(JSON.parse(JSON.stringify(toStored('Kit', kp, kitBuilt.values))))
+  const back = 'error' in saved ? null : saved.patch.modules.find((m) => m.type === 'kit')
+  check('a kit is saved with its pads', !!back && kitSlots(back).every((p, i) => p?.name === pads[i]?.name && p?.note === pads[i]?.note))
+  check('and compiles the same after', !('error' in saved) && compile(saved.patch).modules.length === compiled.modules.length)
+  const junk = fromStored({
+    version: 1,
+    name: 'Junk',
+    patch: {
+      modules: [
+        {
+          id: 'kit1',
+          type: 'kit',
+          params: {},
+          slots: [
+            { name: 'Odd', note: 500, patch: kitBuilt.patch },
+            'nonsense',
+            { name: 'Broken', note: 40, patch: 'no' },
+          ],
+        },
+      ],
+      cables: [],
+    },
+  })
+  const junkKit = 'error' in junk ? null : junk.patch.modules[0]
+  const junkPads = junkKit ? kitSlots(junkKit) : []
+  check('a pad read from a file keeps its note in range', junkPads[0]?.note === 127)
+  check('and a kit inside a pad is left out', !junkPads[0]?.patch.modules.some((m) => m.type === 'kit'))
+  check('a pad that is not a rack is left empty, and said', junkPads[1] === null && junkPads[2] === null &&
+    !('error' in junk) && junk.warnings.some((w) => w.includes('pad 3')), 'error' in junk ? junk.error : junk.warnings.join('; '))
+
+  // Notes reach pads.
+  const target = noteTarget(kp)!
+  check('a rack with a kit is played through it', target.kind === 'kit' && target.module === 'kit1')
+  check('each pad on the row of its note', target.pads?.get(kitRow(36))?.[0].name === 'Kick' && kitRow(36) === 24)
+  const on = engineEvents([{ frame: 10, track: 't', kind: 'on', pitch: kitRow(38), velocity: 0.7 }], target)
+  check('a note plays the pad and tells the kit which', on.length === 2 &&
+    on.some((e) => e.kind === 'noteOn' && e.module === 'kit1' && e.pitch === 1) &&
+    on.some((e) => e.kind === 'noteOn' && e.module === 'kit1/2/gate1' && e.velocity === 0.7), JSON.stringify(on))
+  check('a note on a row with no pad plays nothing', engineEvents([{ frame: 0, track: 't', kind: 'on', pitch: 0, velocity: 1 }], target).length === 0)
+  check('a release for every note lets go of every pad',
+    engineEvents([{ frame: 0, track: 't', kind: 'off', velocity: 0 }], target).filter((e) => e.kind === 'noteOff').length === 16)
+
+  // Heard through the game player: a kick, then a snare, then a row with nothing on it.
+  const kitSong: Song = {
+    tempo: 120,
+    tracks: [{ id: 'drums', name: 'Drums', patch: 'drums', gain: 1 }],
+    patterns: [{
+      id: 'a',
+      name: 'A',
+      length: PPQ * 4,
+      notes: [
+        { track: 'drums', tick: 0, length: PPQ / 4, pitch: kitRow(36), velocity: 1 },
+        { track: 'drums', tick: PPQ, length: PPQ / 4, pitch: kitRow(38), velocity: 1 },
+        { track: 'drums', tick: PPQ * 2, length: PPQ / 4, pitch: 0, velocity: 1 },
+      ],
+    }],
+    playlist: [{ pattern: 'a', tick: 0 }],
+  }
+  const player = new SongPlayer(kitSong, { drums: { patch: kp, values: kitBuilt.values } }, { sampleRate: SR })
+  const l = new Float32Array(SR * 2)
+  const r = new Float32Array(SR * 2)
+  player.render(l, r)
+  const window = (from: number, to: number) => rms(l.subarray(Math.round(from * SR), Math.round(to * SR)))
+  check('the kick sounds on the beat', window(0, 0.1) > 0.02, window(0, 0.1).toFixed(4))
+  check('and the snare on the next', window(0.5, 0.6) > 0.02, window(0.5, 0.6).toFixed(4))
+  // Against the same song without that note: whatever is still ringing
+  // from the snare is the same in both.
+  const without = new SongPlayer(
+    { ...kitSong, patterns: [{ ...kitSong.patterns[0], notes: kitSong.patterns[0].notes.slice(0, 2) }] },
+    { drums: { patch: kp, values: kitBuilt.values } },
+    { sampleRate: SR },
+  )
+  const l2 = new Float32Array(SR * 2)
+  const r2 = new Float32Array(SR * 2)
+  without.render(l2, r2)
+  const diff = l.subarray(SR, Math.round(1.4 * SR)).reduce((m, v, i) => Math.max(m, Math.abs(v - l2[SR + i])), 0)
+  check('and a note on a row with no pad adds nothing', diff < 1e-6, diff.toExponential(2))
+
+  // Choke: the open hat cut off by the closed one, in a group and out of one.
+  const hats = (choke: number) => {
+    let p = setKitSlot({ modules: [{ id: 'kit1', type: 'kit', params: {} }], cables: [] }, 'kit1', 0, { ...pads[3]!, note: 46 })
+    p = setKitSlot(p, 'kit1', 1, { ...pads[2]!, note: 42 })
+    const c = compile(p)
+    const params = c.params.slice()
+    params[c.paramIndex['kit1.choke1']] = choke
+    params[c.paramIndex['kit1.choke2']] = choke
+    // The closed hat silent in the mix, so what is heard is the open one.
+    params[c.paramIndex['kit1.level2']] = 0
+    const e = new GraphEngine(c, SR, params)
+    const t = noteTarget(p)!
+    for (const ev of engineEvents([
+      { frame: 0, track: 't', kind: 'on', pitch: kitRow(46), velocity: 1 },
+      { frame: 4800, track: 't', kind: 'on', pitch: kitRow(42), velocity: 1 },
+    ], t)) e.schedule(ev)
+    const out = new Float32Array(SR / 2)
+    const bl = new Float32Array(128)
+    const br = new Float32Array(128)
+    for (let i = 0; i < out.length; i += 128) {
+      e.render(bl, br)
+      out.set(bl.subarray(0, Math.min(128, out.length - i)), i)
+    }
+    return { before: rms(out.subarray(2400, 4800)), after: rms(out.subarray(6000, 9600)), engine: e }
+  }
+  const open = hats(0)
+  const choked = hats(1)
+  check('an open hat rings on past a closed one in no group', open.after > open.before * 0.2, `${open.before.toFixed(4)} -> ${open.after.toFixed(4)}`)
+  check('and is cut off by one in its group', choked.after < open.after * 0.1, `${choked.after.toFixed(5)} against ${open.after.toFixed(5)}`)
+
+  // A pad that is not sounding sleeps, and a note wakes it.
+  const e = new GraphEngine(compiled, SR, compiled.params)
+  const awake = () => [...(e as unknown as { padAwake: Uint8Array }).padAwake].filter(Boolean).length
+  const bl = new Float32Array(128)
+  const br = new Float32Array(128)
+  for (let i = 0; i < SR / 4; i += 128) e.render(bl, br)
+  check('pads nobody plays fall asleep', awake() === 0, `${awake()} awake`)
+  for (const ev of engineEvents([{ frame: 0, track: 't', kind: 'on', pitch: kitRow(38), velocity: 1 }], target)) e.schedule(ev)
+  e.render(bl, br)
+  check('a note wakes the pad it is for, and only that one', awake() === 1)
+  let heard = 0
+  for (let i = 0; i < SR / 10; i += 128) {
+    e.render(bl, br)
+    heard = Math.max(heard, ...bl.map(Math.abs))
+  }
+  check('and it sounds', heard > 0.05, heard.toFixed(3))
+
+  // A gate into a Trig jack plays the pad: the library kit's Space is its kick.
+  const g = new GraphEngine(compiled, SR, compiled.params)
+  g.setModuleGate('gate1', true)
+  let kick = 0
+  for (let i = 0; i < SR / 10; i += 128) {
+    g.render(bl, br)
+    kick = Math.max(kick, ...bl.map(Math.abs))
+  }
+  check('a gate into Trig 1 plays the first pad', kick > 0.05, kick.toFixed(3))
+
+  // Pads edited, and the history says how.
+  const renamed = updateKitSlot(kp, 'kit1', 0, { name: 'Boom' })
+  check('a pad renamed keeps its rack', kitSlots(renamed.modules.find((m) => m.id === 'kit1')!)[0]?.patch === pads[0]!.patch)
+  check('a pad moved to another note', kitSlots(updateKitSlot(kp, 'kit1', 0, { note: 35 }).modules.find((m) => m.id === 'kit1')!)[0]?.note === 35)
+  check('a pad emptied', kitSlots(setKitSlot(kp, 'kit1', 15, null).modules.find((m) => m.id === 'kit1')!)[15] === null)
+  // One song for both sides: only the rack is being edited.
+  const bench = benchSong()
+  const doc = (p: Patch) => ({ name: 'P', song: bench, racks: { bench: { patch: p, values: {} } } })
+  check('loading a pad is named', describeEdit(doc(setKitSlot(kp, 'kit1', 0, null)), doc(kp)) === 'Load Kick · pad 1',
+    describeEdit(doc(setKitSlot(kp, 'kit1', 0, null)), doc(kp)))
+  check('and renaming one', describeEdit(doc(kp), doc(renamed)) === 'Rename pad 1')
+  check('and moving one', describeEdit(doc(kp), doc(updateKitSlot(kp, 'kit1', 0, { note: 35 }))) === 'Move pad 1 to note 35')
+  const sampled = setKitSlot(kp, 'kit1', 0, {
+    name: 'Sample',
+    note: 36,
+    patch: { modules: [{ id: 'smp1', type: 'sampler', params: {}, sample: { id: 'abc', name: 'a.wav' } }], cables: [] },
+  })
+  check('a sample in a pad is kept', sampleIdsIn(sampled).has('abc'))
+}
+
+console.log('\na pad opened on the bench')
+{
+  const built = templateById('drumkit')!.build()
+  const rack = { patch: built.patch, values: { ...initialValues(built.patch), ...built.values } }
+  check('a kit\'s knobs include its pads\', under their own ids', rack.values['kit1/1/osc1.decay'] === kitSlots(rack.patch.modules.find((m) => m.id === 'kit1')!)[0]!.patch.modules.find((m) => m.id === 'osc1')!.params.decay)
+  const view = padView(rack, 'kit1', 0)!
+  check('a pad opened is its rack, keyed as its own', view.patch.modules.some((m) => m.id === 'osc1') && 'osc1.decay' in view.values && !Object.keys(view.values).some((k) => k.includes('/')))
+
+  // A knob turned in the pad.
+  const turned = withPadView(rack, 'kit1', 0, { ...view, values: { ...view.values, 'osc1.decay': 1.5 } })
+  check('a knob turned in a pad lands in the track under the pad\'s id', turned.values['kit1/1/osc1.decay'] === 1.5)
+  check('and leaves the patch alone', turned.patch === rack.patch)
+  check('and the other pads\' knobs', turned.values['kit1/2/osc1.decay'] === rack.values['kit1/2/osc1.decay'])
+  check('a top-level edit keeps the pads\' knobs', reconcileValues(rack.patch, turned.values)['kit1/1/osc1.decay'] === 1.5)
+
+  // The engine hears it: the kick with a longer decay is still sounding later.
+  const play = (values: Record<string, number>) => {
+    const s: Song = {
+      tempo: 120,
+      tracks: [{ id: 'd', name: 'D', patch: 'd', gain: 1 }],
+      patterns: [{ id: 'a', name: 'A', length: PPQ * 4, notes: [{ track: 'd', tick: 0, length: PPQ / 4, pitch: kitRow(36), velocity: 1 }] }],
+      playlist: [{ pattern: 'a', tick: 0 }],
+    }
+    const p = new SongPlayer(s, { d: { patch: rack.patch, values } }, { sampleRate: SR })
+    const l = new Float32Array(SR)
+    const r = new Float32Array(SR)
+    p.render(l, r)
+    return rms(l.subarray(Math.round(0.4 * SR), Math.round(0.6 * SR)))
+  }
+  const short = play(rack.values)
+  const long = play(turned.values)
+  check('and the track plays the pad with it', long > short * 1.1, `${short.toFixed(4)} -> ${long.toFixed(4)}`)
+
+  // A cable edited in the pad replaces the pad's rack, and nothing else.
+  const rewired = withPadView(rack, 'kit1', 0, { ...view, patch: { ...view.patch, cables: view.patch.cables.slice(1) } })
+  const kitNow = rewired.patch.modules.find((m) => m.id === 'kit1')!
+  check('a pad rewired is the pad changed', kitSlots(kitNow)[0]!.patch.cables.length === view.patch.cables.length - 1 &&
+    kitSlots(kitNow)[1] === kitSlots(rack.patch.modules.find((m) => m.id === 'kit1')!)[1])
+  const withKit = withPadView(rack, 'kit1', 0, { ...view, patch: { ...view.patch, modules: [...view.patch.modules, { id: 'kit9', type: 'kit', params: {} }] } })
+  check('and a kit put inside a pad is left out', !kitSlots(withKit.patch.modules.find((m) => m.id === 'kit1')!)[0]!.patch.modules.some((m) => m.type === 'kit'))
+  const loaded = withPadView(rack, 'kit1', 0, view, 'Boom')
+  check('a patch loaded into a pad names it', kitSlots(loaded.patch.modules.find((m) => m.id === 'kit1')!)[0]!.name === 'Boom')
+
+  // Saved, the pad's knobs are baked into the pad.
+  const saved = toStored('Kit', turned.patch, turned.values)
+  const savedKit = saved.patch.modules.find((m) => m.id === 'kit1')!
+  check('a pad is saved with its knobs as they were turned', kitSlots(savedKit)[0]!.patch.modules.find((m) => m.id === 'osc1')!.params.decay === 1.5)
+
+  // And the history says which pad.
+  const bench = benchSong()
+  const doc = (r: { patch: Patch; values: Record<string, number> }) => ({ name: 'P', song: bench, racks: { bench: r } })
+  check('a knob in a pad is named with the pad', describeEdit(doc(rack), doc(turned)) === 'Decay · osc1 (Pad 1)', describeEdit(doc(rack), doc(turned)))
+  check('and a cable in one', describeEdit(doc(rack), doc(rewired)) === 'Unplug cable (Pad 1)', describeEdit(doc(rack), doc(rewired)))
 }
 
 console.log(failures === 0 ? '\nall good\n' : `\n${failures} failed\n`)

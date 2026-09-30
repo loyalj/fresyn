@@ -3,7 +3,8 @@ import type { SampleBank } from '../dsp/samples'
 import { trackMix } from '../song/edit'
 import type { Rack } from '../song/project'
 import { SongPlayer } from '../song/runtime'
-import { frameAtTick, songEnd } from '../song/schedule'
+import { songEnd } from '../song/schedule'
+import { tempoMap } from '../song/timeline'
 import type { Song } from '../song/types'
 import { trimTail } from './render'
 
@@ -74,7 +75,7 @@ export async function renderSong(
   const sr = opts.sampleRate
 
   const end = songEnd(song)
-  const arrangement = end > 0 ? frameAtTick(end, song.tempo, sr) : 0
+  const arrangement = end > 0 ? Math.round(tempoMap(song, sr).frameAt(end)) : 0
   const total = arrangement > 0 ? arrangement + Math.ceil(opts.tailSeconds * sr) : BLOCK
 
   const player = new SongPlayer(song, racks, {

@@ -18,6 +18,13 @@ interface Props {
   /** Which side of the rack is showing, and turning it round. */
   flipped: boolean
   onFlip: () => void
+  /**
+   * A Drum Kit's pad open on the bench: the units listed are the pad's, and
+   * the card says whose -- which pad, of which kit, on which track -- with
+   * the way back.
+   */
+  pad?: { kit: string; slot: number; name: string } | null
+  onClosePad?: () => void
 }
 
 /**
@@ -40,11 +47,14 @@ export const RackIndex = memo(function RackIndex({
   onJump,
   flipped,
   onFlip,
+  pad,
+  onClosePad,
 }: Props) {
   const inView = useInView(entries.map((e) => e.id).join(' '))
 
+  const track = tracks.find((t) => t.id === trackId)?.name || 'Untitled'
   return (
-    <nav className="rack-index-card" aria-label="Units in this rack">
+    <nav className={`rack-index-card${pad ? ' in-pad' : ''}`} aria-label={pad ? `Units in pad ${pad.slot + 1}` : 'Units in this rack'}>
       <div className="rack-index-head">
         {/* Named for the patch on the bench, and the way to put another
             one there: the same switch as picking a track in the dock, without
@@ -80,6 +90,20 @@ export const RackIndex = memo(function RackIndex({
           {flipped ? 'Front' : 'Back'}
         </button>
       </div>
+      {pad && (
+        <div className="rack-index-pad">
+          <span className="rack-index-pad-tag">Editing a sub-patch</span>
+          <span className="rack-index-pad-name">
+            Pad {pad.slot + 1} · {pad.name}
+          </span>
+          <span className="rack-index-pad-owner">
+            inside <strong>Drum Kit</strong> <code>{pad.kit}</code> on {track}
+          </span>
+          <button className="rack-index-pad-back" onClick={onClosePad} type="button" title="Back to the track's rack, at the kit">
+            ← Back to kit
+          </button>
+        </div>
+      )}
       <ul className="rack-index-list">
         {entries.map((e) => (
           <li key={e.id}>

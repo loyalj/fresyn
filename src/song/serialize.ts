@@ -6,7 +6,15 @@ import {
   cleanSwing,
   DEFAULT_STRIP,
   PPQ,
+  METER_BEATS_MAX,
+  METER_UNITS,
+  TEMPO_MAX,
+  TEMPO_MIN,
   type Console,
+  type Meter,
+  type MeterUnit,
+  type MeterChange,
+  type TempoChange,
   type Eq3,
   type Folder,
   type Section,
@@ -115,7 +123,7 @@ export function parseSong(input: unknown): Song | null {
   }
 
   const song: Song = {
-    tempo: num(data.tempo, 120, 20, 300),
+    tempo: num(data.tempo, 120, TEMPO_MIN, TEMPO_MAX),
     tracks,
     patterns,
     playlist,
@@ -130,15 +138,33 @@ export function parseSong(input: unknown): Song | null {
     if (to > from) song.loop = { from, to }
   }
 
-  // A meter is only ever a whole number of quarters or eighths, and never so
-  // long a bar that the playlist could not show one.
+  // A meter is a whole number of beats, never so many that the playlist could
+  // not show a bar, and a beat is one of the notes a time signature can say.
   const meter = data.meter
   if (typeof meter === 'object' && meter !== null) {
-    const m = meter as Record<string, unknown>
-    const beats = Math.round(num(m.beats, 4, 1, 16))
-    const unit = m.unit === 8 ? 8 : 4
-    if (!(beats === 4 && unit === 4)) song.meter = { beats, unit }
+    const m = readMeter(meter as Record<string, unknown>)
+    if (!(m.beats === 4 && m.unit === 4)) song.meter = m
   }
+
+  // The changes along the way, held to the same ranges as the opening values.
+  // Out of order, doubled up or changing nothing is for `normalizeSong`.
+  const tempos: TempoChange[] = []
+  for (const raw of asArray(data.tempos)) {
+    const t = raw as Record<string, unknown>
+    const tick = num(t.tick, -1, -1, Number.MAX_SAFE_INTEGER)
+    if (tick < 0 || typeof t.bpm !== 'number' || !Number.isFinite(t.bpm)) continue
+    tempos.push({ tick, bpm: num(t.bpm, 120, TEMPO_MIN, TEMPO_MAX) })
+  }
+  if (tempos.length) song.tempos = tempos
+  const meters: MeterChange[] = []
+  for (const raw of asArray(data.meters)) {
+    const c = raw as Record<string, unknown>
+    const tick = num(c.tick, -1, -1, Number.MAX_SAFE_INTEGER)
+    const m = c.meter
+    if (tick < 0 || typeof m !== 'object' || m === null) continue
+    meters.push({ tick, meter: readMeter(m as Record<string, unknown>) })
+  }
+  if (meters.length) song.meters = meters
 
   const sections: Section[] = []
   for (const raw of asArray(data.sections)) {
@@ -189,6 +215,13 @@ export function parseSong(input: unknown): Song | null {
 }
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
+
+/** A meter from a file: its beats held to the range, and a beat that is no note read as a quarter. */
+function readMeter(m: Record<string, unknown>): Meter {
+  const beats = Math.round(num(m.beats, 4, 1, METER_BEATS_MAX))
+  const unit = METER_UNITS.includes(m.unit as MeterUnit) ? (m.unit as MeterUnit) : 4
+  return { beats, unit }
+}
 
 const obj = (v: unknown): Record<string, unknown> =>
   typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {}

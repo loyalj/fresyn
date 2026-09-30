@@ -3,12 +3,15 @@ import { normalizeSong } from './normalize'
 import { clipOffset } from './clip'
 import { heardTracks, trackGain } from './folder'
 import { clipHits, sameSwing, songEnd, unswungTick } from './schedule'
+import { barsIn, barsOf } from './timeline'
+import { METER, setAt } from './timing'
 import {
   barTicks,
   cleanSwing,
   DEFAULT_CONSOLE,
   DEFAULT_STRIP,
   minPatternLength,
+  validMeter,
   type Console,
   type Meter,
   type Note,
@@ -172,7 +175,12 @@ export function reorderTracks(song: Song, ids: readonly string[]): Song {
 export function setMeter(song: Song, meter: Meter): Song {
   // A bar has to be a whole, positive number of beats, or every bar in the
   // song would come out as nothing.
-  if (!Number.isInteger(meter.beats) || meter.beats < 1 || meter.beats > 16) return song
+  if (!validMeter(meter.beats, meter.unit)) return song
+  // A song that changes meter along the way has more than one length of bar,
+  // and no one way to keep every clip the same number of them: its opening
+  // meter is changed the way a change of meter is, moving only the barlines
+  // up to the next change. See `setAt`.
+  if (song.meters?.length) return setAt(METER, song, 0, meter)
   const from = barTicks(song)
   const to = barTicks({ meter })
   const bars = (ticks: number) => Math.round(ticks / from)
@@ -200,6 +208,8 @@ export function setMeter(song: Song, meter: Meter): Song {
     ...(song.sections
       ? { sections: song.sections.map((s) => ({ ...s, tick: within(s.tick), length: Math.max(1, within(s.length)) })) }
       : {}),
+    // A change of tempo stays in its bar, on its beat, as a clip does.
+    ...(song.tempos ? { tempos: song.tempos.map((c) => ({ ...c, tick: within(c.tick) })) } : {}),
   })
 }
 
@@ -407,7 +417,7 @@ export function updateConsole(
 
 /** How many bars the playlist reaches, with room to add another. */
 export function playlistBars(song: Song, minimum = 8): number {
-  return Math.max(minimum, Math.ceil(songEnd(song) / barTicks(song)) + 1)
+  return Math.max(minimum, barsIn(barsOf(song), songEnd(song)) + 1)
 }
 
 /**

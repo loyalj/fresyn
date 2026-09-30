@@ -115,6 +115,9 @@ export function repointSamples(stored: unknown, renamed: ReadonlyMap<string, str
     if (!Array.isArray(modules)) return
     for (const m of modules) {
       if (typeof m !== 'object' || m === null) continue
+      // A Drum Kit's pads are racks of their own, and may name samples too.
+      const slots = (m as Record<string, unknown>).slots
+      if (Array.isArray(slots)) for (const slot of slots) fixPatch(slot)
       const sample = (m as Record<string, unknown>).sample
       if (typeof sample !== 'object' || sample === null) continue
       const s = sample as Record<string, unknown>

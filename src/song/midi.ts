@@ -1,13 +1,14 @@
 import { songEnd, songEventTicks } from './schedule'
 import { sectionsOf } from './section'
-import { barTicks, PPQ, type Song } from './types'
+import { barTicks, PPQ, type Meter, type Song } from './types'
 
 /**
  * The arrangement as a Standard MIDI File: what plays, when, on which track,
  * for taking the song into another DAW or a game's own sequencer.
  *
- * Type 1, a track per song track after a conductor track holding the tempo,
- * the time signature and a marker for each section. Counted in the song's
+ * Type 1, a track per song track after a conductor track holding the tempo
+ * and time signature -- and every change of either -- and a marker for each
+ * section. Counted in the song's
  * own ticks -- 960 to the quarter note -- so nothing is rounded on the way.
  * The notes are what plays, not what is written: clips repeat, trim and cut
  * notes off, swing is applied, and muted tracks are left out, exactly as a
@@ -29,16 +30,28 @@ export function songToMidi(song: Song, { name, noteOf }: MidiOptions): Uint8Arra
   const events = songEventTicks(song, 0, end + 1)
   const out: number[][] = []
 
-  // The conductor: name, tempo, meter, and the sections as markers.
+  // The conductor: name, every tempo and meter, and the sections as markers,
+  // in the order they happen -- a track's events go in time order, and at one
+  // tick the tempo and meter come before the marker that names the bar.
   const head = new TrackWriter()
   if (name) head.meta(0, 0x03, text(name))
-  const usPerBeat = Math.round(60_000_000 / song.tempo)
-  head.meta(0, 0x51, [(usPerBeat >> 16) & 0xff, (usPerBeat >> 8) & 0xff, usPerBeat & 0xff])
-  const meter = song.meter ?? { beats: 4, unit: 4 }
+  const conductor: { tick: number; type: number; body: number[] }[] = []
+  const tempo = (tick: number, bpm: number) => {
+    const us = Math.round(60_000_000 / bpm)
+    conductor.push({ tick, type: 0x51, body: [(us >> 16) & 0xff, (us >> 8) & 0xff, us & 0xff] })
+  }
   // Clocks per click: a MIDI clock is 1/24 of a quarter; one click per beat.
-  head.meta(0, 0x58, [meter.beats, Math.log2(meter.unit), (24 * 4) / meter.unit, 8])
-  for (const s of sectionsOf(song)) head.meta(s.tick, 0x06, text(s.name))
-  head.meta(Math.max(end, barTicks(song)), 0x2f, [])
+  const meter = (tick: number, m: Meter) =>
+    conductor.push({ tick, type: 0x58, body: [m.beats, Math.log2(m.unit), (24 * 4) / m.unit, 8] })
+  tempo(0, song.tempo)
+  for (const c of song.tempos ?? []) tempo(c.tick, c.bpm)
+  meter(0, song.meter ?? { beats: 4, unit: 4 })
+  for (const c of song.meters ?? []) meter(c.tick, c.meter)
+  for (const s of sectionsOf(song)) conductor.push({ tick: s.tick, type: 0x06, body: text(s.name) })
+  // Stable, so each kind keeps its order within a tick.
+  conductor.sort((a, b) => a.tick - b.tick)
+  for (const e of conductor) head.meta(e.tick, e.type, e.body)
+  head.meta(Math.max(end, barTicks(song), head.at), 0x2f, [])
   out.push(head.bytes())
 
   // A channel per track, in order, stepping over 10 -- General MIDI's drums

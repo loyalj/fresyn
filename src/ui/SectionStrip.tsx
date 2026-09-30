@@ -14,6 +14,7 @@ import {
   slideSection,
   splitSection,
 } from '../song/section'
+import type { Bars } from '../song/timeline'
 import type { Section, Song } from '../song/types'
 import { ContextMenu, type MenuItem } from './Menu'
 import { nextHue } from './palette'
@@ -23,8 +24,8 @@ interface Props {
   /** How wide the timeline is, in pixels, and how many pixels a tick is. */
   width: number
   ppt: number
-  /** Ticks in a bar, and the shortest a section can be made. */
-  bar: number
+  /** The song's bars, and the shortest a section can be made. */
+  bars: Bars
   minimum: number
   /** A tick onto the playlist's snap, or onto the tick with `free`. */
   snap: (tick: number, free: boolean, how?: 'round' | 'floor') => number
@@ -60,7 +61,7 @@ type Drag =
  * up around it. Its × and its right-click menu take the label away and leave
  * the music; the menu also duplicates it, music and all, and cuts it in two.
  */
-export function SectionStrip({ song, width, ppt, bar, minimum, snap, section, onSection, onEdit }: Props) {
+export function SectionStrip({ song, width, ppt, bars, minimum, snap, section, onSection, onEdit }: Props) {
   const layerRef = useRef<HTMLDivElement>(null)
   const [drag, setDragState] = useState<Drag | null>(null)
   const dragRef = useRef<Drag | null>(null)
@@ -76,6 +77,8 @@ export function SectionStrip({ song, width, ppt, bar, minimum, snap, section, on
   const shown =
     drag?.kind === 'resize' ? sectionsOf(resizeSection(song, drag.tick, drag.edge, drag.at, minimum)) : all
 
+  /** A click's worth of section from a tick: four bars, in whatever meter they are in. */
+  const clickLength = (at: number) => bars.bar(bars.at(at).index + CLICK_BARS).tick - at
   const tickAt = (clientX: number) => (clientX - layerRef.current!.getBoundingClientRect().left) / ppt
   const sectionEl = (target: EventTarget) =>
     target instanceof Element ? target.closest<HTMLElement>('.playlist-section') : null
@@ -156,7 +159,7 @@ export function SectionStrip({ song, width, ppt, bar, minimum, snap, section, on
       const from = Math.min(d.from, d.to)
       const length = Math.abs(d.to - d.from)
       if (d.moved && length >= minimum) onEdit((s) => addSection(s, from, length))
-      else if (!d.moved) onEdit((s) => addSection(s, d.from, CLICK_BARS * bar))
+      else if (!d.moved) onEdit((s) => addSection(s, d.from, clickLength(d.from)))
     } else if (d.kind === 'move') {
       // A press that went nowhere is a click, which `onClick` answers.
       if (!d.moved) return
@@ -186,13 +189,14 @@ export function SectionStrip({ song, width, ppt, bar, minimum, snap, section, on
       setMenu({
         x: e.clientX,
         y: e.clientY,
-        items: [{ kind: 'action', label: 'Add a section here', onSelect: () => onEdit((s) => addSection(s, at, CLICK_BARS * bar)) }],
+        items: [{ kind: 'action', label: 'Add a section here', onSelect: () => onEdit((s) => addSection(s, at, clickLength(at))) }],
       })
       return
     }
     const s = all.find((x) => x.tick === Number(el.dataset.tick))
     if (!s) return
-    const barAt = Math.floor(tickAt(e.clientX) / bar) * bar
+    const under = bars.at(tickAt(e.clientX))
+    const barAt = under.tick
     setMenu({
       x: e.clientX,
       y: e.clientY,
@@ -209,7 +213,7 @@ export function SectionStrip({ song, width, ppt, bar, minimum, snap, section, on
         },
         {
           kind: 'action',
-          label: `Split at bar ${barAt / bar + 1}`,
+          label: `Split at bar ${under.index + 1}`,
           disabled: barAt <= s.tick || barAt >= sectionEnd(s),
           onSelect: () => onEdit((x) => splitSection(x, barAt)),
         },

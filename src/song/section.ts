@@ -1,7 +1,9 @@
 import { clipEnd, splitClip } from './clip'
 import { normalizeSong } from './normalize'
 import { songEnd } from './schedule'
-import { barTicks, type Placement, type Section, type Song } from './types'
+import { copyTimings, deleteTimings, insertTimings, pasteTimings, withTimings } from './timing'
+import { barsOf } from './timeline'
+import type { Placement, Section, Song } from './types'
 
 /**
  * Sections: the named parts of a song, and the arranger track they make.
@@ -183,7 +185,10 @@ export function moveSection(song: Song, tick: number, toIndex: number): Song {
     ],
     sections: [...others.map((x) => (x.tick >= at ? { ...x, tick: x.tick + len } : x)), { ...moving, tick: at }],
   }
-  return normalizeSong(out)
+  // Its tempo and meter go with it, the same way round.
+  const carried = copyTimings(song, s, e)
+  const timing = pasteTimings(insertTimings(deleteTimings(song, s, e), at, len), at, len, carried)
+  return normalizeSong(withTimings(out, timing))
 }
 
 /**
@@ -204,7 +209,8 @@ export function duplicateSection(song: Song, tick: number): Song {
       { ...s, tick: e, name: uniqueSectionName(song, s.name) },
     ],
   }
-  return normalizeSong(out)
+  const timing = pasteTimings(insertTimings(song, e, s.length), e, s.length, copyTimings(song, s.tick, e))
+  return normalizeSong(withTimings(out, timing))
 }
 
 /**
@@ -218,7 +224,7 @@ export function sectionsFromMarkers(song: Song, markers: readonly { tick: number
   return sorted
     .map((m, i) => {
       const next = sorted[i + 1]
-      const to = next ? next.tick : Math.max(end, m.tick + barTicks(song))
+      const to = next ? next.tick : Math.max(end, m.tick + barsOf(song).at(m.tick).length)
       return { tick: m.tick, length: to - m.tick, name: m.name }
     })
     .filter((s) => s.length > 0)
@@ -281,7 +287,7 @@ export function deleteSectionAndMusic(song: Song, tick: number): Song {
   const s = (song.sections ?? []).find((x) => x.tick === tick)
   if (!s) return song
   const e = sectionEnd(s)
-  const out = cutAt(cutAt(song, s.tick), e)
+  const out = withTimings(cutAt(cutAt(song, s.tick), e), deleteTimings(song, s.tick, e))
   return normalizeSong({
     ...out,
     playlist: out.playlist

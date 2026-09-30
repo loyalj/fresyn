@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { SEQ_STEPS_LIST } from '../patch/defs'
 import type { ModuleDef } from '../patch/types'
-import { useEngine } from './EngineContext'
+import { useEngine, useEngineId } from './EngineContext'
 import { useFace } from './useFace'
 import { useFallingMeter } from './useFallingMeter'
 
@@ -36,6 +36,8 @@ const FADE = 1 / 12
  */
 export function SeqFace({ def, moduleId, valueOf, onChange }: Props) {
   const engine = useEngine()
+  /** How the engine reports this module: by its id in the track, a pad's included. */
+  const engineId = useEngineId(moduleId)
   const { read, control: knob } = useFace(def, valueOf, onChange)
   const length = Math.round(read('length'))
 
@@ -51,11 +53,11 @@ export function SeqFace({ def, moduleId, valueOf, onChange }: Props) {
   useEffect(() => {
     if (!engine) return
     return engine.onLevels((levels) => {
-      const next = levels[moduleId]
+      const next = levels[engineId]
       if (!next) return
       for (let i = 0; i < SEQ_STEPS_LIST.length; i++) feed(i, next[i] ?? 0)
     })
-  }, [engine, moduleId, feed])
+  }, [engine, engineId, feed])
 
   return (
     <div className="seq">

@@ -27,9 +27,11 @@ import {
 } from '../song/range'
 import { addSection, sectionAt, sectionOver, sectionsOf, splitSection } from '../song/section'
 import { clipHits, clipRepeats } from '../song/schedule'
+import { barsIn, barsOf, type Snap } from '../song/timeline'
 import { barTicks, beatTicks, type Pattern, type Placement, type Song } from '../song/types'
 import { NameField } from './NameField'
 import { SectionStrip } from './SectionStrip'
+import { TimingLane } from './TimingLane'
 import { nextHue } from './palette'
 
 interface Props {
@@ -55,6 +57,8 @@ interface Props {
 }
 
 type SnapName = 'bar' | 'beat' | 'half' | 'quarter' | 'off'
+/** A snap as a share of the beat of the bar it lands in. */
+const BEAT_SHARE: Record<SnapName, number> = { bar: 0, beat: 1, half: 1 / 2, quarter: 1 / 4, off: 0 }
 const SNAPS: { id: SnapName; label: string }[] = [
   { id: 'bar', label: 'Bar' },
   { id: 'beat', label: 'Beat' },
@@ -147,14 +151,15 @@ export function Playlist({
   onSection,
   transport,
 }: Props) {
+  // The song's bars, however its meter changes. The zoom is a width for the
+  // song's first bar, and every other bar is as wide as its ticks make it.
+  const grid = barsOf(song)
   const BAR = barTicks(song)
-  const BEAT = beatTicks(song)
   const [snapName, setSnapNameState] = useState<SnapName>(() => loadPrefs().playlistSnap ?? 'bar')
   const setSnapName = (next: SnapName) => {
     setSnapNameState(next)
     savePrefs({ playlistSnap: next })
   }
-  const snapTicks = { bar: BAR, beat: BEAT, half: BEAT / 2, quarter: BEAT / 4, off: 0 }[snapName]
   const [barPx, setBarPxState] = useState(() => clamp(loadPrefs().playlistZoom ?? 64, ZOOM_MIN, ZOOM_MAX))
   const setBarPx = (next: number) => {
     const px = clamp(Math.round(next), ZOOM_MIN, ZOOM_MAX)
@@ -235,7 +240,8 @@ export function Playlist({
     watch.observe(el)
     return () => watch.disconnect()
   }, [])
-  const bars = Math.max(playlistBars(view), Math.ceil(paneWidth / barPx))
+  const barCount = Math.max(playlistBars(view), barsIn(grid, Math.ceil(paneWidth / ppt)))
+  const span = grid.bar(barCount).tick
   const lanes = Math.max(MIN_LANES, lanesUsed(view) + SPARE_LANES)
 
   // A zoom from the wheel keeps the tick under the pointer where it was,
@@ -284,12 +290,19 @@ export function Playlist({
     const r = layerRef.current!.getBoundingClientRect()
     return { tick: (e.clientX - r.left) / ppt, lane: Math.floor((e.clientY - r.top) / LANE_H) }
   }
-  /** A tick on the snap, or on the tick with Alt held or snap off. Never before the start. */
-  const snap = (tick: number, free: boolean, how: 'round' | 'floor' = 'round') => {
-    const step = free ? 0 : snapTicks
-    if (!step) return Math.max(0, Math.round(tick))
-    return Math.max(0, (how === 'floor' ? Math.floor : Math.round)(tick / step) * step)
+  /**
+   * A tick on the snap, or on the tick with Alt held or snap off. Never before
+   * the start. A bar is the bar the tick is in, and a beat is counted from
+   * the start of that bar, so snapping follows the meter wherever it changes.
+   */
+  const snapTo = (name: SnapName, tick: number, how: Snap) => {
+    if (name === 'off') return Math.max(0, Math.round(tick))
+    const t = name === 'bar' ? grid.snapBar(tick, how) : grid.snapIn(tick, grid.at(tick).beat * BEAT_SHARE[name], how)
+    return Math.max(0, Math.round(t))
   }
+  const snap = (tick: number, free: boolean, how: 'round' | 'floor' = 'round') => snapTo(free ? 'off' : snapName, tick, how)
+  /** The snap, or beats while it is off: what a range and the arrow keys step in. */
+  const step = (tick: number, how: Snap) => snapTo(snapName === 'off' ? 'beat' : snapName, tick, how)
   const clipUnder = (x: number, y: number): number | null => {
     const el = document.elementFromPoint(x, y)
     const clip = el instanceof Element ? el.closest<HTMLElement>('.playlist-clip') : null
@@ -453,10 +466,9 @@ export function Playlist({
 
   /** The bars under a stretch of the ruler, out to whole snap steps either way. */
   const rangeOver = (a: number, b: number): TickRange => {
-    const step = snapTicks || BEAT
-    const from = Math.max(0, Math.floor(Math.min(a, b) / step) * step)
-    const to = Math.max(from + step, Math.ceil(Math.max(a, b) / step) * step)
-    return { from, to }
+    const from = step(Math.min(a, b), 'floor')
+    const to = step(Math.max(a, b), 'ceil')
+    return { from, to: to > from ? to : step(from + 1, 'ceil') }
   }
   const onRulerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     // A drag that ended without a click after it leaves nothing to swallow.
@@ -531,13 +543,14 @@ export function Playlist({
       setRange({ from: range.from, to: range.from + clip.length })
     },
   }
-  const barOf = (tick: number) => Math.floor(tick / BAR) + 1
+  const barOf = (tick: number) => grid.at(tick).index + 1
+  const onBarline = (tick: number) => grid.at(tick).tick === tick
   const rangeName = range
-    ? range.from % BAR === 0 && range.to % BAR === 0
-      ? rangeLen === BAR
+    ? onBarline(range.from) && onBarline(range.to)
+      ? barOf(range.from) === barOf(range.to - 1)
         ? `Bar ${barOf(range.from)}`
         : `Bars ${barOf(range.from)}–${barOf(range.to - 1)}`
-      : `${+(rangeLen / BEAT).toFixed(2)} beats from bar ${barOf(range.from)}`
+      : `${+(rangeLen / grid.at(range.from).beat).toFixed(2)} beats from bar ${barOf(range.from)}`
     : ''
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -587,8 +600,11 @@ export function Playlist({
         setPicked(selected.map((_, k) => count + k))
       }
     } else if (key === 'ArrowLeft' || key === 'ArrowRight') {
-      const step = snapTicks || BEAT
-      onEdit((s) => moveClips(s, selected, key === 'ArrowLeft' ? -step : step, 0))
+      // A snap step from where the earliest of them starts, in the meter
+      // there: a bar of 3/4 is three beats, and the next one may be four.
+      const first = Math.min(...selected.map((i) => song.playlist[i].tick))
+      const to = key === 'ArrowLeft' ? step(first - 1, 'floor') : step(first + 1, 'ceil')
+      if (to !== first) onEdit((s) => moveClips(s, selected, to - first, 0))
     } else if (key === 'ArrowUp' || key === 'ArrowDown') {
       onEdit((s) => moveClips(s, selected, 0, key === 'ArrowUp' ? -1 : 1))
     } else {
@@ -609,9 +625,13 @@ export function Playlist({
 
   const patterns = useMemo(() => new Map(view.patterns.map((p) => [p.id, p])), [view.patterns])
   const marquee = drag?.kind === 'marquee' ? drag : null
-  const beatPx = (BEAT / BAR) * barPx
   // At a small zoom only every so many bar numbers fit.
   const numberEvery = barPx >= 28 ? 1 : barPx >= 16 ? 2 : 4
+  const rulerBars = grid.between(0, span)
+  // Each stretch of one meter draws its own bar and beat lines.
+  const meterBands = grid.segments
+    .filter((m) => m.tick < span)
+    .map((m) => ({ ...m, end: Math.min(m.end, span) }))
 
   return (
     <div className="playlist-pane">
@@ -734,14 +754,18 @@ export function Playlist({
         >
           <div
             className="playlist-grid"
-            style={{ '--bar-w': `${barPx}px`, '--beat-w': `${beatPx}px`, '--lane-h': `${LANE_H}px` } as React.CSSProperties}
+            // The zoom, as the width of the song's first bar. Each stretch of
+            // one meter sets its own for the lines it draws.
+            style={{ '--bar-w': `${barPx}px`, '--lane-h': `${LANE_H}px` } as React.CSSProperties}
           >
+            <TimingLane kind="tempo" song={song} width={span * ppt} ppt={ppt} bars={grid} snap={snap} onEdit={onEdit} />
+            <TimingLane kind="meter" song={song} width={span * ppt} ppt={ppt} bars={grid} snap={snap} onEdit={onEdit} />
             <SectionStrip
               song={song}
-              width={bars * barPx}
+              width={span * ppt}
               ppt={ppt}
-              bar={BAR}
-              minimum={BEAT}
+              bars={grid}
+              minimum={grid.bar(0).beat}
               snap={snap}
               section={section}
               onSection={onSection}
@@ -761,8 +785,9 @@ export function Playlist({
               }}
             >
               <span className="playlist-label" />
-              {Array.from({ length: bars }, (_, i) => {
-                const tick = i * BAR
+              {rulerBars.map((b) => {
+                const i = b.index
+                const tick = b.tick
                 const inSection = looped !== null && tick >= looped.from && tick < looped.to
                 // A bar number cuts the section over it in two there, or
                 // starts a new one where there is none.
@@ -772,9 +797,10 @@ export function Playlist({
                   <button
                     key={i}
                     className={`playlist-bar${i % 4 === 0 ? ' strong' : ''}${inSection ? ' in-section' : ''}`}
+                    style={{ width: b.length * ppt }}
                     onClick={() => {
                       if (splits) onEdit((x) => splitSection(x, tick))
-                      else if (!over) onEdit((x) => addSection(x, tick, 4 * BAR))
+                      else if (!over) onEdit((x) => addSection(x, tick, grid.bar(i + 4).tick - tick))
                     }}
                     title={
                       splits
@@ -809,7 +835,7 @@ export function Playlist({
               <div
                 className="playlist-layer"
                 ref={layerRef}
-                style={{ width: bars * barPx }}
+                style={{ width: span * ppt }}
                 onPointerDown={onPointerDown}
                 onPointerMove={onPointerMove}
                 onPointerUp={onPointerUp}
@@ -821,6 +847,24 @@ export function Playlist({
                   if (place) onOpenPattern(place.pattern)
                 }}
               >
+                {/* The bar and beat lines, a stretch of one meter at a time:
+                    drawn by each stretch's background, so a thousand bars
+                    still cost no elements. */}
+                {meterBands.map((m) => (
+                  <div
+                    key={`meter${m.tick}`}
+                    className="playlist-meter"
+                    style={
+                      {
+                        left: m.tick * ppt,
+                        width: (m.end - m.tick) * ppt,
+                        '--bar-w': `${barTicks(m) * ppt}px`,
+                        '--beat-w': `${beatTicks(m) * ppt}px`,
+                      } as React.CSSProperties
+                    }
+                    aria-hidden="true"
+                  />
+                ))}
                 {range && (
                   <div
                     className="playlist-range"

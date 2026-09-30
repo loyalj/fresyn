@@ -8,9 +8,10 @@ import { engineEventsByTrack, noteTarget, type NoteTarget } from './bind'
 import { consoleOf, setPatternSwing, trackMix } from './edit'
 import { fromStoredProject, type LoadedProject, type Rack } from './project'
 import { fill, type Cursor, type Loop, type Seam } from './transport'
-import { framesPerTick, releasedBySwing, songEnd } from './schedule'
+import { releasedBySwing, songEnd } from './schedule'
 import { sectionEnd, sectionOver, sectionsOf } from './section'
-import { barTicks, beatTicks, SWING_MIN, SWING_STEPS, type Song } from './types'
+import { barsOf, tempoMap } from './timeline'
+import { SWING_MIN, SWING_STEPS, type Song } from './types'
 
 /**
  * Playing a song with no browser anywhere.
@@ -291,11 +292,11 @@ export class SongPlayer {
       if (s.frame <= frame) seam = s
       else break
     }
-    return seam.tick + (frame - seam.frame) / this.fpt
+    return this.time.advance(seam.tick, frame - seam.frame)
   }
 
-  private get fpt() {
-    return framesPerTick(this.song.tempo, this.options.sampleRate)
+  private get time() {
+    return tempoMap(this.song, this.options.sampleRate)
   }
 
   /**
@@ -307,13 +308,16 @@ export class SongPlayer {
   private turn(to: number, loop: Loop | null, when: SectionTiming) {
     const now = this.engine.currentFrame
     const heard = this.heardTick(now)
-    const up = (step: number) => Math.ceil(heard / step - 1e-9) * step
+    // A hair back, so a moment heard a rounding error past a barline is
+    // still on it rather than a whole bar early for the next.
+    const bars = barsOf(this.song)
+    const nextBar = () => bars.snapBar(heard - 1e-6, 'ceil')
     let at = heard
-    if (when === 'beat') at = up(beatTicks(this.song))
-    else if (when === 'bar') at = up(barTicks(this.song))
+    if (when === 'beat') at = bars.snapIn(heard - 1e-6, bars.at(heard - 1e-6).beat, 'ceil')
+    else if (when === 'bar') at = nextBar()
     else if (when === 'section') {
       const over = sectionOver(this.song, heard)
-      at = over ? sectionEnd(over) : up(barTicks(this.song))
+      at = over ? sectionEnd(over) : nextBar()
     }
     const next = this.seams.find((s) => s.frame > now && s.before !== undefined)
     if (next && at > next.before!) at = next.before!
@@ -322,7 +326,7 @@ export class SongPlayer {
 
     let seam = this.seams[0]
     for (const s of this.seams) if (s.frame <= now) seam = s
-    const frame = seam.frame + (at - seam.tick) * this.fpt
+    const frame = seam.frame + this.time.span(seam.tick, at)
     // Already scheduled past it: take back everything from that moment on.
     if (frame < this.cursor.frame) this.rewindTo(frame, at)
     this.jump = { frame, to, loop }

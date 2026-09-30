@@ -26,6 +26,7 @@ import { INSTRUMENTS } from '../src/patch/instruments'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { GraphEngine, type EngineEvent } from '../src/dsp/GraphEngine'
+import { engineEvents, kitRow, noteTarget } from '../src/song/bind'
 import { encodeWav } from '../src/audio/wav'
 import { compile } from '../src/patch/compile'
 import { defOf } from '../src/patch/defs'
@@ -73,9 +74,25 @@ function render(t: Template, notes: Note[], seconds: number, dry = false, over: 
 
   const target = patch.modules.find((m) => defOf(m.type).playable) ?? patch.modules.find((m) => defOf(m.type).keyed)!
   const events: EngineEvent[] = []
+  // A Drum Kit is played the way the roll plays it: each note to a pad, here
+  // always the kick, whatever pitch the check asks for.
+  const kit = noteTarget(patch)?.kind === 'kit' ? noteTarget(patch)! : null
   for (const n of notes) {
     const on = Math.round(n.at * SR)
     const off = Math.round((n.at + n.length) * SR)
+    if (kit) {
+      const row = kitRow(36)
+      events.push(
+        ...engineEvents(
+          [
+            { frame: on, track: 't', kind: 'on', pitch: row, velocity: n.velocity ?? 0.8 },
+            { frame: off, track: 't', kind: 'off', pitch: row, velocity: 0 },
+          ],
+          kit,
+        ),
+      )
+      continue
+    }
     events.push({ frame: on, kind: 'noteOn', module: target.id, pitch: n.pitch, velocity: n.velocity ?? 0.8 })
     events.push({ frame: off, kind: 'noteOff', module: target.id, pitch: n.pitch })
   }

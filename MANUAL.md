@@ -549,6 +549,72 @@ Formant's Vowel jack, every note opens its mouth on the way in: "wah".
 
 ---
 
+### Drum Kit
+
+Sixteen pads, each holding a whole rack from the library: a kick, a snare,
+a pair of hats, or anything else on the shelves. A note plays the pad on
+that note, so **one track plays a whole kit**, and every row of the roll is a
+pad, named for what is in it.
+
+- **Inputs:** Trig 1 – 16 (a gate plays that pad, as a note would)
+- **Outputs:** L, R (every pad, mixed), 1 – 16 (each pad on its own, after
+  its level and before its pan)
+
+| Control | Range | Default | What it does |
+| --- | --- | --- | --- |
+| The pads | 16 | empty | Press one to pick it and hear it |
+| Lvl 1 – 16 | 0.00 – 1.00 | 0.80 | Volume of that pad |
+| Pan 1 – 16 | −1.00 – +1.00 | 0.00 | Tips that pad left or right |
+| Choke 1 – 16 | none, 1 – 4 | none | Pads in the same group cut each other off |
+
+**Load a pad from the library.** Pick a pad, then choose a sound from
+**Load…**: drums first, then everything else on the shelves. The pad gets a
+copy of that rack, knobs and all, so changing the library later never changes
+a kit. **Clear** empties the pad. An empty kit offers **Load the standard
+kit**, which fills all sixteen pads with the drums on the shelf on the notes
+General MIDI puts them on: kick on C2 (36), snare on D2 (38), closed hat on
+F#2 (42), open hat on A#2 (46), and so on. **Drum Kit** on the Drums shelf of **Patch → Library...** is
+a rack with that kit already in it and **Space** on the kick.
+
+**Each pad answers to one note.** The **Note** field moves it, and names the
+note both ways: as the roll names it, and as General MIDI's drum map does. Two
+pads on the same note both play, which is how to layer a clap on a snare. A
+note on a row no pad is on plays nothing.
+
+**Choke groups** are what a pair of hats needs. Put the closed and open hat in
+the same group and the closed one cuts the open one off, as a drummer's foot
+does. A pad in no group is never cut off.
+
+**Patch a pad out on its own.** Each pad's own output carries just that pad,
+so the snare can go through a **Space** while the rest stays dry. It is still
+in the L and R mix as well; turn its **Lvl** down to hear only the processed
+copy. A **Sequencer**'s Gate into a **Trig** jack plays that pad with no roll
+at all.
+
+**A pad that is not sounding costs nothing.** Its rack sleeps from the moment
+it has been let go of and gone quiet, and wakes on the next note, so a kit of
+sixteen racks costs about what the two or three it is playing do.
+
+**Edit pad opens the pad's rack on the bench**, while the song goes on
+playing the whole kit around it: turn the snare's decay and you hear it in
+the beat as you turn it. Everything you can do to a rack you can do to a pad
+-- knobs, cables, modules, bypass, presets, undo -- except put a Drum Kit or
+a Recorder in it, which the Modules menu leaves out while a pad is open. The
+pad's own **Trigger** button plays just that pad.
+
+A bar across the top of the rack says what you are editing -- the track,
+the Drum Kit and the pad -- and the index card beside the rack says the same,
+marked **Editing a sub-patch**. **Back to kit** returns to the track's rack,
+at the kit; so does picking another track.
+
+With a pad open, **Patch → Library...** and **Patch → Open patch...** load
+into the pad rather than the track, and the pad takes the patch's name.
+**Patch → Download patch...** and **Save to library** save the pad on its
+own, as a patch you can load into any other kit or onto a track of its own. The History list names every
+edit with its pad: "Decay · osc1 (Pad 2)".
+
+---
+
 ### Keyboard
 
 Twenty-five keys and an octave switch. Click a key to play it; the key stays
@@ -2038,6 +2104,73 @@ name.
 Projects saved before sections had lengths open with each old marker as a
 section running to the next.
 
+### Tempo and time signature changes
+
+**A song can change tempo and time signature part way through.** The two
+thin lanes at the top of the Song view, **BPM** and **Time**, show where.
+The value the song starts at sits at the left edge of each lane, and each
+change after it stands on the bar where it happens.
+
+| On the BPM and Time lanes | What it does |
+| --- | --- |
+| Click empty lane | A new change there: type the tempo, or a time signature like `7/8`, and press Enter |
+| Click a change | Type a new value into it. Escape leaves it as it was |
+| Drag a change | Moves it. A tempo change follows the snap; a time signature change goes on a barline |
+| Right-click a change, or the lane | Set it, remove it, remove every change in that bar, or remove every change on the lane |
+| Delete, with a change focused (Tab to it) | Removes it. Enter opens it |
+| Alt, held while dragging a tempo change | Ignores the snap |
+
+**The BPM lane draws the tempo as a line**, a step at each change, from
+the slowest the song goes to the fastest. Where changes are too close
+together to label, only the first and last of a run are labelled and the
+rest are thin marks, and changes closer than that are left to the line until
+you zoom in. A ramp brought in as a hundred small steps reads as a slope
+with its start and end tempo written on it, and **Remove every tempo
+change** clears it in one go.
+
+The change at the left edge is the song's own tempo or time signature, the
+same one the **Tempo** and **Time** fields on the dock's bar set. It can be
+changed but not moved or removed. When a song has changes, those fields show
+how many, as **+2**.
+
+**A tempo change is a step.** The music is at the new tempo from that tick
+on. It moves no notes or barlines, only how fast they go by, so the playlist
+looks the same and the song takes more or less time. Tempos are 20 to 300
+bpm and can have two decimal places.
+
+**A time signature change starts a new bar where it is,** and redraws the
+bars after it: a bar of 3/4 on the ruler is three beats wide, and the bars
+after it are numbered on from there. Snap, the bar numbers, picking bars and
+the arrow keys all count in the bar the pointer is in. Notes and clips stay
+on their ticks. Moving or removing a change moves only the barlines. Time
+signatures are 1 to 32 beats of whole notes, halves, quarters, eighths,
+sixteenths or thirty-seconds: 2/2, 3/2, 5/16 and 21/16 are all fine. The
+Time menu on the dock's bar lists the common ones; type any other on the
+Time lane.
+
+**The roll rules a pattern in the time signature it sits in.** A pattern
+first placed in a 7/8 stretch is drawn in bars of 7/8, **Bars** counts in
+them, and one placed across a change shows the change on its ruler, where it
+falls. A pattern not in the song yet is in the time signature the song
+starts in.
+
+**The Time field on the dock's bar** keeps every pattern and clip the same
+number of bars when the song has no time signature changes, as it always
+has. Once there are changes, the song has more than one length of bar and
+no single way to keep them all, so the field changes only the song's opening
+time signature, like any other change.
+
+**Changes go with their music.** Bars put in move the changes after them
+later, and bars taken out take the changes inside them away, with the song
+carrying on after the gap at whatever was in force at its end. Copied,
+duplicated and pasted bars bring their tempo and time signature with them,
+and the song goes back to what it was after them. Moving, duplicating or
+deleting a section with its music does the same.
+
+A game playing the song hears the tempo changes, and a section change on
+the next **beat** or **bar** waits for the beat or bar as the time signature
+counts it at that point.
+
 ### Editing bars
 
 **Drag along the bar numbers to pick bars** — any bars, whether or not a
@@ -2059,7 +2192,9 @@ A clip that crosses the edge of a pick is split there first, which you cannot
 hear, so only what is inside the pick changes. Sections go with the bars
 they label: bars put in inside a section make it longer, bars taken out make
 it shorter, and a section with all its bars taken out goes too. A section
-inside copied bars is pasted as a section with a name of its own. The keys
+inside copied bars is pasted as a section with a name of its own. Tempo and
+time signature changes go with their bars too: see **Tempo and time
+signature changes** above. The keys
 work when the playlist has the keyboard and no clips are picked; clicking a
 lane lets go of the picked bars.
 
@@ -2072,7 +2207,8 @@ decides what the transport does, so there is no third button to forget about.
 | --- | --- |
 | ▶ / ■ | Starts and stops |
 | Loop | Whether it comes round again at the end, or plays once and stops |
-| Tempo | Beats per minute, 20 to 300 |
+| Tempo | Beats per minute at the start, 20 to 300. **+1** beside it means the tempo changes along the way: see the BPM lane |
+| Time | The time signature at the start. **+1** beside it means it changes along the way: see the Time lane |
 | Pattern | Which pattern the roll writes into, or a new one. Roll view only: Song view lists the patterns beside the lanes |
 | Bars | How long that pattern is. Notes past the new end are kept, not cut |
 | Grid | What notes snap to, from a quarter note down to a thirty-second |
@@ -2089,6 +2225,15 @@ your fingers exactly. **The scroll bar** down the right of the rows can be
 dragged, to the pixel, and a click on it jumps there. It never lays a note.
 **Ctrl + wheel** makes the rows taller or shorter around the row under the
 pointer. Notes moved with the arrow keys take the view with them.
+
+**A long pattern scrolls sideways.** The roll fits a pattern to its width
+until its bars would be squeezed narrower than about 48 pixels; past that it
+opens at that width and a scroll bar appears along the bottom. **Alt +
+wheel** zooms across around the pointer, and the **−**, **+** and **Fit**
+buttons on the roll's bar do the same without a wheel (**Fit** puts the
+whole pattern across the roll, however dense that makes it). **Shift +
+wheel**, a trackpad's sideways swipe or the bottom scroll bar move along it.
+While it plays, the view turns the page when the playhead reaches its edge.
 
 **Swing pushes every second step late.** 50% is straight and shows as Off;
 around 67% is a triplet feel, the lope of a shuffle; 75% is a hard, dotted
@@ -2114,8 +2259,9 @@ sounds right in 6/8 is for your ear to decide.
 
 **Edits while it is playing are heard about a quarter of a second later.**
 That is how far ahead the notes are handed to the audio thread, which is what
-keeps the timing exact whatever else the browser is doing. Changing the tempo
-is the one edit that stops and restarts the notes already queued.
+keeps the timing exact whatever else the browser is doing. Changing the tempo,
+or any tempo change, is the one edit that stops and restarts the notes
+already queued.
 
 ### Projects, tracks and patches
 
@@ -2205,8 +2351,8 @@ LAME), which load the first time you choose one.
 
 **Project → Export MIDI...** writes the arrangement's notes as a Standard
 MIDI File, for another DAW or a game's own sequencer. It is a type 1 file
-with a track per track, the tempo, the time signature and a marker for each
-section. Each note is written as the note you hear, so C4 in the roll is
+with a track per track, the tempo and time signature and every change of
+either, and a marker for each section. Each note is written as the note you hear, so C4 in the roll is
 MIDI note 60 whatever the patch is tuned to. What goes in is what plays:
 clips repeat and cut notes off, swing is applied, and muted tracks are left
 out.

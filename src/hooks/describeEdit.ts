@@ -1,5 +1,6 @@
 import { defOf } from '../patch/defs'
-import type { Patch } from '../patch/types'
+import { kitSlots } from '../patch/kit'
+import type { Patch, PatchModule } from '../patch/types'
 import type { Rack } from '../song/project'
 import type { Note, Placement, Song, Track } from '../song/types'
 import type { Doc } from './useDocument'
@@ -52,11 +53,53 @@ function describeRack(a: Rack | undefined, b: Rack): string {
   const modules = new Set(moved.map((k) => k.slice(0, k.indexOf('.'))))
   if (modules.size > 1) return `Set ${moved.length} knobs`
   const [moduleId] = modules
+  // A knob inside a Drum Kit's pad, turned with the pad open on the bench:
+  // named as the pad's own rack would name it, and then which pad.
+  const inPad = padKnob(b.patch, moduleId)
+  if (inPad) {
+    if (moved.length > 1) return `Set ${inPad.module} knobs (Pad ${inPad.slot + 1})`
+    const paramId = moved[0].slice(moduleId.length + 1)
+    const label = safeDef(inPad.type)?.params.find((p) => p.id === paramId)?.label
+    return `${label ?? paramId} · ${inPad.module} (Pad ${inPad.slot + 1})`
+  }
   const type = b.patch.modules.find((m) => m.id === moduleId)?.type
   if (moved.length > 1) return `Set ${moduleId} knobs`
   const paramId = moved[0].slice(moduleId.length + 1)
   const label = type ? safeDef(type)?.params.find((p) => p.id === paramId)?.label : undefined
   return `${label ?? paramId} · ${moduleId}`
+}
+
+/** A module inside a pad, by its laid-in id: which pad, and what it is there. */
+function padKnob(patch: Patch, id: string): { slot: number; module: string; type: string } | null {
+  const [kit, n, inner] = id.split('/')
+  if (inner === undefined) return null
+  const owner = patch.modules.find((m) => m.id === kit && m.type === 'kit')
+  const slot = Number(n) - 1
+  const m = owner ? kitSlots(owner)[slot]?.patch.modules.find((x) => x.id === inner) : undefined
+  return m ? { slot, module: inner, type: m.type } : null
+}
+
+/** A Drum Kit's pads, as the one that changed and how. */
+function describePads(a: PatchModule, b: PatchModule): string | null {
+  const was = kitSlots(a)
+  const is = kitSlots(b)
+  const changed = is.flatMap((p, i) => (p !== was[i] ? [i] : []))
+  if (changed.length > 1) return `Load kit · ${b.id}`
+  if (changed.length === 0) return null
+  const i = changed[0]
+  const before = was[i]
+  const after = is[i]
+  if (!after) return `Clear pad ${i + 1} · ${b.id}`
+  if (!before) return `Load ${after.name} · pad ${i + 1}`
+  // The same pad, named and placed the same, with its rack edited: named as
+  // an edit of that rack would be, and then which pad.
+  if (before.patch !== after.patch) {
+    return before.name === after.name && before.note === after.note
+      ? `${describePatch(before.patch, after.patch)} (Pad ${i + 1})`
+      : `Load ${after.name} · pad ${i + 1}`
+  }
+  if (before.note !== after.note) return `Move pad ${i + 1} to note ${after.note}`
+  return `Rename pad ${i + 1}`
 }
 
 function describePatch(a: Patch, b: Patch): string {
@@ -88,6 +131,10 @@ function describePatch(a: Patch, b: Patch): string {
     if (!!was.bypass !== !!m.bypass) return `${m.bypass ? 'Bypass' : 'Un-bypass'} ${m.id}`
     if (was.key !== m.key) return `Set key · ${m.id}`
     if (was.sample?.id !== m.sample?.id) return `Load sample · ${m.id}`
+    if (was.slots !== m.slots) {
+      const pad = describePads(was, m)
+      if (pad) return pad
+    }
   }
   if (a.modules.map((m) => m.id).join() !== b.modules.map((m) => m.id).join()) return 'Reorder rack'
   return 'Edit rack'
@@ -113,6 +160,8 @@ function describeSong(a: Song, b: Song): string | null {
   if (a.playlist !== b.playlist) return describePlaylist(a.playlist, b.playlist)
   if (a.tempo !== b.tempo) return `Tempo ${Math.round(b.tempo * 100) / 100}`
   if (a.meter !== b.meter) return `Meter ${b.meter?.beats ?? 4}/${b.meter?.unit ?? 4}`
+  if (a.tempos !== b.tempos) return changeName('tempo', a.tempos, b.tempos)
+  if (a.meters !== b.meters) return changeName('meter', a.meters, b.meters)
   if (a.loop !== b.loop) return b.loop ? 'Set loop' : 'Clear loop'
   if (a.console !== b.console) return 'Mix'
   if (a.folders !== b.folders) {
@@ -123,6 +172,14 @@ function describeSong(a: Song, b: Song): string | null {
   }
   if (a.scale !== b.scale) return b.scale ? 'Set key' : 'Clear key'
   return null
+}
+
+/** A tempo or meter change added, taken away, moved or set to something else. */
+function changeName(what: string, a: readonly { tick: number }[] = [], b: readonly { tick: number }[] = []): string {
+  if (b.length > a.length) return `Add ${what} change`
+  if (b.length < a.length) return `Remove ${what} change`
+  const ticks = (l: readonly { tick: number }[]) => l.map((c) => c.tick).join()
+  return ticks(a) === ticks(b) ? `Edit ${what} change` : `Move ${what} change`
 }
 
 function describeTracks(a: Track[], b: Track[]): string | null {

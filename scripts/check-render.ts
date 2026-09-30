@@ -386,6 +386,17 @@ console.log('\nmidi export')
   const bassOff = bass.find((e) => e.status !== undefined && (e.status & 0xf0) === 0x80)
   check('a note held past its clip is cut where the clip ends', bassOff?.tick === BAR, String(bassOff?.tick))
   check('each track on its own channel', ((ons[0].status ?? 0) & 0x0f) !== ((bass[1]?.status ?? bass.find((e) => e.status !== undefined)!.status!) & 0x0f))
+  // Every change of tempo and meter, on the conductor, in time order.
+  const changing = songToMidi(
+    { ...song, tempos: [{ tick: BAR, bpm: 150 }], meters: [{ tick: BAR, meter: { beats: 7, unit: 8 } }, { tick: 2 * BAR, meter: { beats: 5, unit: 16 } }, { tick: 3 * BAR, meter: { beats: 2, unit: 2 } }] },
+    { noteOf: (_track, row) => 48 + row },
+  )
+  const conductor = readMidi(changing).tracks[0]
+  const tempos = conductor.filter((e) => e.meta === 0x51).map((e) => `${e.tick}:${(e.data[0] << 16) | (e.data[1] << 8) | e.data[2]}`)
+  check('a change of tempo is written where it happens', tempos.join() === `0:600000,${BAR}:400000`, tempos.join())
+  const meters = conductor.filter((e) => e.meta === 0x58).map((e) => `${e.tick}:${e.data[0]}/${2 ** e.data[1]}`)
+  check('and a change of meter, of any note', meters.join() === `0:3/4,${BAR}:7/8,${2 * BAR}:5/16,${3 * BAR}:2/2`, meters.join())
+  check('in time order', conductor.every((e, i) => i === 0 || e.tick >= conductor[i - 1].tick))
   check('a variable-length number is seven bits a byte', varLen(0).join() === '0' && varLen(127).join() === '127' && varLen(128).join() === '129,0' && varLen(0x0fffffff).join() === '255,255,255,127')
 }
 

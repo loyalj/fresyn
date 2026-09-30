@@ -1,5 +1,6 @@
 import { normalizeSong } from './normalize'
 import { cutAt, sectionEnd, uniqueSectionName } from './section'
+import { copyTimings, deleteTimings, insertTimings, pasteTimings, type TimingClip } from './timing'
 import type { Placement, Section, Song } from './types'
 
 /**
@@ -13,7 +14,10 @@ import type { Placement, Section, Song } from './types'
  *
  * Sections go with the time they label. Bars put in inside a section make it
  * longer; bars taken out of one make it shorter, and a section whose bars
- * are all taken out goes with them. So does the transport's loop.
+ * are all taken out goes with them. So does the transport's loop, and so do
+ * the changes of tempo and time signature: they belong to the music they
+ * are over, and a copied stretch is pasted at the tempo and in the meter it
+ * was copied in.
  */
 
 export interface TickRange {
@@ -28,6 +32,8 @@ export interface TimeClip {
   clips: Placement[]
   /** Sections wholly inside it, from its tick zero. */
   sections: Section[]
+  /** Its tempo and meter, and their changes inside it. */
+  timing?: TimingClip
 }
 
 const clean = (r: TickRange): TickRange | null => {
@@ -82,7 +88,9 @@ export function insertTime(song: Song, at: number, length: number): Song {
   // A start at the tick moves with what is after it; an end there stays,
   // except that a span running across the tick grows round the new bars.
   return normalizeSong(
-    remapTime(moved, (tick, edge) => (tick > t || (tick === t && edge === 'start') ? tick + len : tick)),
+    remapTime(insertTimings(moved, t, len), (tick, edge) =>
+      tick > t || (tick === t && edge === 'start') ? tick + len : tick,
+    ),
   )
 }
 
@@ -100,7 +108,11 @@ export function deleteTime(song: Song, range: TickRange): Song {
     ...cut,
     playlist: cut.playlist.filter((p) => !inside(p, r)).map((p) => (p.tick >= r.to ? { ...p, tick: p.tick - len } : p)),
   }
-  return normalizeSong(remapTime(kept, (tick) => (tick <= r.from ? tick : tick >= r.to ? tick - len : r.from)))
+  return normalizeSong(
+    remapTime(deleteTimings(kept, r.from, r.to), (tick) =>
+      tick <= r.from ? tick : tick >= r.to ? tick - len : r.from,
+    ),
+  )
 }
 
 /** The range's clips taken out and nothing moved: the bars stay, empty. */
@@ -123,6 +135,7 @@ export function copyTime(song: Song, range: TickRange): TimeClip | null {
     sections: (song.sections ?? [])
       .filter((s) => s.tick >= r.from && sectionEnd(s) <= r.to)
       .map((s) => ({ ...s, tick: s.tick - r.from })),
+    timing: copyTimings(song, r.from, r.to),
   }
 }
 
@@ -134,7 +147,8 @@ export function copyTime(song: Song, range: TickRange): TimeClip | null {
 export function pasteTime(song: Song, at: number, clip: TimeClip): Song {
   const t = Math.max(0, Math.round(at))
   if (!(clip.length > 0)) return song
-  const opened = insertTime(song, t, clip.length)
+  const gap = insertTime(song, t, clip.length)
+  const opened = clip.timing ? pasteTimings(gap, t, clip.length, clip.timing) : gap
   // A section the paste lands inside was just made longer by the gap; a
   // pasted section cannot go inside another, so it stays only a label on the
   // bars when there is room for it.

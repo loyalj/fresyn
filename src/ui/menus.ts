@@ -33,6 +33,8 @@ export interface MenuContext {
   saveToLibrary: () => void
   search: () => void
   addModule: (type: string) => void
+  /** Module types left off the Modules menu: what a Drum Kit's pad cannot hold, while one is open. */
+  hiddenModules?: ReadonlySet<string>
   flipped: boolean
   flip: () => void
   dockOpen: boolean
@@ -135,7 +137,7 @@ export function buildMenus(ctx: MenuContext): MenuDef[] {
         ...MODULE_GROUPS.map((g) => ({
           kind: 'submenu' as const,
           label: g.name,
-          items: modulesByGroup(g.id).map((def) => ({
+          items: modulesByGroup(g.id).filter((def) => !ctx.hiddenModules?.has(def.type)).map((def) => ({
             kind: 'action' as const,
             label: def.name,
             onSelect: () => ctx.addModule(def.type),

@@ -49,8 +49,9 @@ import {
 } from './patch/edit'
 import { canRedo, canUndo, steps } from './patch/history'
 import { loadDock, saveDock, saveLocalProject, loadPrefs, savePrefs } from './patch/storage'
-import { noteTarget, type NoteTarget } from './song/bind'
-import { rowForMidi, tuningOf } from './song/tuning'
+import { engineEvents, kitRow, kitTarget, noteTarget, type NoteTarget } from './song/bind'
+import { DEFAULT_KIT, kitSlots, NOT_IN_A_PAD, padPatch, setKitSlot, updateKitSlot, withPadView } from './patch/kit'
+import { midiName, rowForMidi, tuningOf } from './song/tuning'
 import { songEnd } from './song/schedule'
 import { sectionAt } from './song/section'
 import {
@@ -72,7 +73,7 @@ import { BENCH_TRACK, benchSong } from './song/types'
 import type { Patch, PatchModule } from './patch/types'
 import { Cables, type DragState } from './ui/Cables'
 import { nearestCable, type JackGeometry } from './ui/cableGeometry'
-import { EngineContext } from './ui/EngineContext'
+import { EngineContext, EnginePrefix } from './ui/EngineContext'
 import { SampleContext } from './ui/SampleContext'
 import { UnitBoundary } from './ui/ErrorBoundary'
 import { jackKey } from './ui/Jack'
@@ -146,8 +147,12 @@ export default function App() {
     racks,
     trackId,
     setSelected,
+    trackRack,
     patch,
     values,
+    padInfo,
+    enginePrefix,
+    setOpenPad,
     patchName,
     activePattern,
     setPatternId,
@@ -170,7 +175,9 @@ export default function App() {
   // What the benched Keyboard plays, to name the roll's rows and the panel's
   // keys by. Kept by its three numbers, so turning any other knob in the
   // rack leaves the roll and the Keyboard alone.
-  const tuningNow = tuningOf({ patch, values })
+  // The track's own rack, not a pad open on the bench: the roll names the
+  // track's rows.
+  const tuningNow = tuningOf(trackRack)
   const tuningKey = tuningNow ? `${tuningNow.source}|${tuningNow.base}|${tuningNow.octave}` : ''
   const tuning = useMemo(
     () => tuningNow,
@@ -281,7 +288,7 @@ export default function App() {
   /** Units picked by a click on their ear, for Ctrl+C. */
   const [picked, setPicked] = useState<ReadonlySet<string>>(() => new Set())
   // What is picked belongs to the rack it was picked in.
-  useEffect(() => setPicked(new Set()), [trackId])
+  useEffect(() => setPicked(new Set()), [trackId, enginePrefix])
   /** Whether a paste has anything to paste, for the Edit menu. */
   const [hasClip, setHasClip] = useState(moduleClip !== null)
   /**
@@ -342,11 +349,8 @@ export default function App() {
    * library, which is what a panel shows when a patch arrives from somebody
    * else.
    */
-  const wanted = patch.modules
-    .map((m) => m.sample?.id)
-    .filter((id): id is string => !!id)
-    .sort()
-    .join(',')
+  // Inside a Drum Kit's pads as well as on the rack's own modules.
+  const wanted = [...sampleIdsIn(trackRack.patch.modules)].sort().join(',')
 
   useEffect(() => {
     let live = true
@@ -402,6 +406,71 @@ export default function App() {
       }
     },
     [editPatch, engine, samples],
+  )
+
+  // --- Drum Kit pads ------------------------------------------------------
+
+  /**
+   * A pad loaded with a copy of a library instrument, or emptied. The library
+   * is fetched on the way, since the page starts without it. A pad keeps the
+   * note it was on; an empty one takes the note the standard kit has there.
+   */
+  const onKitLoad = useCallback(
+    async (id: string, slot: number, instrument: string | null) => {
+      if (instrument === null) {
+        editPatch((p) => setKitSlot(p, id, slot, null))
+        return
+      }
+      const { INSTRUMENTS } = await import('./patch/instruments')
+      const inst = INSTRUMENTS.find((x) => x.id === instrument)
+      if (!inst) return
+      const built = inst.make()
+      editPatch((p) => {
+        const kit = p.modules.find((m) => m.id === id)
+        const note = (kit && kitSlots(kit)[slot]?.note) ?? DEFAULT_KIT[slot]?.note ?? 36 + slot
+        return setKitSlot(p, id, slot, { name: inst.name, note, patch: padPatch(built.patch, built.values) })
+      })
+    },
+    [editPatch],
+  )
+
+  /**
+   * Every pad loaded with the standard kit, and the hats put in a choke
+   * group, as one step of undo: the pads are the patch and the groups are
+   * knobs, so both go in the one edit of the rack.
+   */
+  const onKitStandard = useCallback(
+    async (id: string) => {
+      const { INSTRUMENTS } = await import('./patch/instruments')
+      editRack((r) => {
+        let patch = r.patch
+        const values = { ...r.values }
+        DEFAULT_KIT.forEach((pad, i) => {
+          const inst = INSTRUMENTS.find((x) => x.id === pad.instrument)
+          if (!inst) return
+          const built = inst.make()
+          patch = setKitSlot(patch, id, i, { name: inst.name, note: pad.note, patch: padPatch(built.patch, built.values) })
+          values[`${id}.choke${i + 1}`] = pad.choke ?? 0
+        })
+        return patch === r.patch ? r : { patch, values }
+      })
+    },
+    [editRack],
+  )
+
+  /** A pad sounded on the bench while it is held, through the same routing a note from the roll takes. */
+  const onKitAudition = useCallback(
+    (id: string, slot: number, on: boolean) => {
+      const kit = patch.modules.find((m) => m.id === id)
+      const pad = kit ? kitSlots(kit)[slot] : null
+      if (!kit || !pad) return
+      const events = engineEvents(
+        [{ frame: 0, track: trackId, kind: on ? 'on' : 'off', pitch: kitRow(pad.note), velocity: on ? 0.9 : 0 }],
+        kitTarget(kit),
+      ).map((e) => ({ ...e, track: trackId }))
+      void engine.start().then(() => engine.schedule(events))
+    },
+    [engine, patch, trackId],
   )
 
   const onReorder = useCallback(
@@ -624,7 +693,11 @@ export default function App() {
     const target = rack && noteTarget(rack.patch)
     return target ? [[track.id, target] as const] : []
   })
-  const targetKey = targetList.map(([id, t]) => `${id}:${t.kind}:${t.module}`).join('|')
+  // A kit's pads are part of what it says: a pad loaded, emptied or moved to
+  // another note changes where the roll's notes go.
+  const targetKey = targetList
+    .map(([id, t]) => `${id}:${t.kind}:${t.module}${t.pads ? `:${[...t.pads].map(([row, hits]) => `${row}=${hits.map((h) => h.module).join('+')}`).join(',')}` : ''}`)
+    .join('|')
   const targets = useMemo(
     () => new Map<string, NoteTarget>(targetList),
     // `targetList` is rebuilt every render; `targetKey` is what it says.
@@ -877,6 +950,17 @@ export default function App() {
     (next: Patch, trackName: string, preset?: Record<string, number>) => {
       breakCoalesce()
       const values = preset ? { ...initialValues(next), ...preset } : initialValues(next)
+      // With a pad open, the patch goes into the pad, which takes its name;
+      // the track, its name and the rest of its kit stay as they are.
+      if (padInfo) {
+        const at = padInfo
+        commitDoc((doc) => {
+          const rack = doc.racks[trackId]
+          if (!rack) return doc
+          return { ...doc, racks: { ...doc.racks, [trackId]: withPadView(rack, at.kit, at.slot, { patch: next, values }, trackName) } }
+        }, undefined, `Load ${trackName} · pad ${at.slot + 1}`)
+        return
+      }
       commitDoc((doc) => ({
         ...doc,
         // The rack changes; the arrangement does not. A track's name is the
@@ -886,7 +970,7 @@ export default function App() {
         racks: { ...doc.racks, [trackId]: { patch: next, values } },
       }), undefined, `Load ${trackName}`)
     },
-    [commitDoc, breakCoalesce, trackId],
+    [commitDoc, breakCoalesce, trackId, padInfo],
   )
 
   const files = useProjectFiles({
@@ -921,9 +1005,10 @@ export default function App() {
   const heldPanel = useRef<{ track: string; pitch: number } | null>(null)
   const triggers = useTriggers(engine, trackId, patch, values, (moduleId, open) => {
     // Only the module the track's notes are played on is a note: the rest of
-    // a rack's Triggers fire things inside the patch.
+    // a rack's Triggers fire things inside the patch -- and so does every
+    // Trigger in a pad open on the bench.
     const target = targets.get(trackId)
-    if (!target || target.module !== moduleId) return
+    if (enginePrefix || !target || target.module !== moduleId) return
     if (open) {
       const pitch = target.kind === 'note' ? (pressedKey.current ?? Math.round(values[`${moduleId}.note`] ?? 0)) : 0
       pressedKey.current = null
@@ -933,7 +1018,7 @@ export default function App() {
       liveNotes.emit({ kind: 'off', ...heldPanel.current, velocity: 0, source: 'panel' })
       heldPanel.current = null
     }
-  })
+  }, enginePrefix)
 
   /**
    * MIDI controllers, when switched on from the Edit menu. A key plays the
@@ -1175,7 +1260,7 @@ export default function App() {
       // sync afterwards finds them already sent and sends nothing.
       if (ahead) {
         const values: Record<string, number> = {}
-        for (const [param, value] of Object.entries(ahead)) values[`${id}.${param}`] = value
+        for (const [param, value] of Object.entries(ahead)) values[`${enginePrefix}${id}.${param}`] = value
         engine.setValues(trackId, values)
       }
       if (open) triggers.gateOn(id)
@@ -1202,6 +1287,15 @@ export default function App() {
     setParam: (id, paramId, v) => setParam(id, paramId, v),
     setParams: (id, changes) => setParams(id, changes),
     sample: (id, file) => void onSample(id, file),
+    kitLoad: (id, slot, instrument) => void onKitLoad(id, slot, instrument),
+    kitPad: (id, slot, change) => editPatch((p) => updateKitSlot(p, id, slot, change)),
+    kitStandard: (id) => void onKitStandard(id),
+    kitAudition: onKitAudition,
+    kitEdit: (id, slot) => {
+      setOpenPad({ track: trackId, kit: id, slot })
+      // To the top, where the pad's rack starts.
+      window.scrollTo({ top: 0 })
+    },
     register: registerJack,
     jackDown: (ref, kind, e) => cables.onJackDown(ref, kind, e),
     jackKey: (ref, kind, action) => cables.onJackKey(ref, kind, action),
@@ -1268,6 +1362,7 @@ export default function App() {
     saveToLibrary: () => void onSaveToLibrary(),
     search: () => setSearch({}),
     addModule: onAddModule,
+    hiddenModules: padInfo ? NOT_IN_A_PAD : undefined,
     flipped,
     flip,
     dockOpen: dock.open,
@@ -1310,6 +1405,22 @@ export default function App() {
     if (focus) el?.focus({ preventScroll: true })
     setPicked(new Set([id]))
   }, [])
+
+  /**
+   * Out of the pad and back to the track's rack, at the kit it belongs to:
+   * that is where you went in, and where the next pad is picked.
+   */
+  const backToKit = useRef<string | null>(null)
+  const closePad = useCallback(() => {
+    backToKit.current = padInfo?.kit ?? null
+    setOpenPad(null)
+  }, [padInfo, setOpenPad])
+  useEffect(() => {
+    const kit = backToKit.current
+    if (enginePrefix || !kit) return
+    backToKit.current = null
+    jumpTo(kit)
+  }, [enginePrefix, jumpTo])
 
   return (
     <>
@@ -1476,6 +1587,7 @@ export default function App() {
 
         {search && (
           <ModuleSearch
+            exclude={padInfo ? NOT_IN_A_PAD : undefined}
             cable={search.cable?.anchorKind}
             onPick={onSearchPick}
             onClose={() => setSearch(null)}
@@ -1491,16 +1603,44 @@ export default function App() {
           onJump={jumpTo}
           flipped={flipped}
           onFlip={flip}
+          pad={padInfo}
+          onClosePad={closePad}
         />
 
         {/* Panels that show live audio, such as the scope, take the engine from
             here rather than being handed it down through every rack unit. The
             appearance rides along for the same reason: a canvas cannot read the
             stylesheet, so the scope has to be told when the palette changed. */}
+        {/* Over the rack while a pad is open: whose rack this is, and the way
+            back. The index card says the same where the window has room for
+            it; this is always there. */}
+        {padInfo && (
+          <nav className="pad-crumb" aria-label="Editing a pad">
+            <button className="pad-crumb-link" onClick={closePad} type="button" title="Back to the track's rack">
+              {patchName || 'Untitled'}
+            </button>
+            <span className="pad-crumb-sep" aria-hidden="true">›</span>
+            <span className="pad-crumb-kit">
+              Drum Kit <code>{padInfo.kit}</code>
+            </span>
+            <span className="pad-crumb-sep" aria-hidden="true">›</span>
+            <span className="pad-crumb-pad">
+              Pad {padInfo.slot + 1} · {padInfo.name}
+            </span>
+            <span className="pad-crumb-note">
+              a sub-patch, played on {midiName(padInfo.note)} with the rest of the kit
+            </span>
+            <button className="pad-crumb-back" onClick={closePad} type="button">
+              ← Back to kit
+            </button>
+          </nav>
+        )}
+
         <KnobHelpCard />
         <KnobHelpOn.Provider value={knobHelp}>
         <ThemeContext.Provider value={appearance}>
           <EngineContext.Provider value={engine}>
+          <EnginePrefix.Provider value={enginePrefix}>
           <SampleContext.Provider value={samples}>
             <div
               className={`rack${flipped ? ' rack-flipped' : ''}${compact ? ' compact' : ''}${
@@ -1544,6 +1684,7 @@ export default function App() {
               )}
             </div>
           </SampleContext.Provider>
+          </EnginePrefix.Provider>
           </EngineContext.Provider>
         </ThemeContext.Provider>
         </KnobHelpOn.Provider>

@@ -1,4 +1,5 @@
 import { rack, type Built, type Unit } from './build'
+import { DEFAULT_KIT, padPatch, setKitSlot } from './kit'
 
 /**
  * Off-the-shelf voices: racks that play like an instrument the moment they
@@ -1299,6 +1300,28 @@ export const INSTRUMENTS: Instrument[] = [
   },
 
   // --- drums ----------------------------------------------------------------
+  {
+    id: 'drumkit',
+    name: 'Drum Kit',
+    category: 'drums',
+    description: 'Sixteen of the drums on this shelf in one rack, on the notes General MIDI puts them on.',
+    tip: 'A whole beat on one track: each row of the roll is a pad. Space plays the kick.',
+    make: () => {
+      const built = rack([['gate1', 'gate'], ['kit1', 'kit']], ['gate1.gate -> kit1.trig1'])
+      let patch = built.patch
+      const values = { ...built.values }
+      DEFAULT_KIT.forEach((pad, i) => {
+        // Looked up when the kit is made rather than when this list is: the
+        // drums it holds are further down the same list.
+        const inst = INSTRUMENTS.find((x) => x.id === pad.instrument)
+        if (!inst) throw new Error(`the standard kit wants "${pad.instrument}", which is not on the shelf`)
+        const b = inst.make()
+        patch = setKitSlot(patch, 'kit1', i, { name: inst.name, note: pad.note, patch: padPatch(b.patch, b.values) })
+        if (pad.choke) values[`kit1.choke${i + 1}`] = pad.choke
+      })
+      return { patch, values }
+    },
+  },
   {
     id: 'kick',
     name: 'Kick',

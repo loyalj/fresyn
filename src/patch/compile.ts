@@ -1,4 +1,5 @@
 import { defOf } from './defs'
+import { flattenKits, isPadModule, kitSlots, padEntry, padModuleId, padTarget } from './kit'
 import type { Cable, Patch } from './types'
 
 export interface CompiledModule {
@@ -55,7 +56,25 @@ export interface CompiledPatch {
     voicesParam: number
     noteParam: number
   }
+  /**
+   * A Drum Kit's pads, each a stretch of the modules that only needs to run
+   * while the pad is sounding. A kit holds sixteen racks and a beat plays two
+   * or three of them at a time, so the rest sleep: see `GraphEngine`.
+   */
+  pads?: CompiledPad[]
   warnings: string[]
+}
+
+export interface CompiledPad {
+  /** Indices into `modules` of everything laid in from this pad. */
+  modules: number[]
+  /** Module ids a note wakes it by: its Trigger, and its Keyboard if it has one. */
+  wake: string[]
+  /** Where its sound arrives at the kit: what it is judged silent by. */
+  retL: number
+  retR: number
+  /** What reaches the kit's Trig jack for it, as a slot, or 0: a gate there wakes it too. */
+  trig: number
 }
 
 /** The outputs a bypassed module's input goes straight on to. */
@@ -111,11 +130,13 @@ export function withBypass(patch: Patch): Patch {
  * limitation of native Web Audio nodes that this engine exists to avoid.
  */
 export function compile(input: Patch): CompiledPatch {
-  // Bypass is wiring, so it is settled before anything else is: by the time
-  // the slots are laid out, a bypassed module simply has nothing downstream
-  // of it, and what fed it feeds what it used to. Every path that compiles a
-  // patch -- the rack, a render, a bounce, a game -- hears the same thing.
-  const patch = withBypass(input)
+  // A Drum Kit's pads are racks of their own, laid into the patch beside it
+  // before anything else: from here on they are modules like any other.
+  // Bypass is wiring, so it is settled next: by the time the slots are laid
+  // out, a bypassed module simply has nothing downstream of it, and what fed
+  // it feeds what it used to. Every path that compiles a patch -- the rack, a
+  // render, a bounce, a game -- hears the same thing.
+  const patch = withBypass(flattenKits(input))
   const warnings: string[] = []
   const byId = new Map(patch.modules.map((m) => [m.id, m]))
 
@@ -231,7 +252,9 @@ export function compile(input: Patch): CompiledPatch {
   // fed by a voice is part of that voice, and a module fed only by the rest
   // of the rack -- a free-running LFO, a noise source -- stays single and is
   // heard by every voice alike.
-  const root = patch.modules.find((m) => defOf(m.type).playable)
+  // Only the rack's own Keyboard: one inside a Drum Kit's pad is played by
+  // the kit, a note at a time, and is not what the rack's voices are.
+  const root = patch.modules.find((m) => defOf(m.type).playable && !isPadModule(m.id))
   const poly = new Set<string>()
   if (root) {
     poly.add(root.id)
@@ -268,9 +291,34 @@ export function compile(input: Patch): CompiledPatch {
     }
   })
 
+  // --- pads ----------------------------------------------------------
+  const pads: CompiledPad[] = []
+  const indexOf = new Map(modules.map((m, i) => [m.id, i]))
+  for (const kit of input.modules) {
+    if (kit.type !== 'kit') continue
+    const compiledKit = modules[indexOf.get(kit.id) ?? -1]
+    if (!compiledKit) continue
+    const inputs = defOf('kit').inputs
+    kitSlots(kit).forEach((slot, i) => {
+      if (!slot) return
+      const prefix = padModuleId(kit.id, i, '')
+      const members: number[] = []
+      modules.forEach((m, k) => {
+        if (m.id.startsWith(prefix)) members.push(k)
+      })
+      if (members.length === 0) return
+      const wake = [padEntry(slot.patch)?.id, padTarget(slot.patch)?.module]
+        .filter((id): id is string => !!id)
+        .map((id) => padModuleId(kit.id, i, id))
+      const port = (id: string) => compiledKit.ins[inputs.findIndex((p) => p.id === id)] ?? 0
+      pads.push({ modules: members, wake: [...new Set(wake)], retL: port(`ret${i + 1}l`), retR: port(`ret${i + 1}r`), trig: port(`trig${i + 1}`) })
+    })
+  }
+
   return {
     modules,
     slotCount: nextSlot,
+    ...(pads.length ? { pads } : {}),
     params,
     paramIndex,
     feedbackCables,

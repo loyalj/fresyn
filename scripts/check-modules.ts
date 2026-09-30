@@ -70,6 +70,9 @@ const CEILING: Record<string, number> = {
   voice: 1.1,
   // Two octaves of keys on top of a three-octave switch, and a 0/1 gate.
   keys: 5.1,
+  // The mix is rounded off by a tanh, and each pad out is the average of its
+  // two returns at a level of at most one.
+  kit: 1,
   // Depth stops at 1, and the unipolar tap is half that plus a half -- with
   // the same allowance the oscillator gets for what the band limiting
   // overshoots at a corner. The LFO never needed it while its Rate was a knob
@@ -442,6 +445,12 @@ console.log('\nstability under extremes')
  * parameter index that has drifted out of step with `defs.ts`.
  */
 const DISPLAY_ONLY = new Set(['scope.timebase', 'scope.gain', 'scope.mode'])
+/**
+ * The Drum Kit's choke groups act on the moment a pad is struck, and a
+ * steady signal into every jack strikes each pad once, together -- so a
+ * group can cut nothing off here. `check-song` strikes them in turn.
+ */
+const STRUCK_ONLY = /^kit\.choke\d+$/
 
 console.log('\nevery parameter reaches the DSP')
 {
@@ -453,7 +462,7 @@ console.log('\nevery parameter reaches the DSP')
     const frames = LONG_RUN[type] ?? FRAMES
 
     for (const spec of def.params) {
-      if (DISPLAY_ONLY.has(`${type}.${spec.id}`)) continue
+      if (DISPLAY_ONLY.has(`${type}.${spec.id}`) || STRUCK_ONLY.test(`${type}.${spec.id}`)) continue
 
       let moved = false
 

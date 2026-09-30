@@ -1,7 +1,8 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { defaultPatch } from '../patch/defaultPatch'
 import { initialValues, reconcileValues } from '../patch/edit'
 import { commit, initHistory, jumpTo, redo, undo, type History } from '../patch/history'
+import { kitSlots, padPrefix, padView, withPadView } from '../patch/kit'
 import { loadLocalProject } from '../patch/storage'
 import type { Patch } from '../patch/types'
 import { setPatternNotes } from '../song/edit'
@@ -44,6 +45,17 @@ export function fillRacks(song: Song, racks: Record<string, Rack>): Record<strin
   return out
 }
 
+/**
+ * A Drum Kit's pad open on the bench: the rack inside it shown and edited as
+ * though it were a track's own, while the track goes on playing the whole
+ * kit around it.
+ */
+export interface OpenPad {
+  track: string
+  kit: string
+  slot: number
+}
+
 /** Restore the last session, or start from the stock rack. */
 export function loadInitialDoc(): Doc {
   const loaded = loadLocalProject()
@@ -76,7 +88,31 @@ export function useDocument(initialDoc: Doc) {
   const trackId = song.tracks.some((t) => t.id === selected)
     ? selected
     : (song.tracks[0]?.id ?? BENCH_TRACK)
-  const { patch, values } = racks[trackId] ?? initialDoc.racks[BENCH_TRACK]
+  const trackRack = racks[trackId] ?? initialDoc.racks[BENCH_TRACK]
+
+  /**
+   * The pad open on the bench, if any. A view, like the track: opening one
+   * is not an edit. It belongs to the track it was opened on, so switching
+   * tracks goes back to the top of a rack; and it is checked against the
+   * rack, since an undo can empty the pad or take the kit away.
+   */
+  const [openPad, setOpenPad] = useState<OpenPad | null>(null)
+  const pad = openPad && openPad.track === trackId ? openPad : null
+  const opened = useMemo(() => (pad ? padView(trackRack, pad.kit, pad.slot) : null), [trackRack, pad])
+  const bench = pad && opened ? pad : null
+  const { patch, values } = opened ?? trackRack
+  /**
+   * What the bench is showing a pad of: the kit and the pad, named, for the
+   * breadcrumb over the rack. Null on a track's own rack.
+   */
+  const padInfo = useMemo(() => {
+    if (!bench) return null
+    const kit = trackRack.patch.modules.find((m) => m.id === bench.kit)
+    const slot = kit ? kitSlots(kit)[bench.slot] : null
+    return slot ? { kit: bench.kit, slot: bench.slot, name: slot.name, note: slot.note } : null
+  }, [bench, trackRack])
+  /** Where the bench's own ids are in the running track: nothing, or a pad's `kit1/3/`. */
+  const enginePrefix = bench ? padPrefix(bench.kit, bench.slot) : ''
   /** A patch is named on its track: the one name is both. */
   const patchName = song.tracks.find((t) => t.id === trackId)?.name ?? 'Untitled'
 
@@ -127,18 +163,30 @@ export function useDocument(initialDoc: Doc) {
     coalesceKey.current = null
   }, [])
 
-  /** Change the rack on the bench, whichever track that is. */
+  /**
+   * Change the rack on the bench, whichever track that is -- or the pad open
+   * on it, which is handed over as a rack of its own and put back into its
+   * kit afterwards, knobs and all. Every editing feature of the rack goes
+   * through here, which is why they all work inside a pad.
+   */
   const editRack = useCallback(
     (fn: (rack: Rack) => Rack, key?: string) => {
       commitDoc((doc) => {
         const current = doc.racks[trackId]
         if (!current) return doc
+        if (bench) {
+          const view = padView(current, bench.kit, bench.slot)
+          if (!view) return doc
+          const next = fn(view)
+          if (next === view) return doc
+          return { ...doc, racks: { ...doc.racks, [trackId]: withPadView(current, bench.kit, bench.slot, next) } }
+        }
         const next = fn(current)
         if (next === current) return doc
         return { ...doc, racks: { ...doc.racks, [trackId]: next } }
       }, key)
     },
-    [commitDoc, trackId],
+    [commitDoc, trackId, bench],
   )
 
   const editPatch = useCallback(
@@ -169,10 +217,11 @@ export function useDocument(initialDoc: Doc) {
       // not fold into one step of undo.
       editRack(
         (rack) => ({ ...rack, values: { ...rack.values, [key]: value } }),
-        `param:${trackId}.${key}`,
+        // And by pad, so the same knob on two pads is two steps.
+        `param:${trackId}.${enginePrefix}${key}`,
       )
     },
-    [editRack, trackId],
+    [editRack, trackId, enginePrefix],
   )
 
   /**
@@ -191,10 +240,10 @@ export function useDocument(initialDoc: Doc) {
           for (const id of ids) values[`${moduleId}.${id}`] = changes[id]
           return { ...rack, values }
         },
-        `params:${trackId}.${moduleId}.${ids.join(',')}`,
+        `params:${trackId}.${enginePrefix}${moduleId}.${ids.join(',')}`,
       )
     },
-    [editRack, trackId],
+    [editRack, trackId, enginePrefix],
   )
 
   const setNotes = useCallback(
@@ -226,8 +275,12 @@ export function useDocument(initialDoc: Doc) {
     racks,
     trackId,
     setSelected,
+    trackRack,
     patch,
     values,
+    padInfo,
+    enginePrefix,
+    setOpenPad,
     patchName,
     activePattern,
     setPatternId,

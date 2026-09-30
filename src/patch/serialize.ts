@@ -3,7 +3,8 @@ import type { Song } from '../song/types'
 import { MODULE_DEFS, defOf } from './defs'
 import { cableId, cableInto, connect, portKind } from './edit'
 import { clampValue } from './param'
-import type { Cable, Patch, PatchModule } from './types'
+import { clampNote, KIT_SLOTS, kitSlots, padPatch, padPrefix } from './kit'
+import type { Cable, KitSlot, Patch, PatchModule } from './types'
 
 export const PATCH_FORMAT = 1
 
@@ -78,6 +79,18 @@ export function toStored(name: string, patch: Patch, values: Record<string, numb
     // what it names is either in this browser's store or arrives in a bundle.
     if (m.sample) out.sample = { id: m.sample.id, name: m.sample.name }
     if (m.bypass) out.bypass = true
+    // A Drum Kit's pads, each a rack written the way a patch is.
+    if (m.type === 'kit' && m.slots?.some(Boolean)) {
+      // Each pad's knobs baked into it the same way, from under its prefix.
+      out.slots = kitSlots(m).map((slot, i) => {
+        if (!slot) return null
+        const prefix = padPrefix(m.id, i)
+        const own: Record<string, number> = {}
+        for (const [key, value] of Object.entries(values)) if (key.startsWith(prefix)) own[key.slice(prefix.length)] = value
+        return { name: slot.name, note: slot.note, patch: toStored(slot.name, slot.patch, own).patch }
+      })
+      while (out.slots.length && !out.slots[out.slots.length - 1]) out.slots.pop()
+    }
     return out
   })
 
@@ -172,6 +185,10 @@ export function fromStored(input: unknown): LoadResult | { error: string } {
     // Only where the module can be bypassed at all: a flag on anything else
     // would be a switch the panel has no way to turn back off.
     if (m.bypass === true && defOf(type).bypass) built.bypass = true
+    if (type === 'kit' && Array.isArray(m.slots)) {
+      const slots = readSlots(m.slots, id, warnings)
+      if (slots.some(Boolean)) built.slots = slots
+    }
     modules.push(built)
   }
 
@@ -235,6 +252,35 @@ export function fromStored(input: unknown): LoadResult | { error: string } {
     const now = ids?.[ref.port]
     return now ? { module: ref.module, port: now } : ref
   }
+}
+
+/**
+ * A Drum Kit's pads, read as defensively as the patch around them: each
+ * pad's rack through this same reader, a note held to MIDI's range, and
+ * anything that is not a pad left empty.
+ */
+function readSlots(raw: unknown[], kitId: string, warnings: string[]): (KitSlot | null)[] {
+  const slots: (KitSlot | null)[] = []
+  for (let i = 0; i < KIT_SLOTS; i++) {
+    const entry = raw[i]
+    if (typeof entry !== 'object' || entry === null) {
+      slots.push(null)
+      continue
+    }
+    const e = entry as Record<string, unknown>
+    const name = typeof e.name === 'string' && e.name.trim() ? e.name.trim() : `Pad ${i + 1}`
+    const read = fromStored({ version: PATCH_FORMAT, name, patch: e.patch })
+    if ('error' in read) {
+      warnings.push(`${kitId} pad ${i + 1}: ${read.error}`)
+      slots.push(null)
+      continue
+    }
+    for (const w of read.warnings) warnings.push(`${kitId} pad ${i + 1}: ${w}`)
+    const note = typeof e.note === 'number' ? clampNote(e.note) : 36 + i
+    slots.push({ name, note, patch: padPatch(read.patch) })
+  }
+  while (slots.length && !slots[slots.length - 1]) slots.pop()
+  return slots
 }
 
 /**

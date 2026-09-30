@@ -37,6 +37,16 @@ export interface RackActions {
   setParams: (id: string, changes: Record<string, number>) => void
   /** What a Sampler plays, or nothing. */
   sample: (id: string, file: File | null) => void
+  /** A Drum Kit's pad loaded from the library by instrument id, or emptied. */
+  kitLoad: (id: string, slot: number, instrument: string | null) => void
+  /** A pad renamed, or moved to another note. */
+  kitPad: (id: string, slot: number, change: { name?: string; note?: number }) => void
+  /** Every pad of a kit loaded with the standard kit. */
+  kitStandard: (id: string) => void
+  /** A pad sounded while it is held. */
+  kitAudition: (id: string, slot: number, on: boolean) => void
+  /** A pad's rack opened on the bench, to be edited while the kit plays. */
+  kitEdit: (id: string, slot: number) => void
   register: (key: string, el: HTMLElement | null) => void
   jackDown: (ref: PortRef, kind: JackKind, e: React.PointerEvent) => void
   /** Patching from the keyboard; see `Jack`. */
@@ -134,6 +144,20 @@ export const RackUnit = memo(function RackUnit({
     [actions, moduleId],
   )
   const onSample = useCallback((file: File | null) => actions.sample(moduleId, file), [actions, moduleId])
+  const kit = useMemo(
+    () =>
+      def.type === 'kit'
+        ? {
+            slots: module.slots,
+            onLoad: (slot: number, instrument: string | null) => actions.kitLoad(moduleId, slot, instrument),
+            onPad: (slot: number, change: { name?: string; note?: number }) => actions.kitPad(moduleId, slot, change),
+            onStandard: () => actions.kitStandard(moduleId),
+            onAudition: (slot: number, on: boolean) => actions.kitAudition(moduleId, slot, on),
+            onEdit: (slot: number) => actions.kitEdit(moduleId, slot),
+          }
+        : undefined,
+    [def, module.slots, actions, moduleId],
+  )
   const onBypass = useMemo(
     () => (def.bypass ? () => actions.bypass(moduleId) : undefined),
     [def, actions, moduleId],
@@ -206,6 +230,7 @@ export const RackUnit = memo(function RackUnit({
             sample={module.sample}
             onSample={onSample}
             tuning={tuning}
+            kit={kit}
           />
         </FaceShown.Provider>
       </div>

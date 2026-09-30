@@ -30,6 +30,8 @@
     "check:roll": "node scripts/check-roll.mjs",
     "check:sampler": "node scripts/check-sampler.mjs",
     "check:scope": "node scripts/check-scope.mjs",
+    "check:timing": "node scripts/check-timing.mjs",
+    "check:kit": "node scripts/check-kit.mjs",
     "check:tools": "node scripts/check-tools.mjs"
   },
   "dependencies": {

@@ -1,6 +1,7 @@
 import { clipEnd, clipOffset } from './clip'
 import { heardTracks } from './folder'
-import { PPQ, SWING_MIN, type Note, type Pattern, type Placement, type Song, type Swing } from './types'
+import { framesPerTick, tempoMap } from './timeline'
+import { SWING_MIN, type Note, type Pattern, type Placement, type Song, type Swing } from './types'
 
 /**
  * Turning an arrangement into a list of things to do at exact samples.
@@ -46,18 +47,7 @@ export interface SongEventAt {
   velocity: number
 }
 
-/** How many samples a tick lasts at this tempo. Fractional, on purpose. */
-export function framesPerTick(tempo: number, sampleRate: number): number {
-  return (60 / tempo) * (sampleRate / PPQ)
-}
-
-export function frameAtTick(tick: number, tempo: number, sampleRate: number): number {
-  return Math.round(tick * framesPerTick(tempo, sampleRate))
-}
-
-export function tickAtFrame(frame: number, tempo: number, sampleRate: number): number {
-  return frame / framesPerTick(tempo, sampleRate)
-}
+export { framesPerTick }
 
 /** One tick past the last thing in the playlist, which is where a song ends. */
 export function songEnd(song: Song): number {
@@ -98,9 +88,9 @@ export function songEvents(
   fromTick: number,
   toTick: number,
 ): SongEvent[] {
-  const fpt = framesPerTick(song.tempo, sampleRate)
+  const time = tempoMap(song, sampleRate)
   return songEventTicks(song, fromTick, toTick).map((e) => ({
-    frame: Math.round(e.tick * fpt),
+    frame: Math.round(time.frameAt(e.tick)),
     track: e.track,
     kind: e.kind,
     pitch: e.pitch,

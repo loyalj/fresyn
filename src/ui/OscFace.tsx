@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import type { Waveform } from '../dsp/PolyBlepOsc'
 import { formatNote } from '../patch/param'
 import type { ModuleDef } from '../patch/types'
-import { useEngine } from './EngineContext'
+import { useEngine, useEngineId } from './EngineContext'
 import { EnvelopeGraph } from './EnvelopeGraph'
 import { FALL, fillBar, scale } from './meter'
 import { useFace } from './useFace'
@@ -105,16 +105,18 @@ export function OscFace({ def, moduleId, valueOf, onChange, faceExtra }: Props) 
  */
 function OscMeter({ moduleId }: { moduleId: string }) {
   const engine = useEngine()
+  /** How the engine reports this module: by its id in the track, a pad's included. */
+  const engineId = useEngineId(moduleId)
   const bar = useRef<HTMLDivElement | null>(null)
   const feed = useFallingMeter(FALL, (_: 0, v) => fillBar(bar.current, v))
 
   useEffect(() => {
     if (!engine) return
     return engine.onLevels((levels) => {
-      const next = levels[moduleId]
+      const next = levels[engineId]
       if (next) feed(0, scale(next[0]))
     })
-  }, [engine, moduleId, feed])
+  }, [engine, engineId, feed])
 
   return (
     <div className="osc-meter level-meter" aria-hidden="true">

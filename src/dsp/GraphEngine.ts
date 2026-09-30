@@ -1,4 +1,4 @@
-import type { CompiledPatch } from '../patch/compile'
+import type { CompiledPad, CompiledPatch } from '../patch/compile'
 import { MODULE_FACTORIES, type DspModule } from './modules'
 import type { Capturing, Metering, Playable } from './modules/types'
 import { DEFAULT_SEED } from './Rng'
@@ -149,6 +149,26 @@ export class GraphEngine {
   /** Orders presses and releases, for choosing which voice to take. */
   private stamp = 0
   private readonly silentFrames: number
+  // --- pads -----------------------------------------------------------
+  //
+  // A Drum Kit's pads are sixteen racks laid into the patch, and a beat
+  // plays two or three of them at a time. Running the rest every sample
+  // would cost most of a core for silence, so a pad sleeps -- its modules
+  // skipped -- from the moment it has been let go of and gone quiet, the
+  // same rule a voice finishes by, until a note or a gate wakes it.
+
+  private pads: CompiledPad[] = []
+  /** Per module, in execution order: its pad plus one, or 0 for none. */
+  private padOf = new Int16Array(0)
+  private padAwake = new Uint8Array(0)
+  /** A note is holding it, from its press to its release. */
+  private padHeld = new Uint8Array(0)
+  /** A hand is holding it: its Trigger's own gate, open from the panel or a render. */
+  private padGate = new Uint8Array(0)
+  private padSilent = new Int32Array(0)
+  /** The pad each waking module belongs to, by id. */
+  private padByModule = new Map<string, number>()
+
   /** What a track's notes are handed to when the rack has voices. */
   private readonly voicePlayable: Playable = {
     noteOn: (pitch, velocity) => this.voiceOn(pitch, velocity, false),
@@ -237,8 +257,16 @@ export class GraphEngine {
     this.meters = []
     this.playables.clear()
     const next = new Map<string, DspModule>()
+    // Each module's pad, by its place in the compiled list: carried over to
+    // its place in ours as it is pushed, in case anything is skipped.
+    const padOfCompiled = new Int16Array(compiled.modules.length)
+    compiled.pads?.forEach((pad, k) => {
+      for (const i of pad.modules) padOfCompiled[i] = k + 1
+    })
+    const padOf: number[] = []
 
-    for (const m of compiled.modules) {
+    for (let index = 0; index < compiled.modules.length; index++) {
+      const m = compiled.modules[index]
       const factory = MODULE_FACTORIES[m.type]
       if (!factory) continue // the compiler already warned; stay silent at audio rate
 
@@ -266,6 +294,7 @@ export class GraphEngine {
       }
 
       this.modules.push(mod)
+      padOf.push(padOfCompiled[index])
       next.set(m.id, mod)
       if (mod.hasTrigger) this.triggerable.push(mod)
       if (mod.isPlayed) this.played.push(mod)
@@ -281,7 +310,72 @@ export class GraphEngine {
     // what should not happen.
 
     this.byId = next
+    this.applyPads(compiled.pads ?? [], padOf)
     this.applyVoices(compiled)
+  }
+
+  /**
+   * Every pad starts awake after an edit: one that was sounding carries on,
+   * and one that was not falls asleep again a moment later.
+   */
+  private applyPads(pads: CompiledPad[], padOf: number[]) {
+    this.pads = pads
+    this.padOf = Int16Array.from(padOf)
+    this.padAwake = new Uint8Array(pads.length).fill(1)
+    this.padHeld = new Uint8Array(pads.length)
+    this.padGate = new Uint8Array(pads.length)
+    this.padSilent = new Int32Array(pads.length)
+    this.padByModule.clear()
+    pads.forEach((pad, k) => {
+      for (const id of pad.wake) this.padByModule.set(id, k)
+    })
+  }
+
+  private wakePad(k: number) {
+    this.padAwake[k] = 1
+    this.padSilent[k] = 0
+  }
+
+  /**
+   * Once a block: a pad whose Trigger a hand is holding -- the panel, or a
+   * render holding every played gate -- is awake and stays so.
+   */
+  private holdPads() {
+    for (let k = 0; k < this.pads.length; k++) {
+      let open = 0
+      for (const id of this.pads[k].wake) if (this.byId.get(id)?.gateOpen) open = 1
+      this.padGate[k] = open
+      if (open) this.wakePad(k)
+    }
+  }
+
+  /**
+   * Once a sample: wake a pad a gate has arrived at, and put to sleep one
+   * that has been let go of and silent for long enough -- its returns zeroed
+   * on the way, so the kit does not go on hearing the last thing it said.
+   */
+  private settlePads() {
+    const slots = this.slots
+    for (let k = 0; k < this.pads.length; k++) {
+      const pad = this.pads[k]
+      const gated = pad.trig !== 0 && slots[pad.trig] > 0.5
+      if (!this.padAwake[k]) {
+        if (gated) this.wakePad(k)
+        continue
+      }
+      if (gated || this.padHeld[k] || this.padGate[k]) {
+        this.padSilent[k] = 0
+        continue
+      }
+      const l = slots[pad.retL]
+      const r = slots[pad.retR]
+      if (l > SILENCE || l < -SILENCE || r > SILENCE || r < -SILENCE) this.padSilent[k] = 0
+      else if (++this.padSilent[k] >= this.silentFrames) {
+        this.padAwake[k] = 0
+        if (pad.retL) slots[pad.retL] = 0
+        if (pad.retR) slots[pad.retR] = 0
+      }
+    }
   }
 
   /**
@@ -425,6 +519,7 @@ export class GraphEngine {
    */
   allNotesOff() {
     for (const p of this.playables.values()) p.noteOff()
+    this.padHeld.fill(0)
   }
 
   // --- voices ----------------------------------------------------------
@@ -770,15 +865,24 @@ export class GraphEngine {
 
   private fire(event: EngineEvent) {
     switch (event.kind) {
-      case 'noteOn':
+      case 'noteOn': {
         // A module that has since been deleted is a silent no-op rather than
         // an error: a patch can be edited while the song is playing, and the
         // events already queued against it are simply past.
         this.playables.get(event.module)?.noteOn(event.pitch, event.velocity)
+        const pad = this.padByModule.get(event.module)
+        if (pad !== undefined) {
+          this.wakePad(pad)
+          this.padHeld[pad] = 1
+        }
         break
-      case 'noteOff':
+      }
+      case 'noteOff': {
         this.playables.get(event.module)?.noteOff(event.pitch)
+        const pad = this.padByModule.get(event.module)
+        if (pad !== undefined) this.padHeld[pad] = 0
         break
+      }
       case 'gate':
         this.setModuleGate(event.module, event.open)
         break
@@ -802,6 +906,7 @@ export class GraphEngine {
     let at = 0
     // Once a block: the knob is read here rather than per sample.
     if (this.hasPoly) this.syncVoices()
+    if (this.pads.length) this.holdPads()
 
     while (at < total) {
       // Everything due, applied before a single sample of the span is
@@ -830,19 +935,29 @@ export class GraphEngine {
     const end = from + count
 
     const poly = this.hasPoly ? this.polyFlag : null
+    const padOf = this.pads.length ? this.padOf : null
+    const awake = this.padAwake
 
     for (let i = from; i < end; i++) {
       // Slots deliberately keep their values between samples: that residue is
       // exactly the one-sample delay a feedback cable reads.
       if (poly) {
         for (let m = 0; m < moduleCount; m++) {
+          if (padOf && padOf[m] && !awake[padOf[m] - 1]) continue
           if (poly[m]) this.runPoly(m)
           else modules[m].process(slots)
         }
         this.settleVoices()
+      } else if (padOf) {
+        for (let m = 0; m < moduleCount; m++) {
+          const pad = padOf[m]
+          if (pad && !awake[pad - 1]) continue
+          modules[m].process(slots)
+        }
       } else {
         for (let m = 0; m < moduleCount; m++) modules[m].process(slots)
       }
+      if (padOf) this.settlePads()
 
       // Every main mix lands in the speaker pair. Summed here rather than by
       // a module, because which buses are main mixes is a property of the

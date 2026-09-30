@@ -1,4 +1,5 @@
-import { framesPerTick, songEnd, songEventTicks, type SongEvent } from './schedule'
+import { songEnd, songEventTicks, type SongEvent } from './schedule'
+import { tempoMap, type TempoMap } from './timeline'
 import type { Song } from './types'
 
 /**
@@ -68,8 +69,8 @@ export function fill(
 ): Fill {
   const events: SongEvent[] = []
   const seams: Seam[] = []
-  const fpt = framesPerTick(song.tempo, sampleRate)
-  if (!(fpt > 0)) return { events, cursor, seams, ended: true }
+  const time = tempoMap(song, sampleRate)
+  if (!(time.rateAt(cursor.tick) > 0)) return { events, cursor, seams, ended: true }
   // A loop with no length would be an infinite number of passes over nothing.
   if (loop && !(loop.to > loop.from)) return { events, cursor, seams, ended: false }
 
@@ -105,9 +106,9 @@ export function fill(
 
     // Exactly as far as the lookahead reaches, unless the end of the loop
     // arrives first. Fractional ticks are fine here: nothing is rounded until
-    // an event is given its frame.
-    const reach = (untilFrame - frame) / fpt
-    const windowEnd = Math.min(tick + reach, end)
+    // an event is given its frame. Through the tempo map, so a window
+    // reaching across a change of tempo reaches the right tick.
+    const windowEnd = Math.min(time.advance(tick, untilFrame - frame), end)
 
     // The window is half-open, so a note-off landing exactly on the end would
     // belong to the next window -- and there is no next window: the song
@@ -128,7 +129,7 @@ export function fill(
       // Measured from the cursor rather than from the start of the song, so
       // that a loop's tenth pass is stamped where it is actually playing.
       events.push({
-        frame: Math.round(frame + (e.tick - tick) * fpt),
+        frame: Math.round(frame + time.span(tick, e.tick)),
         track: e.track,
         kind: e.kind,
         pitch: e.pitch,
@@ -136,7 +137,7 @@ export function fill(
       })
     }
 
-    frame += (windowEnd - tick) * fpt
+    frame += time.span(tick, windowEnd)
     tick = windowEnd
   }
 
@@ -149,32 +150,39 @@ export function fill(
  * Worked out from the tempo rather than tracked alongside the cursor, because
  * the cursor is several hundred milliseconds ahead of what anybody is hearing
  * and drawing the playhead there would put it visibly in front of the sound.
+ *
+ * Counted in frames and turned into a tick only at the end, since with the
+ * tempo changing a pass round the loop is a number of frames, not a number of
+ * ticks that can be divided out.
  */
 export function playheadTick(
   frame: number,
   startFrame: number,
   startTick: number,
-  tempo: number,
-  sampleRate: number,
+  time: TempoMap,
   loop: Loop | null,
 ): number {
-  const fpt = framesPerTick(tempo, sampleRate)
-  if (!(fpt > 0)) return startTick
-  const elapsed = (frame - startFrame) / fpt
-  if (!loop || !(loop.to > loop.from)) return startTick + elapsed
+  if (!(time.rateAt(startTick) > 0)) return startTick
+  const elapsed = frame - startFrame
+  if (!loop || !(loop.to > loop.from)) return time.advance(startTick, elapsed)
 
   // Only wrapped once it is actually past the end of the loop, which is what
   // `fill` does with the audio. A start before the loop plays straight up to
   // it first, and drawing that folded into the loop would put the playhead a
   // bar or two away from what is sounding. A start at or past the end is
   // wrapped straight to the top, again as `fill` does.
-  const length = loop.to - loop.from
+  const pass = time.span(loop.from, loop.to)
   const start = startTick >= loop.to ? loop.from : startTick
-  const at = start + elapsed
-  if (at < loop.to && (at >= loop.from || start < loop.from)) return at
+  if (start < loop.from) {
+    const lead = time.span(start, loop.to)
+    if (elapsed < lead) return time.advance(start, elapsed)
+    return time.advance(loop.from, mod(elapsed - lead, pass))
+  }
   // A true modulo: the playhead can be asked about a frame slightly before
   // the one playback started on, and a negative remainder would draw it past
   // the end of the loop rather than just inside it.
-  const into = at - loop.from
-  return loop.from + (((into % length) + length) % length)
+  const into = time.span(loop.from, start) + elapsed
+  return into >= 0 && into < pass ? time.advance(start, elapsed) : time.advance(loop.from, mod(into, pass))
 }
+
+const mod = (n: number, m: number) => ((n % m) + m) % m

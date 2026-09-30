@@ -16,13 +16,15 @@ import {
   updatePattern,
   soloTrack,
 } from '../song/edit'
+import { barsIn, patternBars } from '../song/timeline'
 import {
-  barTicks,
-  beatTicks,
   PPQ,
   SWING_MAX,
   SWING_MIN,
   SWING_STEPS,
+  TEMPO_MAX,
+  TEMPO_MIN,
+  validMeter,
   type Note,
   type Song,
   type Track,
@@ -54,7 +56,7 @@ const loadDockParts = () =>
     ([roll, list]) => (dockParts = { PianoRoll: roll.PianoRoll, Playlist: list.Playlist }),
   ))
 
-/** Pattern lengths offered, in bars of four. */
+/** Pattern lengths offered, in bars of whatever meter the pattern sits in. */
 const BARS = [1, 2, 4, 8]
 /**
  * What a note snaps to, as a fraction of a bar. The triplets are three in the
@@ -71,8 +73,8 @@ const GRIDS = [
   { label: '1/16 T', ticks: PPQ / 6 },
   { label: 'Off', ticks: 0 },
 ]
-/** The time signatures offered: the common ones, simple and compound. */
-const METERS = ['2/4', '3/4', '4/4', '5/4', '6/8', '7/8', '9/8', '12/8']
+/** The time signatures offered: the common ones, simple and compound. Any other is typed on the Time lane. */
+const METERS = ['2/2', '3/2', '2/4', '3/4', '4/4', '5/4', '6/4', '6/8', '7/8', '9/8', '12/8', '5/16', '7/16']
 
 /** What the grid is drawn at when snapping is off. */
 const OFF_GRID = PPQ / 4
@@ -209,9 +211,16 @@ export const SongDock = memo(function SongDock({
   const [dragFrom, setDragFrom] = useState<{ y: number; height: number } | null>(null)
 
   const pattern = song.patterns.find((p) => p.id === patternId)
-  const bar = barTicks(song)
-  const bars = Math.max(1, Math.round((pattern?.length ?? bar) / bar))
   const target = targets.get(trackId)
+  // A Drum Kit's rows are its pads, named for what is in them. Two pads on
+  // one note are both named: a note there plays both.
+  const rowNames = useMemo(
+    () =>
+      target?.kind === 'kit' && target.pads
+        ? new Map([...target.pads].map(([row, hits]) => [row, hits.map((h) => h.name).join(' + ')]))
+        : undefined,
+    [target],
+  )
 
   // Only the run state reaches React. The playhead moves thirty times a
   // second and is drawn straight to the canvas; putting it through state here
@@ -229,6 +238,9 @@ export const SongDock = memo(function SongDock({
   // draw behind it.
   const placedAt = firstPlacement(song, patternId)
   const inContext = view === 'roll' && rollPlays === 'song'
+  // Its bars are the song's where it first sits: see `patternBars`.
+  const rollBars = patternBars(song, placedAt)
+  const bars = Math.max(1, barsIn(rollBars, pattern?.length ?? rollBars.bar(0).length))
 
   const show = (next: 'roll' | 'song' | 'mix') => {
     onView(next)
@@ -265,7 +277,7 @@ export const SongDock = memo(function SongDock({
       // ignores anything outside the pattern, so shortening is a thing you
       // can take back -- and losing half a part to a mis-click on a dropdown
       // is not a trade anybody would make knowingly.
-      onEdit((s) => setPatternLength(s, patternId, next * barTicks(s)))
+      onEdit((s) => setPatternLength(s, patternId, patternBars(s, firstPlacement(s, patternId)).bar(next).tick))
     },
     [onEdit, patternId],
   )
@@ -372,30 +384,47 @@ export const SongDock = memo(function SongDock({
             Loop
           </button>
 
+          {/* The tempo and meter the song starts in. Changes along the way
+              are on the Song view's Tempo and Time lanes, and the fields
+              say so when there are any. */}
           <TempoField
             tempo={song.tempo}
+            changes={song.tempos?.length ?? 0}
             onTempo={(tempo) => onEdit((s) => (s.tempo === tempo ? s : { ...s, tempo }), 'tempo')}
           />
 
           {/* Beside the tempo, as it is written on a score. Changing it keeps
-              every pattern and placement the same number of bars. */}
-          <label className="dock-field" title="Time signature: beats to a bar, and what a beat is">
+              every pattern and placement the same number of bars -- in a song
+              with no changes of meter, where there is only one length of bar
+              to keep them in. */}
+          <label
+            className="dock-field"
+            title={
+              song.meters?.length
+                ? 'Time signature at the start. This song changes meter along the way: see the Time lane in the Song view. Changing this moves only the barlines up to the first change'
+                : 'Time signature: beats to a bar, and what a beat is'
+            }
+          >
             <span>Time</span>
             <select
-              value={`${song.meter?.beats ?? 4}/${song.meter?.unit ?? 4}`}
+              value={meterName(song.meter)}
               onChange={(e) => {
                 const [beats, unit] = e.target.value.split('/').map(Number)
                 // Only one of the meters offered; anything else is not a change.
                 if (!METERS.includes(e.target.value) || !(beats > 0)) return
-                onEdit((s) => setMeter(s, { beats, unit: unit === 8 ? 8 : 4 }))
+                const m = validMeter(beats, unit)
+                if (m) onEdit((s) => setMeter(s, m))
               }}
             >
-              {METERS.map((m) => (
+              {/* One from a file or the Time lane that is not on the list is
+                  still shown for what it is. */}
+              {(METERS.includes(meterName(song.meter)) ? METERS : [meterName(song.meter), ...METERS]).map((m) => (
                 <option key={m} value={m}>
                   {m}
                 </option>
               ))}
             </select>
+            {song.meters?.length ? <span className="dock-more" aria-hidden="true">+{song.meters.length}</span> : null}
           </label>
         </div>
 
@@ -485,7 +514,7 @@ export const SongDock = memo(function SongDock({
             <label className="dock-field">
               <span>Bars</span>
               <select value={bars} onChange={(e) => setBars(Number(e.target.value))}>
-                {BARS.map((b) => (
+                {(BARS.includes(bars) ? BARS : [...BARS, bars].sort((a, b) => a - b)).map((b) => (
                   <option key={b} value={b}>
                     {b}
                   </option>
@@ -531,6 +560,11 @@ export const SongDock = memo(function SongDock({
         )}
         {view === 'roll' && target?.kind === 'trigger' && (
           <span className="dock-hint">No Keyboard: every note fires the Trigger</span>
+        )}
+        {view === 'roll' && target?.kind === 'kit' && (
+          <span className="dock-hint">
+            {target.pads?.size ? 'Drum Kit: each named row plays a pad' : 'Drum Kit: load a pad to play it'}
+          </span>
         )}
 
         <button
@@ -584,8 +618,8 @@ export const SongDock = memo(function SongDock({
               track={trackId}
               lengthTicks={pattern.length}
               grid={grid || OFF_GRID}
-              bar={bar}
-              beat={beatTicks(song)}
+              bars={rollBars}
+              rowNames={rowNames}
               snapOff={grid === 0}
               scale={song.scale}
               tuning={tuning}
@@ -640,8 +674,8 @@ export const SongDock = memo(function SongDock({
 
 const clamp = (n: number, lo: number, hi: number) => (n < lo ? lo : n > hi ? hi : n)
 
-const TEMPO_MIN = 20
-const TEMPO_MAX = 300
+/** A time signature as it is written, and as the menu lists it. */
+const meterName = (m: Song['meter']) => `${m?.beats ?? 4}/${m?.unit ?? 4}`
 
 /**
  * The tempo, typed.
@@ -657,7 +691,16 @@ const TEMPO_MAX = 300
  * is never a half-typed number. They go out under one undo key, so a run of
  * them is one step back.
  */
-function TempoField({ tempo, onTempo }: { tempo: number; onTempo: (tempo: number) => void }) {
+function TempoField({
+  tempo,
+  changes,
+  onTempo,
+}: {
+  tempo: number
+  /** How many times the tempo changes after the start, to say so beside it. */
+  changes: number
+  onTempo: (tempo: number) => void
+}) {
   const shown = String(Math.round(tempo))
   /** The text being typed, or null while the field just shows the tempo. */
   const [draft, setDraft] = useState<string | null>(null)
@@ -673,7 +716,14 @@ function TempoField({ tempo, onTempo }: { tempo: number; onTempo: (tempo: number
   }
 
   return (
-    <label className="dock-field">
+    <label
+      className="dock-field"
+      title={
+        changes
+          ? `Tempo at the start. It changes ${changes === 1 ? 'once' : `${changes} times`} along the way: see the Tempo lane in the Song view`
+          : 'Tempo, beats per minute'
+      }
+    >
       <span>Tempo</span>
       <input
         type="number"
@@ -711,6 +761,7 @@ function TempoField({ tempo, onTempo }: { tempo: number; onTempo: (tempo: number
           if (draft !== null) commit(e.currentTarget.value)
         }}
       />
+      {changes ? <span className="dock-more" aria-hidden="true">+{changes}</span> : null}
     </label>
   )
 }

@@ -476,6 +476,196 @@ body {
 /* Strips stretch to the tallest, so every meter is the same bar read against
    the same scale. The main bus has one knob where a channel has two, and a
    short meter next to tall ones would read as a quieter bus. */
+/* --- drum kit ------------------------------------------------------------ */
+
+/* Sixteen pads on the left, the one picked laid out on the right. */
+.kit {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.kit-pads {
+  display: grid;
+  grid-template-columns: repeat(4, 84px);
+  gap: 4px;
+}
+.kit-pad {
+  height: 46px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: stretch;
+  padding: 3px 6px;
+  font: inherit;
+  text-align: left;
+  color: var(--ink-dim);
+  background: var(--control);
+  border: 1px solid var(--panel-edge);
+  border-radius: 3px;
+  cursor: pointer;
+  touch-action: none;
+}
+.kit-pad:hover { color: var(--ink); }
+.kit-pad:active { background: rgb(var(--accent-rgb) / 0.3); }
+.kit-pad.picked { color: var(--ink); border-color: var(--accent-line); box-shadow: inset 0 0 0 1px var(--accent-line); }
+.kit-pad.empty { background: transparent; border-style: dashed; }
+/* In a choke group: a mark in the corner, so a pair of hats reads as a pair. */
+.kit-pad.choked .kit-pad-n::after { content: ' ⌁'; color: var(--accent-line); }
+.kit-pad-n { font-size: 8px; color: var(--ink-faint); }
+.kit-pad-name {
+  font-size: 10px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kit-pad-note { font-size: 8px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+
+.kit-edit {
+  flex: 1;
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.kit-edit-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.kit-edit-title {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.kit-edit-empty { font-size: 11px; color: var(--ink-faint); font-style: italic; }
+.kit-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.kit-name,
+.kit-load,
+.kit-field input,
+.kit-field select {
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: normal;
+  text-transform: none;
+  padding: 3px 5px;
+  color: var(--ink);
+  background: var(--field);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+}
+.kit-name { flex: 1; min-width: 100px; }
+.kit-field input { width: 46px; }
+.kit-note-name { letter-spacing: normal; text-transform: none; color: var(--ink-dim); white-space: nowrap; }
+.kit-clear,
+.kit-edit-pad,
+.kit-standard {
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  color: var(--ink-dim);
+  background: var(--control);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+  cursor: pointer;
+}
+.kit-clear:hover,
+.kit-edit-pad:hover,
+.kit-standard:hover { color: var(--ink); border-color: var(--accent-line); }
+.kit-standard { align-self: flex-start; }
+.kit-knobs { padding: 0; }
+/* The way into a pad's rack: the accent, since it goes somewhere. */
+.kit-edit-pad { color: var(--accent-line); border-color: var(--accent-line); }
+
+/* --- a pad open on the bench ------------------------------------------- */
+
+/* Over the rack while a pad is open: whose rack this is, and the way back.
+   Sticky under the head panel, so it is there however far down the pad's
+   rack you have scrolled. */
+.pad-crumb {
+  position: sticky;
+  top: 60px;
+  z-index: 4;
+  width: min(1008px, calc(100% - 32px));
+  box-sizing: border-box;
+  margin: 8px auto 10px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  padding: 7px 10px;
+  font-size: 11px;
+  color: var(--ink-dim);
+  background: var(--panel);
+  border: 1px solid var(--accent-line);
+  border-left-width: 4px;
+  border-radius: 3px;
+  box-shadow: 0 2px 10px var(--unit-shadow);
+}
+.pad-crumb code,
+.rack-index-pad code { font-size: 10px; color: var(--ink-faint); }
+.pad-crumb-link {
+  font: inherit;
+  padding: 0;
+  color: var(--ink-dim);
+  background: none;
+  border: none;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.pad-crumb-link:hover { color: var(--ink); }
+.pad-crumb-sep { color: var(--ink-faint); }
+.pad-crumb-pad { color: var(--ink); font-weight: 600; }
+.pad-crumb-note { color: var(--ink-faint); font-style: italic; }
+.pad-crumb-back,
+.rack-index-pad-back {
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  color: var(--accent-line);
+  background: var(--control);
+  border: 1px solid var(--accent-line);
+  border-radius: 2px;
+  cursor: pointer;
+}
+.pad-crumb-back { margin-left: auto; }
+.pad-crumb-back:hover,
+.rack-index-pad-back:hover { color: var(--ink); }
+
+/* The index card, while it lists a pad's units: marked as a sub-patch, and
+   saying whose. */
+.rack-index-card.in-pad { border-color: var(--accent-line); }
+.rack-index-pad {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 10px 8px;
+  font-size: 10px;
+  color: var(--ink-dim);
+  border-bottom: 1px solid var(--hairline);
+  background: rgb(var(--accent-rgb) / 0.08);
+}
+.rack-index-pad-tag {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent-line);
+}
+.rack-index-pad-name { font-size: 12px; font-weight: 600; color: var(--ink); }
+.rack-index-pad-back { align-self: flex-start; margin-top: 3px; }
+
 .mixer { display: flex; align-items: stretch; gap: 4px; }
 
 .strip {
@@ -2853,6 +3043,14 @@ body {
 
 .dock-field input { width: 46px; }
 
+/* How many changes follow the value in the field: see the Song view's lanes. */
+.dock-more {
+  font-size: 9px;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--accent-line);
+}
+
 .dock-hint {
   font-size: 10px;
   color: var(--ink-faint);
@@ -2905,6 +3103,9 @@ body {
 
 /* A button and its settings, sat together as one control. */
 .roll-split { display: inline-flex; }
+/* Zoom across: the playlist's own − and + beside a Fit. */
+.roll-zoom { display: inline-flex; align-items: center; gap: 3px; }
+.roll-zoom .roll-fit { height: 18px; padding: 0 6px; line-height: 16px; }
 .roll-split > .dock-toggle:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
 .roll-split-more {
   padding-left: 5px;
@@ -3373,10 +3574,11 @@ body {
   white-space: nowrap;
 }
 
-/* A bar's number sits on its line, where a clip snapped to it starts. */
+/* A bar's number sits on its line, where a clip snapped to it starts. Each
+   is as wide as its bar, which a change of meter changes. */
 .playlist-bar {
-  width: var(--bar-w);
   flex: none;
+  box-sizing: border-box;
   overflow: hidden;
   text-align: left;
   font-size: 9px;
@@ -3450,18 +3652,26 @@ button.playlist-label:hover { color: var(--ink); }
   color: var(--ink-faint);
   border-top: 1px solid var(--recess-edge);
 }
-/* The timeline proper. The lines are drawn by the background -- a lane's
-   edge, a bar, and fainter, a beat -- so a thousand bars cost no elements. */
+/* The timeline proper. The lines are drawn by backgrounds -- a lane's edge
+   here, and a bar and fainter a beat on each stretch of one meter under it
+   -- so a thousand bars cost no elements. */
 .playlist-layer {
   position: relative;
   flex: none;
-  background-image:
-    linear-gradient(to bottom, var(--recess-edge) 1px, transparent 1px),
-    linear-gradient(to right, var(--panel-edge) 1px, transparent 1px),
-    linear-gradient(to right, color-mix(in srgb, var(--panel-edge) 40%, transparent) 1px, transparent 1px);
-  background-size: 100% var(--lane-h), var(--bar-w) 100%, var(--beat-w) 100%;
+  background-image: linear-gradient(to bottom, var(--recess-edge) 1px, transparent 1px);
+  background-size: 100% var(--lane-h);
   cursor: copy;
   touch-action: none;
+}
+.playlist-meter {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background-image:
+    linear-gradient(to right, var(--panel-edge) 1px, transparent 1px),
+    linear-gradient(to right, color-mix(in srgb, var(--panel-edge) 40%, transparent) 1px, transparent 1px);
+  background-size: var(--bar-w) 100%, var(--beat-w) 100%;
+  pointer-events: none;
 }
 
 .playlist-clip {
@@ -3544,6 +3754,103 @@ button.playlist-label:hover { color: var(--ink); }
   background: var(--accent-line);
   pointer-events: none;
   display: none;
+}
+
+/* --- tempo and time ----------------------------------------------------- */
+
+/* Two thin lanes over the sections: where the tempo changes, and where the
+   time signature does. Each change is a flag standing on its tick. */
+.playlist-timing {
+  display: flex;
+  align-items: stretch;
+  padding-top: 3px;
+}
+.playlist-timing + .playlist-timing { padding-top: 1px; }
+/* Their names are a word each, and have to fit the lane-number column. */
+.playlist-timing .playlist-label {
+  padding: 2px 0 2px 4px;
+  font-size: 8px;
+  letter-spacing: 0.04em;
+  text-overflow: clip;
+}
+
+.timing-layer {
+  position: relative;
+  flex: none;
+  height: 16px;
+  cursor: copy;
+  touch-action: none;
+  border-radius: 2px;
+  border-bottom: 1px solid var(--recess-edge);
+}
+.timing-layer:hover { background: rgb(var(--accent-rgb) / 0.04); }
+.timing-layer.dragging { cursor: grabbing; }
+
+.timing-change {
+  position: absolute;
+  top: 0;
+  height: 16px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  padding: 0 4px;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--ink-dim);
+  background: var(--control);
+  border: 1px solid var(--panel-edge);
+  border-left: 2px solid var(--accent-line);
+  border-radius: 0 2px 2px 0;
+  cursor: grab;
+}
+.timing-change:hover,
+.timing-change:focus-visible { color: var(--ink); outline: none; border-color: var(--accent-line); }
+/* The song's own value, at the start: changed, never moved. */
+.timing-change.opening { cursor: pointer; border-left-color: var(--rule); }
+.timing-change.lifted {
+  z-index: 1;
+  cursor: grabbing;
+  border-color: var(--accent-line);
+  box-shadow: 0 2px 8px var(--unit-shadow);
+}
+.timing-value { pointer-events: none; }
+/* A change with no room for its label: a mark on its tick, still to be
+   clicked, dragged and read from its tooltip. */
+.timing-change.mini {
+  width: 4px;
+  padding: 0;
+  border: none;
+  border-left: 1px solid var(--accent-line);
+  border-radius: 0;
+  background: transparent;
+  opacity: 0.6;
+}
+.timing-change.mini:hover,
+.timing-change.mini:focus-visible { opacity: 1; border-left-width: 2px; }
+/* The tempo as a line, a step at each change, behind the changes. */
+.timing-curve {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+.timing-curve polyline {
+  fill: none;
+  stroke: var(--accent-line);
+  stroke-width: 1;
+  opacity: 0.45;
+}
+.timing-edit {
+  width: 42px;
+  font: inherit;
+  font-size: 9px;
+  padding: 0 2px;
+  color: var(--ink);
+  background: var(--field);
+  border: 1px solid var(--accent-line);
+  border-radius: 2px;
 }
 
 /* --- sections ----------------------------------------------------------- */

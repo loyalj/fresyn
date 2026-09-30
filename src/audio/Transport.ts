@@ -1,5 +1,6 @@
 import { engineEventsByTrack, type NoteTarget } from '../song/bind'
 import { releasedBySwing } from '../song/schedule'
+import { tempoMap } from '../song/timeline'
 import { fill, playheadTick, type Cursor, type Loop } from '../song/transport'
 import type { Song } from '../song/types'
 import type { AudioEngine } from './AudioEngine'
@@ -89,11 +90,12 @@ export class Transport {
    * added while the loop runs are picked up by the next window, so an edit is
    * heard within the lookahead and nothing has to be torn down.
    *
-   * A tempo change is the exception. It changes what every frame already
-   * queued means, so those have to go.
+   * A tempo change is the exception -- to the opening tempo or to any change
+   * of it along the way. It changes what every frame already queued means,
+   * so those have to go.
    */
   setSong(song: Song) {
-    const tempoChanged = song.tempo !== this.song.tempo
+    const tempoChanged = song.tempo !== this.song.tempo || song.tempos !== this.song.tempos
     // A swing moved while it plays can carry the end of a note already
     // started to behind the cursor, where the next pass would never send it.
     // Let go of those at the cursor; the rest are picked up as usual.
@@ -218,7 +220,7 @@ export class Transport {
     const m = this.engine.measure()
     const lag = m ? m.base + m.output : 0
     const frame = this.lastFrame + ((now - this.lastWall) / 1000 - lag) * rate
-    return playheadTick(frame, this.startFrame, this.startTick, this.song.tempo, rate, this.loop)
+    return playheadTick(frame, this.startFrame, this.startTick, tempoMap(this.song, rate), this.loop)
   }
 
   /** The loop the transport is going round, if any. */
@@ -264,8 +266,7 @@ export class Transport {
       frame,
       this.startFrame,
       this.startTick,
-      this.song.tempo,
-      this.engine.sampleRate,
+      tempoMap(this.song, this.engine.sampleRate),
       this.loop,
     )
 

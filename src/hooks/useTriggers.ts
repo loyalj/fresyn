@@ -19,6 +19,11 @@ export function useTriggers(
    * render does not rebuild every key binding.
    */
   onGate?: (moduleId: string, open: boolean) => void,
+  /**
+   * Where the rack on the bench is in the running track: a pad's `kit1/3/`
+   * while one is open, so its Triggers open the gates the track plays.
+   */
+  prefix = '',
 ) {
   const told = useRef(onGate)
   told.current = onGate
@@ -52,19 +57,19 @@ export function useTriggers(
    */
   const gateOn = useCallback(
     (moduleId: string) => {
-      engine.gate(true, trackId, moduleId)
+      engine.gate(true, trackId, prefix + moduleId)
       void engine.start()
       told.current?.(moduleId, true)
     },
-    [engine, trackId],
+    [engine, trackId, prefix],
   )
 
   const gateOff = useCallback(
     (moduleId: string) => {
-      engine.gate(false, trackId, moduleId)
+      engine.gate(false, trackId, prefix + moduleId)
       told.current?.(moduleId, false)
     },
-    [engine, trackId],
+    [engine, trackId, prefix],
   )
 
   /** A module's Mode, as the knob currently reads. */

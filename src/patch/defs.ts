@@ -10,6 +10,8 @@ const CHANNELS = [1, 2, 3, 4, 5, 6, 7, 8]
 const SH_CHANNELS = [1, 2, 3, 4]
 const SEQ_STEPS = [1, 2, 3, 4, 5, 6, 7, 8]
 const MACRO_LANES = [1, 2, 3, 4]
+/** The Drum Kit's pads, numbered as its panel numbers them. */
+const KIT_PADS = Array.from({ length: 16 }, (_, i) => i + 1)
 /**
  * What a freshly added sequencer plays: a minor seventh arpeggio up and back
  * down, in octaves. A row of zeroes would be a sequencer that does nothing
@@ -191,6 +193,48 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
       { id: 'attack', label: 'Attack', min: 0.002, max: 2, default: 0.04, unit: 's', curve: 'exp' },
       { id: 'release', label: 'Release', min: 0.005, max: 4, default: 0.2, unit: 's', curve: 'exp' },
       { id: 'level', label: 'Level', min: 0, max: 1, default: 0.8, unit: '', curve: 'lin' },
+    ],
+  },
+
+  kit: {
+    type: 'kit',
+    name: 'Drum Kit',
+    group: 'voice',
+    slug: 'kit',
+    // Sixteen pads, each a whole rack from the library. A note from the roll
+    // plays the pad it is mapped to; the kit sums them, and its L and R go to
+    // the speakers like a mixer's when nothing is patched after them.
+    bus: ['l', 'r'],
+    inputs: [
+      // A gate here plays that pad, as a note would: a Sequencer into Trig 3
+      // is a hat pattern with no roll at all.
+      ...KIT_PADS.map((n) => ({ id: `trig${n}`, label: `${n}`, block: 'trig' })),
+      // Where each pad's rack arrives. Wired by the compiler, never by hand.
+      ...KIT_PADS.flatMap((n) => [
+        { id: `ret${n}l`, label: `${n} L`, hidden: true as const },
+        { id: `ret${n}r`, label: `${n} R`, hidden: true as const },
+      ]),
+    ],
+    outputs: [
+      { id: 'l', label: 'L', block: 'mix' },
+      { id: 'r', label: 'R', block: 'mix' },
+      // Each pad on its own, after its level and before its pan: patch the
+      // snare alone into a Space. It is in the mix as well.
+      ...KIT_PADS.map((n) => ({ id: `out${n}`, label: `${n}`, block: 'pads' })),
+    ],
+    params: [
+      // Level and pan by pad, then the choke groups. The DSP reaches each
+      // block with one base plus the pad number, so the order is load bearing.
+      ...KIT_PADS.flatMap((n) => [
+        { id: `level${n}`, label: `Lvl ${n}`, min: 0, max: 1, default: 0.8, unit: '', curve: 'lin' as const },
+        { id: `pan${n}`, label: `Pan ${n}`, min: -1, max: 1, default: 0, unit: '', curve: 'lin' as const },
+      ]),
+      // Pads in the same group cut each other off: the closed hat stops the
+      // open one ringing. Nought is no group. A count rather than a switch,
+      // so the catalogue check does not take the product of sixteen of them.
+      ...KIT_PADS.map((n) => ({
+        id: `choke${n}`, label: `Choke ${n}`, min: 0, max: 4, default: 0, unit: '#', curve: 'lin' as const,
+      })),
     ],
   },
 

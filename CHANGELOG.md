@@ -4,6 +4,105 @@ What changed, newest first. The README says what Fresyn is now; this is how
 it got there. The older entries are the milestone notes that used to sit at
 the top of the README, moved here as they were written.
 
+## Editing a pad while the kit plays
+
+**Edit pad**, beside the kit's pads, opens that pad's rack on the bench while
+the song goes on playing the whole kit, so a snare can be tuned in the beat.
+Every rack edit works inside a pad; the Modules menu leaves out a Drum Kit
+and a Recorder there. A bar over the rack, and the index card beside it, say
+which pad of which kit on which track you are in, with **Back to kit**. With a
+pad open, loading a patch from the library or a file loads it into the pad,
+and Download patch or Save to library saves the pad on its own. The History list names each edit
+with its pad.
+
+Underneath, a pad's live knob positions are kept in its track's values under
+the pad's own ids -- the ids the running track already plays them by -- so a
+knob turned in a pad is the same cheap message as any other, and the beat
+never stops. `useDocument` hands the rack UI a pad as though it were a rack of
+its own, and puts each edit back into the kit. Loading or moving a pad now
+also updates where the roll's notes go straight away, which it did not
+before.
+
+`check-song` covers a pad's knobs through to what the track plays, top-level
+edits keeping them, saving and the history's names; `check-kit` opens a pad,
+turns a knob in it and comes back.
+
+## The Drum Kit
+
+**A new module, the Drum Kit: sixteen pads, each holding a whole rack from
+the library.** A note plays the pad on that note, so one track plays a whole
+kit, and the roll names its rows by pad. Pick a pad to load it from the
+library (a copy, knobs and all), rename it, move it to another note, set its
+level and pan, or put it in one of four choke groups so a closed hat cuts
+off an open one. **Load the standard kit** fills all sixteen pads with the
+shelf's drums on General MIDI's notes, and **Drum Kit** on the Drums shelf is
+a rack with it already loaded and Space on the kick. Each pad has its own
+output jack, and a Trig jack to play it from a Sequencer or a Trigger.
+
+Underneath, a kit's pads are laid into the patch beside it when it is
+compiled (`src/patch/kit.ts`), so the engine, voices, bounce and game player
+play them as ordinary modules. A pad that has been let go of and gone quiet
+sleeps until its next note, so an idle kit costs about 5% of a core and a
+busy beat about a fifth, rather than most of one. Editing the rack inside a
+pad is next.
+
+`check-song` covers the library kit, compiling, the file format, note
+routing, choke groups, sleeping pads, the Trig jacks and the history's names
+for pad edits. `check-modules` and `check-instruments` take the kit in, and
+a new browser suite, `check-kit`, drives the panel end to end.
+
+## Roll zoom, every time signature, and ramps on the BPM lane
+
+**The roll zooms and scrolls across.** A pattern too long to fit at about
+48 pixels a bar opens at that width with a scroll bar along the bottom,
+instead of being squeezed into the roll. **Alt + wheel** zooms across around
+the pointer, the new **−**, **+** and **Fit** buttons do it without a wheel,
+**Shift + wheel** and a trackpad's swipe scroll along, and the view turns
+the page as the playhead reaches its edge. Short patterns still open fitted.
+
+**Any time signature** from 1 to 32 beats of whole notes down to
+thirty-seconds: 2/2, 3/2, 5/16, 7/16. The Time menu lists more of the common
+ones, and the Time lane takes any. MIDI export writes them as they are.
+
+**The BPM lane copes with ramps.** The tempo is drawn as a line across the
+lane, changes too close to label become thin marks with only the ends of a
+run labelled, and the right-click menu removes every change in a bar or on
+the lane at once.
+
+`check-roll` covers zooming and scrolling across, and a note drawn while
+scrolled landing where it was drawn. `check-song` and `check-render` cover
+the new meters, and `check-timing` covers them on the lane and a 64-step
+ramp.
+
+## Tempo and time signature changes
+
+**A song can change tempo and time signature part way through.** The Song
+view has two new lanes over the sections, **BPM** and **Time**. Click one to
+put a change there and type its value, click a change to set it, drag it to
+move it, and right-click to remove it. A tempo change is a step from its tick
+on. A time signature change starts a new bar, and the ruler, the grid, snap,
+bar picking and the arrow keys all count in the bars as they are. The roll
+rules a pattern in the time signature it first sits in, and shows a change
+inside it on its ruler. The dock's Tempo and Time fields are the values at
+the start, with **+n** beside them when there are changes.
+
+Changes go with their music: inserting, deleting, copying, duplicating and
+pasting bars carry them, and so do moving, duplicating and deleting a
+section with its music. **Export MIDI** writes every change on the conductor
+track, which a MIDI import will need to read back.
+
+Underneath, `src/song/timeline.ts` now does every tick-to-sample conversion
+and bar lookup: the transport, the playhead, bounces, a game's section
+changes and the playlist all use it. A song with one tempo is still worked
+out on exactly the same samples as before. The changes are edited through
+`src/song/timing.ts`, and every file and wholesale edit keeps them tidy.
+
+`check-song` covers the tempo map (including every window size scheduling
+the same samples as the whole song, and loops across a change), bars across
+meter changes, editing, the file reader, and changes moving with range and
+section edits. `check-render` covers the MIDI export of changes. A new
+browser suite, `check-timing`, drives the lanes end to end.
+
 ## History list, recording, bar editing and more export formats
 
 **Edit → History** (**Ctrl+H**) lists every step of undo by name --
