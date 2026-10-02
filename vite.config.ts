@@ -32,7 +32,19 @@ export default defineConfig({
   // self-contained IIFE. AudioWorkletGlobalScope has no module loader in
   // every browser we care about, so inlining deps is the safe option.
   worker: { format: 'iife' },
+  // The encoders are imported only by the bounce worker, and the dev server's
+  // dependency scan does not follow `new Worker(new URL(...))`. Unlisted, it
+  // found them on the first bounce, re-optimised, and reloaded the page out
+  // from under it. Dev only: a build is unaffected.
+  optimizeDeps: { include: ['wasm-media-encoders'] },
   build: {
+    // Every browser that runs an AudioWorklet runs ES2022, and so does React
+    // 19. Vite's default target is older, which lowered every class field in
+    // the DSP to a `defineProperty` helper -- hundreds of them in the
+    // worklet, run each time a voice or a module is built on the audio thread.
+    target: 'es2022',
+    // Nothing that lacks modulepreload can run this app anyway.
+    modulePreload: { polyfill: false },
     rollupOptions: {
       output: {
         // React on its own, so a release that only touches the app leaves

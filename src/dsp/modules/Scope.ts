@@ -32,10 +32,14 @@ export class ScopeModule extends DspModule implements Capturing {
   private frameB = new Float32Array(SCOPE_CAPTURE)
   private write = 0
 
-  process(slots: Float32Array) {
-    this.ring[this.write] = slots[this.ins[IN_A]]
-    this.ringB[this.write] = slots[this.ins[IN_B]]
-    this.write = (this.write + 1) & MASK
+  processBlock(from: number, to: number) {
+    const a = this.inputs[IN_A]
+    const b = this.inputs[IN_B]
+    for (let i = from; i < to; i++) {
+      this.ring[this.write] = a[i]
+      this.ringB[this.write] = b[i]
+      this.write = (this.write + 1) & MASK
+    }
   }
 
   /**

@@ -68,6 +68,99 @@ export class LadderFilter {
     this.z.fill(0)
   }
 
+  /** The stage gain, and the cutoff it was worked out for. */
+  private gFor = NaN
+  private g = 0
+
+  /**
+   * `process` over a stretch of samples: `x` in, `y` out, with a cutoff,
+   * resonance and drive for each sample.
+   *
+   * The same arithmetic, sample for sample, run inside the filter rather
+   * than called once a sample from outside it. Called per sample, `process`
+   * is too big for the JIT to fold into the module's loop, and every number
+   * it hands back is boxed on the heap on the way out -- a steady stream of
+   * garbage from the module that is on nearly every voice.
+   */
+  run(
+    x: Float32Array,
+    y: Float32Array,
+    cutoffs: Float64Array,
+    resonances: Float64Array,
+    drives: Float64Array,
+    mode: number,
+    from: number,
+    to: number,
+  ) {
+    const z = this.z
+    const response = RESPONSES[mode] ?? RESPONSES[0]
+    const w = response.w
+    const w0 = w[0]
+    const w1 = w[1]
+    const w2 = w[2]
+    const w3 = w[3]
+    const w4 = w[4]
+    const makeup = 0.5 * response.makeup
+    let z0 = z[0]
+    let z1 = z[1]
+    let z2 = z[2]
+    let z3 = z[3]
+    let gFor = this.gFor
+    let G = this.g
+    for (let i = from; i < to; i++) {
+      const cutoff = cutoffs[i]
+      if (cutoff !== gFor) {
+        gFor = cutoff
+        G = stageGain(cutoff, this.invSampleRate, this.nyquist)
+      }
+      const k = clamp(resonances[i], 0, 1) * 4
+
+      const s1 = (1 - G) * z0
+      const s2 = (1 - G) * z1
+      const s3 = (1 - G) * z2
+      const s4 = (1 - G) * z3
+
+      const G2 = G * G
+      const G3 = G2 * G
+      const G4 = G3 * G
+      const S = G3 * s1 + G2 * s2 + G * s3 + s4
+
+      const xin = Math.tanh(x[i] * drives[i]) * (1 + k * makeup)
+
+      const y4solved = (G4 * xin + S) / (1 + k * G4)
+      const u = xin - k * Math.tanh(y4solved)
+
+      let v = (u - z0) * G
+      const y1 = v + z0
+      z0 = y1 + v
+
+      v = (y1 - z1) * G
+      const y2 = v + z1
+      z1 = y2 + v
+
+      v = (y2 - z2) * G
+      const y3 = v + z2
+      z2 = y3 + v
+
+      v = (y3 - z3) * G
+      const y4 = v + z3
+      z3 = y4 + v
+
+      if (!(z0 > -8 && z0 < 8)) z0 = z0 > 0 ? 8 : z0 < 0 ? -8 : 0
+      if (!(z1 > -8 && z1 < 8)) z1 = z1 > 0 ? 8 : z1 < 0 ? -8 : 0
+      if (!(z2 > -8 && z2 < 8)) z2 = z2 > 0 ? 8 : z2 < 0 ? -8 : 0
+      if (!(z3 > -8 && z3 < 8)) z3 = z3 > 0 ? 8 : z3 < 0 ? -8 : 0
+
+      y[i] = w0 * u + w1 * y1 + w2 * y2 + w3 * y3 + w4 * y4
+    }
+    z[0] = z0
+    z[1] = z1
+    z[2] = z2
+    z[3] = z3
+    this.gFor = gFor
+    this.g = G
+  }
+
   /**
    * @param cutoff  Hz
    * @param res     0..1, mapped to feedback k = 0..4 (self-oscillation at 1)
@@ -75,7 +168,13 @@ export class LadderFilter {
    * @param mode    index into `RESPONSES`; 0 is the plain 24 dB lowpass
    */
   process(x: number, cutoff: number, res: number, drive: number, mode = 0): number {
-    const G = stageGain(cutoff, this.invSampleRate, this.nyquist)
+    // A tangent a sample otherwise, for a corner that sits still unless a
+    // knob or a cable is moving it.
+    if (cutoff !== this.gFor) {
+      this.gFor = cutoff
+      this.g = stageGain(cutoff, this.invSampleRate, this.nyquist)
+    }
+    const G = this.g
     const k = clamp(res, 0, 1) * 4
 
     const z = this.z

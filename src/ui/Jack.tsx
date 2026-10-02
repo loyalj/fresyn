@@ -1,3 +1,4 @@
+import { memo, useCallback } from 'react'
 import type { PortRef } from '../patch/edit'
 
 export type JackKind = 'input' | 'output'
@@ -25,8 +26,13 @@ interface Props {
   onKey?: (ref: PortRef, kind: JackKind, action: 'press' | 'focus') => void
 }
 
-/** One patch point on a module's back panel. */
-export function Jack({
+/**
+ * One patch point on a module's back panel.
+ *
+ * Memoized, and handed nothing but strings, flags and the rack's own stable
+ * handlers, so a panel redrawn for one jack's cable leaves the rest alone.
+ */
+export const Jack = memo(function Jack({
   moduleId,
   portId,
   label,
@@ -37,8 +43,13 @@ export function Jack({
   onPointerDown,
   onKey,
 }: Props) {
-  const key = jackKey({ module: moduleId, port: portId })
   const ref = { module: moduleId, port: portId }
+  // The same callback from one render to the next, so React does not detach
+  // and re-register the jack every time it draws.
+  const track = useCallback(
+    (el: HTMLDivElement | null) => register(jackKey({ module: moduleId, port: portId }), el),
+    [register, moduleId, portId],
+  )
 
   return (
     <div className="jack-slot">
@@ -47,7 +58,7 @@ export function Jack({
         data-module={moduleId}
         data-port={portId}
         data-kind={kind}
-        ref={(el) => register(key, el)}
+        ref={track}
         onPointerDown={(e) => onPointerDown(ref, kind, e)}
         onKeyDown={(e) => {
           if (e.repeat || (e.key !== 'Enter' && e.key !== ' ')) return
@@ -69,4 +80,4 @@ export function Jack({
       <span className="jack-label">{label}</span>
     </div>
   )
-}
+})

@@ -29,6 +29,8 @@ const MAX_FRACTION = 0.45
  * from. Coefficients are only worked out while a knob is moving.
  */
 export class EqModule extends DspModule {
+  /** Works only on what reaches it, so it may rest; see `DspModule.rests`. */
+  readonly rests = true
   private low = new Section()
   private mid = new Section()
   private high = new Section()
@@ -52,24 +54,32 @@ export class EqModule extends DspModule {
     return true
   }
 
-  process(slots: Float32Array) {
-    let changed = false
-    for (let i = 0; i < 6; i++) {
-      const s = this.smooth[i]
-      s.set(this.params[i])
-      // A smoother at rest returns the value it returned last time, which is
-      // already what the sections were designed for.
-      if (s.settled) continue
-      const v = s.next()
-      if (v !== this.last[i]) {
-        this.last[i] = v
-        changed = true
-      }
+  processBlock(from: number, to: number) {
+    const input = this.inputs[IN_SIGNAL]
+    const out = this.outputs[0]
+    for (let i = 0; i < 6; i++) this.smooth[i].set(this.params[i])
+    // At rest, which is nearly always, the curve is already what the sections
+    // were designed for and the block is three biquads a sample.
+    if (this.settled) {
+      for (let i = from; i < to; i++) out[i] = this.high.process(this.mid.process(this.low.process(input[i])))
+      return
     }
-    if (changed) this.tune()
-
-    const x = slots[this.ins[IN_SIGNAL]]
-    slots[this.outs[0]] = this.high.process(this.mid.process(this.low.process(x)))
+    for (let i = from; i < to; i++) {
+      let changed = false
+      for (let k = 0; k < 6; k++) {
+        const s = this.smooth[k]
+        // A smoother at rest returns the value it returned last time, which
+        // is already what the sections were designed for.
+        if (s.settled) continue
+        const v = s.next()
+        if (v !== this.last[k]) {
+          this.last[k] = v
+          changed = true
+        }
+      }
+      if (changed) this.tune()
+      out[i] = this.high.process(this.mid.process(this.low.process(input[i])))
+    }
   }
 
   private tune() {

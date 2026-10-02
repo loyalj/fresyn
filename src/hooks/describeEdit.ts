@@ -1,6 +1,6 @@
 import { defOf } from '../patch/defs'
 import { kitSlots } from '../patch/kit'
-import type { Patch, PatchModule } from '../patch/types'
+import type { Patch, RackNote, PatchModule } from '../patch/types'
 import type { Rack } from '../song/project'
 import type { Note, Placement, Song, Track } from '../song/types'
 import type { Doc } from './useDocument'
@@ -125,6 +125,11 @@ function describePatch(a: Patch, b: Patch): string {
     return 'Colour cable'
   }
 
+  if (a.notes !== b.notes) {
+    const n = describeRackNotes(a.notes ?? [], b.notes ?? [])
+    if (n) return n
+  }
+
   for (const m of b.modules) {
     const was = before.get(m.id)
     if (!was || was === m) continue
@@ -138,6 +143,27 @@ function describePatch(a: Patch, b: Patch): string {
   }
   if (a.modules.map((m) => m.id).join() !== b.modules.map((m) => m.id).join()) return 'Reorder rack'
   return 'Edit rack'
+}
+
+/**
+ * A note on the rack added, taken off, moved, written in, coloured or folded.
+ * "Rack note" throughout, since a note on its own is one in the roll.
+ */
+function describeRackNotes(a: readonly RackNote[], b: readonly RackNote[]): string | null {
+  const before = new Map(a.map((n) => [n.id, n]))
+  const after = new Map(b.map((n) => [n.id, n]))
+  if (b.some((n) => !before.has(n.id))) return 'Add rack note'
+  if (a.some((n) => !after.has(n.id))) return 'Delete rack note'
+  for (const n of b) {
+    const was = before.get(n.id)
+    if (!was || was === n) continue
+    if (was.module !== n.module) return `Move rack note to ${n.module}`
+    if (was.x !== n.x || was.y !== n.y || was.face !== n.face) return 'Move rack note'
+    if (was.text !== n.text) return 'Write rack note'
+    if (was.color !== n.color) return 'Colour rack note'
+    if (!!was.collapsed !== !!n.collapsed) return n.collapsed ? 'Fold rack note' : 'Unfold rack note'
+  }
+  return null
 }
 
 function describeSong(a: Song, b: Song): string | null {

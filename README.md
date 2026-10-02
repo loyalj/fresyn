@@ -96,6 +96,7 @@ npm run check:song         # the arrangement, scheduling, and SongPlayer
 npm run check:manual       # every patch the manual teaches, rendered
 npm run check:instruments  # every library instrument, built, played and in tune
 npm run check:modules      # audits every module in the catalogue
+npm run check:utilities    # the utilities' arithmetic: timing, pitch, chords, progressions, rhythms
 npm run check:theme        # every palette: tokens, and contrast where it lands
 
 # in a real browser
@@ -108,6 +109,8 @@ npm run check:roll         # the music dock: notes, tracks, playlist, bounce
 npm run check:sampler      # a real WAV through the Sampler, and back out
 npm run check:scope        # the scope, read back off the canvas
 npm run check:tools        # search, bypass, copying, cable colours, shelves
+npm run check:utilities-ui # the Utilities menu, and every panel end to end
+npm run check:notes        # notes on the rack: added, moved, undone, saved, hidden
 ```
 
 The headless checks are TypeScript that imports the real DSP and patch code;
@@ -196,13 +199,25 @@ delivered to the processor, so a message-driven trigger renders silence
 offline. Since deterministic offline rendering is the basis of the planned
 export workflow, no part of it may depend on message timing.
 
-**The graph advances one sample at a time, not one block at a time.** That
-costs per-sample call overhead and buys the two things a rack cannot do
-without: audio-rate modulation of any input, and feedback cables that cost a
-single sample. Stepping a block at a time would make every cycle cost a whole
-128-sample block, which is the native Web Audio limitation this engine exists
-to avoid. Signals live in one flat slot array, so a back edge gets its
-one-sample delay for free by reading a slot its producer has not written yet.
+**Modules run a block at a time; feedback loops run a sample at a time.**
+Every output is a block of 128 samples, and a cable is two modules bound to
+the same block, so each module works through a whole block in one call --
+which is what lets its loop run as fast as plain arithmetic, where calling
+forty kinds of module once a sample each could not. Audio-rate modulation
+survives it, since a block carries every sample. A feedback cable cannot be
+a block late, though -- that is a comb at 375 Hz, the native Web Audio
+limitation this engine exists to avoid -- so the modules a back edge spans
+are stepped together a sample at a time, the cable reading a copy of its
+source one sample behind. Blocks lie on the transport's own frames and
+voices, pads and resting effects change state only at their ends or at an
+event, so a render comes out the same to the bit in any buffer size.
+
+**Nothing runs that has nothing to do.** A voice sleeps once it has been let
+go and gone quiet, and so does a Drum Kit pad. An effect that only works on
+what reaches it -- a filter, a reverb, a mixer -- rests once it has been fed
+silence and said nothing for long enough (longer, for a delay or a
+granulator, than it can hold anything), until the sample something arrives
+again. An idle song costs a small fraction of what a playing one does.
 
 **Cycles are legal.** The compiler reports the cable it cut rather than
 rejecting the patch. Which cable that is depends on where the traversal enters
@@ -530,6 +545,7 @@ src/
     compile.ts         # patch -> execution plan, with cycle detection
     edit.ts            # add, remove, reorder, connect, disconnect
     serialize.ts       # the save format, and a defensive loader
+    notes.ts           # notes stuck to modules: kept with them, read defensively
     history.ts         # undo/redo, with coalescing, named steps, and jumps
     storage.ts         # autosave, and project and patch files
     fileAccess.ts      # files the app can write back to, like a desktop program
@@ -561,7 +577,7 @@ src/
     protocol.ts        # the messages between the main thread and the worklet
     SongEngine.ts      # one graph per track, summed; the worklet is its shell
     Console.ts         # the song desk: strips, shared effects, the limiter
-    GraphEngine.ts     # steps the compiled graph one sample at a time
+    GraphEngine.ts     # runs the compiled graph a block at a time, loops a sample at a time
     modules/           # one file per module type, plus the type registry
     PolyBlepOsc.ts LadderFilter.ts Envelope.ts DcBlocker.ts Smoothed.ts Rng.ts
     Biquad.ts DelayLine.ts Adaa.ts   # shared filter, delay and shaper parts
@@ -578,7 +594,16 @@ src/
     wav.ts zip.ts      # 16/24-bit PCM or 32-bit float, and a store-only zip writer
     flac.ts            # a FLAC encoder: fixed predictors, Rice coding, stereo modes
     encode.ts encoders.ts   # every export format; OGG and MP3 via wasm-media-encoders
+    offline.ts *.worker.ts   # bounces, takes and their files, off the page's thread
+    shared.ts          # memory shared with the worklet and the workers, where it can be
     waveform.ts        # peak envelopes for drawing a take
+  utilities/           # the Utilities menu: tools beside the music, not in it
+    index.ts           # the list the menu and the panels are built from
+    timing.ts          # bars from a length of time, note lengths from a tempo
+    metronome.ts       # when a click falls, and what it sounds like
+    pitch.ts           # a note to its frequency and back, at any reference
+    harmony.ts         # a key's notes and chords, and a progression voiced and played
+    euclid.ts          # Euclidean rhythms, lane by lane, written out over a pattern
   input/               # browser input capture and key bindings
     InputManager.ts useInput.ts keyLabel.ts
     liveNotes.ts midi.ts   # notes played by hand, and MIDI controllers
@@ -597,6 +622,13 @@ src/
     EngineContext.ts SampleContext.ts
     MixerFace.tsx MixView.tsx meter.ts   # the rack mixer, the song desk, meters
     UnitSpine.tsx            # the rack ear, and the drag handle
+    UtilityPanel.tsx         # the floating panel a utility opens in
+    utilities/TimingUtility.tsx   # song length, note lengths and tap tempo
+    utilities/MetronomeUtility.tsx utilities/PitchUtility.tsx
+    utilities/ScalesUtility.tsx utilities/ProgressionUtility.tsx   # one shared key: harmonyStore.ts
+    utilities/RhythmUtility.tsx   # Euclidean lanes into a Drum Kit pattern
+    NumberField.tsx          # a number typed in, committed on Enter
+    RackNotes.tsx            # notes stuck to a unit, on either face
     useRackDrag.ts rackLayout.ts   # dragging a unit, and how a row is shared
     Cables.tsx               # the cable layer, purely visual
     cableGeometry.ts         # curve maths and pointer hit-testing

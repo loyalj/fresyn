@@ -61,6 +61,8 @@ const PEAK_GAIN = 4
  * an octave -- hollower, closer to a clarinet or a pipe.
  */
 export class SvfModule extends DspModule {
+  /** Works only on what reaches it, so it may rest; see `DspModule.rests`. */
+  readonly rests = true
   private ic1 = 0
   private ic2 = 0
   private comb = new DelayLine(this.ctx.sampleRate / COMB_LOW_HZ + 4)
@@ -76,7 +78,7 @@ export class SvfModule extends DspModule {
     this.cvAmount = new Smoothed(this.params[P_CV_AMOUNT], sr)
   }
 
-  process(slots: Float32Array) {
+  processBlock(from: number, to: number) {
     const sr = this.ctx.sampleRate
     this.cutoff.set(this.params[P_CUTOFF])
     this.resonance.set(this.params[P_RESONANCE])
@@ -92,64 +94,91 @@ export class SvfModule extends DspModule {
       this.comb.reset()
     }
 
-    const x = slots[this.ins[IN_SIGNAL]]
-    // Exponential CV, so a fixed amount moves the corner the same number of
-    // octaves wherever the knob sits -- and 1.00 tracks a keyboard exactly.
-    let cutoff = expCv(this.cutoff.next(), slots[this.ins[IN_CV]], this.cvAmount.next())
-    const res = this.resonance.next()
+    const signal = this.inputs[IN_SIGNAL]
+    const cv = this.inputs[IN_CV]
+    const y = this.outputs[0]
 
     if (mode >= MODE_COMB_POS) {
-      if (!(cutoff >= COMB_LOW_HZ)) cutoff = COMB_LOW_HZ
-      else if (cutoff > sr * 0.45) cutoff = sr * 0.45
-      const fb = (mode === MODE_COMB_NEG ? -1 : 1) * COMB_MAX_FEEDBACK * res
-      // Saturated on the way round, as the Delay's loop is, so a comb fed
-      // something loud at full feedback flattens rather than climbing.
-      let y = x + fb * Math.tanh(this.comb.read(sr / cutoff))
-      // tanh(NaN) is NaN, so saturation is no protection here: one bad sample
-      // pushed into the line would come round and be pushed again for ever.
-      if (y - y !== 0) {
-        this.comb.reset()
-        y = 0
+      for (let i = from; i < to; i++) {
+        const x = signal[i]
+        // Exponential CV, so a fixed amount moves the corner the same number
+        // of octaves wherever the knob sits -- and 1.00 tracks a keyboard
+        // exactly.
+        let cutoff = expCv(this.cutoff.next(), cv[i], this.cvAmount.next())
+        const res = this.resonance.next()
+        if (!(cutoff >= COMB_LOW_HZ)) cutoff = COMB_LOW_HZ
+        else if (cutoff > sr * 0.45) cutoff = sr * 0.45
+        const fb = (mode === MODE_COMB_NEG ? -1 : 1) * COMB_MAX_FEEDBACK * res
+        // Saturated on the way round, as the Delay's loop is, so a comb fed
+        // something loud at full feedback flattens rather than climbing.
+        let out = x + fb * Math.tanh(this.comb.read(sr / cutoff))
+        // tanh(NaN) is NaN, so saturation is no protection here: one bad
+        // sample pushed into the line would come round and be pushed again
+        // for ever.
+        if (out - out !== 0) {
+          this.comb.reset()
+          out = 0
+        }
+        this.comb.push(out)
+        y[i] = out * (1 - 0.5 * Math.abs(fb))
       }
-      this.comb.push(y)
-      slots[this.outs[0]] = y * (1 - 0.5 * Math.abs(fb))
       return
     }
 
-    if (!(cutoff >= 10)) cutoff = 10
-    else if (cutoff > sr * 0.49) cutoff = sr * 0.49
-    const g = Math.tan((Math.PI * cutoff) / sr)
-    const k = 1 / svfQ(res)
-    const a1 = 1 / (1 + g * (g + k))
-    const a2 = g * a1
-    const a3 = g * a2
+    // The coefficients for the corner and the resonance last worked out:
+    // the same until one of them moves, which with nothing on the CV jack is
+    // only while a knob is turning.
+    let lastCutoff = NaN
+    let lastRes = NaN
+    let g = 0
+    let k = 0
+    let a1 = 0
+    let a2 = 0
+    let a3 = 0
+    for (let i = from; i < to; i++) {
+      const x = signal[i]
+      let cutoff = expCv(this.cutoff.next(), cv[i], this.cvAmount.next())
+      const res = this.resonance.next()
+      if (!(cutoff >= 10)) cutoff = 10
+      else if (cutoff > sr * 0.49) cutoff = sr * 0.49
+      if (cutoff !== lastCutoff || res !== lastRes) {
+        lastCutoff = cutoff
+        lastRes = res
+        g = Math.tan((Math.PI * cutoff) / sr)
+        k = 1 / svfQ(res)
+        a1 = 1 / (1 + g * (g + k))
+        a2 = g * a1
+        a3 = g * a2
+      }
 
-    const v3 = x - this.ic2
-    const v1 = a1 * this.ic1 + a2 * v3
-    const v2 = this.ic2 + a2 * this.ic1 + a3 * v3
-    this.ic1 = 2 * v1 - this.ic1
-    this.ic2 = 2 * v2 - this.ic2
-    // The ladder's backstop, for the same reason: a NaN in either integrator
-    // is fed back into both on every sample after, and the filter would be
-    // silent until the patch was rebuilt. Cleared, it is back on the next one.
-    const s = this.ic1 + this.ic2
-    if (s - s !== 0) {
-      this.ic1 = 0
-      this.ic2 = 0
-      slots[this.outs[0]] = 0
-      return
-    }
+      const v3 = x - this.ic2
+      const v1 = a1 * this.ic1 + a2 * v3
+      const v2 = this.ic2 + a2 * this.ic1 + a3 * v3
+      this.ic1 = 2 * v1 - this.ic1
+      this.ic2 = 2 * v2 - this.ic2
+      // The ladder's backstop, for the same reason: a NaN in either
+      // integrator is fed back into both on every sample after, and the
+      // filter would be silent until the patch was rebuilt. Cleared, it is
+      // back on the next one.
+      const s = this.ic1 + this.ic2
+      if (s - s !== 0) {
+        this.ic1 = 0
+        this.ic2 = 0
+        y[i] = 0
+        continue
+      }
 
-    let out: number
-    switch (mode) {
-      case MODE_BP: out = k * v1; break
-      case MODE_HP: out = x - k * v1 - v2; break
-      case MODE_NOTCH: out = x - k * v1; break
-      case MODE_PEAK: out = x + PEAK_GAIN * res * k * v1; break
-      case MODE_LP:
-      default: out = v2
+      let out: number
+      switch (mode) {
+        case MODE_BP: out = k * v1; break
+        case MODE_HP: out = x - k * v1 - v2; break
+        case MODE_NOTCH: out = x - k * v1; break
+        case MODE_PEAK: out = x + PEAK_GAIN * res * k * v1; break
+        case MODE_LP:
+        default: out = v2
+      }
+      y[i] = out
     }
-    slots[this.outs[0]] = out
   }
 }
 

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react'
+import { createContext, memo, useContext, useEffect, useRef, useState } from 'react'
 import tables from '../../MANUAL.md?knob-help'
 import { helpFor, type KnobHelp } from '../patch/knobHelp'
 
@@ -63,9 +63,10 @@ export function useKnobHelp(label: string) {
 /**
  * The one card every knob shares, drawn once at the top of the page. It
  * never takes the pointer, so it cannot get between a hand and the knob next
- * to the one it is describing.
+ * to the one it is describing. Memoized, having no props: it redraws for its
+ * own tip, never because the app did.
  */
-export function KnobHelpCard() {
+export const KnobHelpCard = memo(function KnobHelpCard() {
   const [tip, setTip] = useState<Tip | null>(null)
   const card = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState({ left: 0, top: 0 })
@@ -102,4 +103,4 @@ export function KnobHelpCard() {
       {tip.text}
     </div>
   )
-}
+})

@@ -48,6 +48,12 @@ export interface ProcessorOptions {
    */
   mix?: Record<string, TrackMix>
   console?: Console
+  /**
+   * Memory the processor writes its display reports into, where the page
+   * can share it: see `TelemetryLayout`. Absent where the page cannot share
+   * memory, which leaves the reports going as messages.
+   */
+  telemetry?: SharedArrayBuffer
 }
 
 /** Everything the main thread says to the processor after it is built. */
@@ -59,7 +65,11 @@ export type ToWorklet =
   | { type: 'mix'; mix: Record<string, TrackMix> }
   | { type: 'console'; console: Console }
   | { type: 'watch'; track: string }
-  | { type: 'samples'; samples: SampleRecord[] }
+  // Audio the processor has not had yet. Added to what it has, never in
+  // place of it: the library only ever grows, so each file is sent once --
+  // and where memory can be shared, what is sent is a handle on the page's
+  // own copy rather than a copy.
+  | { type: 'addSamples'; samples: SampleRecord[] }
   // The transport, filling a window of the song a few hundred milliseconds
   // ahead of what is being heard.
   | { type: 'schedule'; events: readonly TrackEvent[] }
@@ -68,16 +78,46 @@ export type ToWorklet =
   | { type: 'allNotesOff' }
 
 /**
- * Everything the processor says back: one display frame, ~30 times a second.
+ * Where a report lands in the shared telemetry, in floats from the start of
+ * a slot.
  *
+ * The memory is two slots, written in turn, so the page reads one while the
+ * processor fills the other. What goes where only changes when the rack on
+ * the bench does, so it is sent once, as a message, and each report after
+ * says only which slot it is in.
+ */
+export interface TelemetryLayout {
+  /** Each meter's levels, as `Metering.levels` gives them. */
+  levels: { id: string; at: number; length: number }[]
+  /** Each scope's frame, and a second trace as its own entry under `id.b`. */
+  scopes: { id: string; at: number; length: number }[]
+  /**
+   * The Mix view's levels: each track's peak in this order, then the
+   * master's peak, momentary and short-term loudness.
+   */
+  mixAt: number
+  tracks: string[]
+}
+
+/**
+ * Everything the processor says back, ~30 times a second: a display frame.
+ *
+ * As one message, with everything in it, where memory cannot be shared.
  * Levels and scopes are left out when the watched track has nothing that
  * publishes them, which is why they are optional and the mix is not.
+ *
+ * Where it can, the frame is written to the shared telemetry and the message
+ * is only the clock and which slot to read, with the layout sent ahead of the
+ * first frame it applies to.
  */
-export type FromWorklet = {
-  type: 'frame'
-  /** Where the transport has reached, in samples. */
-  frame: number
-  levels?: Record<string, Float32Array>
-  scopes?: Record<string, Float32Array>
-  mix: MixLevels
-}
+export type FromWorklet =
+  | {
+      type: 'frame'
+      /** Where the transport has reached, in samples. */
+      frame: number
+      levels?: Record<string, Float32Array>
+      scopes?: Record<string, Float32Array>
+      mix: MixLevels
+    }
+  | { type: 'layout'; layout: TelemetryLayout }
+  | { type: 'tick'; frame: number; slot: number }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import {
   clampValue,
   denormalize,
@@ -94,7 +94,11 @@ interface Props {
   format?: (value: number) => string
 }
 
-export function Knob({ spec, value, onChange, step, format }: Props) {
+/**
+ * One knob. Memoized, so the knobs beside one being turned are left alone:
+ * the unit hands each one a handler that stays the same (see `Control`).
+ */
+export const Knob = memo(function Knob({ spec, value, onChange, step, format }: Props) {
   const svgRef = useRef<SVGSVGElement>(null)
   const drag = useRef<{ y: number; t: number } | null>(null)
   const t = normalize(spec, value)
@@ -459,7 +463,7 @@ export function Knob({ spec, value, onChange, step, format }: Props) {
       )}
     </div>
   )
-}
+})
 
 function arc(cx: number, cy: number, r: number, from: number, to: number) {
   if (Math.abs(to - from) < 0.01) return ''

@@ -161,4 +161,39 @@ export interface Cable {
 export interface Patch {
   modules: PatchModule[]
   cables: Cable[]
+  /**
+   * Notes left on the rack, each stuck to a module. Optional, and absent
+   * rather than empty when there are none, so a patch without any is written
+   * and read exactly as one saved before notes existed. Never heard: the
+   * compiler reads modules and cables and nothing else. See `patch/notes.ts`.
+   */
+  notes?: RackNote[]
+}
+
+/** The colours a rack note can be. */
+export type RackNoteColor = 'yellow' | 'green' | 'blue' | 'pink' | 'violet'
+
+/**
+ * A note stuck to a module on the rack: a reminder of why a knob is where it
+ * is, or what a cable is for.
+ *
+ * Stuck to a module rather than to a spot on the rack, because the rack
+ * reflows -- units are reordered, wrap at another width, fold to compact --
+ * and a note in a fixed spot would soon sit on the wrong unit. Where it sits
+ * is measured from that unit's corner, on the face it was left on.
+ */
+export interface RackNote {
+  id: string
+  /** The module it is stuck to. */
+  module: string
+  /** Which side of the unit: notes about cabling belong on the back. */
+  face: 'front' | 'back'
+  /** From the unit's top left corner, in pixels. */
+  x: number
+  y: number
+  text: string
+  /** Yellow when absent. */
+  color?: RackNoteColor
+  /** Folded to its first line. */
+  collapsed?: true
 }

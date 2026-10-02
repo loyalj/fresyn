@@ -55,6 +55,8 @@ const SIZE_GLIDE_MS = 50
  * knob says whatever Size is doing.
  */
 export class ReverbModule extends DspModule {
+  /** Works only on what reaches it, so it may rest; see `DspModule.rests`. */
+  readonly rests = true
   private lines = LENGTHS.map((s) => new DelayLine(s * this.ctx.sampleRate))
   private dampers = LENGTHS.map(() => new OnePole())
   /**
@@ -63,8 +65,6 @@ export class ReverbModule extends DspModule {
    * and walks the whole tail off scale.
    */
   private dc = new DcBlocker(this.ctx.sampleRate)
-  /** This sample's reads, so the matrix can mix them before any are replaced. */
-  private taps = new Float64Array(LINES)
   /** Each line's read distance and loop gain, for the size and decay below. */
   private reach = new Float64Array(LINES)
   private gains = new Float64Array(LINES)
@@ -84,69 +84,84 @@ export class ReverbModule extends DspModule {
     this.mix = new Smoothed(this.params[P_MIX], sr)
   }
 
-  process(slots: Float32Array) {
-    const dry = slots[this.ins[IN_SIGNAL]]
-    const input = this.dc.process(dry)
-
+  processBlock(from: number, to: number) {
     this.size.set(clamp(this.params[P_SIZE], 0, 1))
     this.decay.set(this.params[P_DECAY])
     this.damping.set(this.params[P_DAMPING])
     this.mix.set(this.params[P_MIX])
+    const signal = this.inputs[IN_SIGNAL]
+    const outL = this.outputs[OUT_L]
+    const outR = this.outputs[OUT_R]
+    // By index rather than destructured: a destructuring is an iterator, and
+    // an iterator is an allocation on every block.
+    const lines = this.lines
+    const dampers = this.dampers
+    const l0 = lines[0]
+    const l1 = lines[1]
+    const l2 = lines[2]
+    const l3 = lines[3]
+    const d0 = dampers[0]
+    const d1 = dampers[1]
+    const d2 = dampers[2]
+    const d3 = dampers[3]
+    const reach = this.reach
+    const gains = this.gains
 
-    const size = this.size.next()
-    // 60 dB in the time the knob asks for, per line, from its own length.
-    const decay = this.decay.next()
-    // Four powers a sample is a real cost at 48k, and the answer only changes
-    // while one of these two knobs is moving -- so it is worked out then.
-    if (size !== this.tunedSize || decay !== this.tunedDecay) this.tune(size, decay)
-    const damping = this.damping.next()
+    for (let i = from; i < to; i++) {
+      const dry = signal[i]
+      const input = this.dc.process(dry)
 
-    for (let i = 0; i < LINES; i++) {
-      const read = this.lines[i].read(this.reach[i])
-      this.taps[i] = this.dampers[i].process(read, damping) * this.gains[i]
-    }
+      const size = this.size.next()
+      // 60 dB in the time the knob asks for, per line, from its own length.
+      const decay = this.decay.next()
+      // Four powers a sample is a real cost at 48k, and the answer only
+      // changes while one of these two knobs is moving -- so it is worked out
+      // then.
+      if (size !== this.tunedSize || decay !== this.tunedDecay) this.tune(size, decay)
+      const damping = this.damping.next()
 
-    let a = this.taps[0]
-    let b = this.taps[1]
-    let c = this.taps[2]
-    let d = this.taps[3]
-    // tanh(NaN) is NaN, so the saturation below bounds the loop but cannot
-    // clean it: a NaN inside would go round the network for good, and the
-    // tail -- the song's whole Space return, when this is the console's --
-    // would never come back. Emptied, the room is quiet for a moment and then
-    // fine.
-    const sum = a + b + c + d
-    if (sum - sum !== 0) {
-      for (let i = 0; i < LINES; i++) {
-        this.lines[i].reset()
-        this.dampers[i].reset()
+      let a = d0.process(l0.read(reach[0]), damping) * gains[0]
+      let b = d1.process(l1.read(reach[1]), damping) * gains[1]
+      let c = d2.process(l2.read(reach[2]), damping) * gains[2]
+      let d = d3.process(l3.read(reach[3]), damping) * gains[3]
+      // tanh(NaN) is NaN, so the saturation below bounds the loop but cannot
+      // clean it: a NaN inside would go round the network for good, and the
+      // tail -- the song's whole Space return, when this is the console's --
+      // would never come back. Emptied, the room is quiet for a moment and
+      // then fine.
+      const sum = a + b + c + d
+      if (sum - sum !== 0) {
+        for (let k = 0; k < LINES; k++) {
+          this.lines[k].reset()
+          this.dampers[k].reset()
+        }
+        a = b = c = d = 0
       }
-      a = b = c = d = 0
+
+      // A 4x4 Hadamard, scaled to keep the mix lossless: every line reaches
+      // every other with the same weight, and the sign pattern is what stops
+      // the four of them collapsing into one loud in-phase line.
+      const m0 = (a + b + c + d) * 0.5
+      const m1 = (a - b + c - d) * 0.5
+      const m2 = (a + b - c - d) * 0.5
+      const m3 = (a - b - c + d) * 0.5
+
+      // Saturating each line bounds the network however long the decay is,
+      // the same way the delay bounds its own loop.
+      l0.push(Math.tanh(input + m0))
+      l1.push(Math.tanh(input + m1))
+      l2.push(Math.tanh(input + m2))
+      l3.push(Math.tanh(input + m3))
+
+      // Two different pairs, so the sides are decorrelated and the tail has
+      // width. Taking the same sum twice would be a mono reverb in two jacks.
+      const wetL = (a + c) * 0.5
+      const wetR = (b + d) * 0.5
+
+      const mix = this.mix.next()
+      outL[i] = dry * (1 - mix) + wetL * mix
+      outR[i] = dry * (1 - mix) + wetR * mix
     }
-
-    // A 4x4 Hadamard, scaled to keep the mix lossless: every line reaches
-    // every other with the same weight, and the sign pattern is what stops
-    // the four of them collapsing into one loud in-phase line.
-    const m0 = (a + b + c + d) * 0.5
-    const m1 = (a - b + c - d) * 0.5
-    const m2 = (a + b - c - d) * 0.5
-    const m3 = (a - b - c + d) * 0.5
-
-    // Saturating each line bounds the network however long the decay is, the
-    // same way the delay bounds its own loop.
-    this.lines[0].push(Math.tanh(input + m0))
-    this.lines[1].push(Math.tanh(input + m1))
-    this.lines[2].push(Math.tanh(input + m2))
-    this.lines[3].push(Math.tanh(input + m3))
-
-    // Two different pairs, so the sides are decorrelated and the tail has
-    // width. Taking the same sum twice would be a mono reverb in two jacks.
-    const wetL = (a + c) * 0.5
-    const wetR = (b + d) * 0.5
-
-    const mix = this.mix.next()
-    slots[this.outs[OUT_L]] = dry * (1 - mix) + wetL * mix
-    slots[this.outs[OUT_R]] = dry * (1 - mix) + wetR * mix
   }
 
   /** Each line's distance and gain, for a size of 0..1 and a decay in seconds. */

@@ -81,6 +81,8 @@ const MAX_FRACTION = 0.45
  * harmonic has no vowel in it.
  */
 export class FormantModule extends DspModule {
+  /** Works only on what reaches it, so it may rest; see `DspModule.rests`. */
+  readonly rests = true
   private vowel!: Smoothed
   private size!: Smoothed
 
@@ -101,41 +103,50 @@ export class FormantModule extends DspModule {
     this.size = new Smoothed(this.params[P_SIZE], this.ctx.sampleRate, 20)
   }
 
-  process(slots: Float32Array) {
+  processBlock(from: number, to: number) {
     this.vowel.set(this.params[P_VOWEL])
     this.size.set(this.params[P_SIZE])
-
-    let vowel = this.vowel.next() + slots[this.ins[IN_VOWEL]] * this.params[P_VOWEL_AMOUNT]
-    if (!(vowel > 0)) vowel = 0
-    else if (vowel > LAST) vowel = LAST
-    // A bigger head is lower formants: Size 2 halves them. The jack is in
-    // octaves of size, so a positive voltage makes the thing bigger too.
-    const scale = 1 / expCv(this.size.next(), slots[this.ins[IN_SIZE]], this.params[P_SIZE_AMOUNT])
+    const vowelIn = this.inputs[IN_VOWEL]
+    const sizeIn = this.inputs[IN_SIZE]
+    const signal = this.inputs[IN_SIGNAL]
+    const y = this.outputs[0]
+    const vowelAmount = this.params[P_VOWEL_AMOUNT]
+    const sizeAmount = this.params[P_SIZE_AMOUNT]
     const res = this.params[P_RES]
+    const { a1, a2, a3, gain, ic1, ic2 } = this
 
-    if (vowel !== this.lastVowel || scale !== this.lastScale || res !== this.lastRes) {
-      this.tune(vowel, scale, res)
-    }
+    for (let n = from; n < to; n++) {
+      let vowel = this.vowel.next() + vowelIn[n] * vowelAmount
+      if (!(vowel > 0)) vowel = 0
+      else if (vowel > LAST) vowel = LAST
+      // A bigger head is lower formants: Size 2 halves them. The jack is in
+      // octaves of size, so a positive voltage makes the thing bigger too.
+      const scale = 1 / expCv(this.size.next(), sizeIn[n], sizeAmount)
 
-    const x = slots[this.ins[IN_SIGNAL]]
-    let out = 0
-    for (let i = 0; i < BANDS; i++) {
-      const v3 = x - this.ic2[i]
-      const v1 = this.a1[i] * this.ic1[i] + this.a2[i] * v3
-      const v2 = this.ic2[i] + this.a2[i] * this.ic1[i] + this.a3[i] * v3
-      this.ic1[i] = 2 * v1 - this.ic1[i]
-      this.ic2[i] = 2 * v2 - this.ic2[i]
-      out += v1 * this.gain[i]
+      if (vowel !== this.lastVowel || scale !== this.lastScale || res !== this.lastRes) {
+        this.tune(vowel, scale, res)
+      }
+
+      const x = signal[n]
+      let out = 0
+      for (let i = 0; i < BANDS; i++) {
+        const v3 = x - ic2[i]
+        const v1 = a1[i] * ic1[i] + a2[i] * v3
+        const v2 = ic2[i] + a2[i] * ic1[i] + a3[i] * v3
+        ic1[i] = 2 * v1 - ic1[i]
+        ic2[i] = 2 * v2 - ic2[i]
+        out += v1 * gain[i]
+      }
+      // Every band's state feeds the output, so a NaN in any of them shows up
+      // here -- and, left, would stay in that band for good. Clearing the lot
+      // is simpler than finding which, and the next sample is clean.
+      if (out - out !== 0) {
+        ic1.fill(0)
+        ic2.fill(0)
+        out = 0
+      }
+      y[n] = out
     }
-    // Every band's state feeds the output, so a NaN in any of them shows up
-    // here -- and, left, would stay in that band for good. Clearing the lot
-    // is simpler than finding which, and the next sample is clean.
-    if (out - out !== 0) {
-      this.ic1.fill(0)
-      this.ic2.fill(0)
-      out = 0
-    }
-    slots[this.outs[0]] = out
   }
 
   private tune(vowel: number, scale: number, res: number) {

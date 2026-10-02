@@ -91,46 +91,53 @@ export class GateModule extends DspModule implements Playable {
     this.gateOpen = false
   }
 
-  process(slots: Float32Array) {
-    // Either the key or a cable into Trig will press it, whichever arrives
-    // first, and the last to leave lets go -- the same rule the Keyboard and
-    // the oscillator use for their gate jacks.
-    //
-    // A cable is what makes Mode worth having twice over: a clock into here
-    // with Mode on `once` is a fixed length at the clock's rate, which the
-    // Clock cannot do on its own. Its Width is a fraction of the period, so
-    // the pulses get longer as the rate falls.
-    // The gap goes in before the edge detector rather than on the way out, so
-    // that it reaches both modes: `held` puts this straight out, and `once`
-    // needs the fall so the rise after it can start a fresh shot.
-    const pressed = this.retrig.gate(this.gateOpen || slots[this.ins[IN_TRIG]] > 0.5)
-    const fired = this.edge.rose(pressed ? 1 : 0)
+  processBlock(from: number, to: number) {
+    const trig = this.inputs[IN_TRIG]
+    const outGate = this.outputs[OUT_GATE]
+    const outVel = this.outputs[OUT_VEL]
+    const once = Math.round(this.params[P_MODE]) === MODE_ONCE
+    const length = Math.max(1, Math.round(this.params[P_LENGTH] * this.ctx.sampleRate))
+    for (let i = from; i < to; i++) {
+      // Either the key or a cable into Trig will press it, whichever arrives
+      // first, and the last to leave lets go -- the same rule the Keyboard
+      // and the oscillator use for their gate jacks.
+      //
+      // A cable is what makes Mode worth having twice over: a clock into here
+      // with Mode on `once` is a fixed length at the clock's rate, which the
+      // Clock cannot do on its own. Its Width is a fraction of the period, so
+      // the pulses get longer as the rate falls.
+      // The gap goes in before the edge detector rather than on the way out,
+      // so that it reaches both modes: `held` puts this straight out, and
+      // `once` needs the fall so the rise after it can start a fresh shot.
+      const pressed = this.retrig.gate(this.gateOpen || trig[i] > 0.5)
+      const fired = this.edge.rose(pressed ? 1 : 0)
 
-    if (pressed && !this.wasPressed) {
-      if (!this.fromNote) this.vel = 1
-      this.fromNote = false
+      if (pressed && !this.wasPressed) {
+        if (!this.fromNote) this.vel = 1
+        this.fromNote = false
+      }
+      this.wasPressed = pressed
+      outVel[i] = this.vel
+
+      if (!once) {
+        // Dropped rather than left to run down, so switching away mid-shot
+        // stops the sound now instead of at the end of a length nobody is
+        // waiting for.
+        this.left = 0
+        outGate[i] = pressed ? 1 : 0
+        continue
+      }
+
+      // Unconditional, so a press during a shot restarts it rather than being
+      // swallowed -- the same choice the Burst makes when a run is
+      // retriggered.
+      if (fired) this.left = length
+
+      // Read before the decrement, so Length samples come out high rather
+      // than Length minus one.
+      const open = this.left > 0
+      if (this.left > 0) this.left--
+      outGate[i] = open ? 1 : 0
     }
-    this.wasPressed = pressed
-    slots[this.outs[OUT_VEL]] = this.vel
-
-    if (Math.round(this.params[P_MODE]) !== MODE_ONCE) {
-      // Dropped rather than left to run down, so switching away mid-shot stops
-      // the sound now instead of at the end of a length nobody is waiting for.
-      this.left = 0
-      slots[this.outs[OUT_GATE]] = pressed ? 1 : 0
-      return
-    }
-
-    // Unconditional, so a press during a shot restarts it rather than being
-    // swallowed -- the same choice the Burst makes when a run is retriggered.
-    if (fired) {
-      this.left = Math.max(1, Math.round(this.params[P_LENGTH] * this.ctx.sampleRate))
-    }
-
-    // Read before the decrement, so Length samples come out high rather than
-    // Length minus one.
-    const open = this.left > 0
-    if (this.left > 0) this.left--
-    slots[this.outs[OUT_GATE]] = open ? 1 : 0
   }
 }

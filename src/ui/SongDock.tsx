@@ -129,7 +129,10 @@ interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
   height: number
+  /** The height to keep, once a drag of the dock's edge is let go. */
   onHeight: (height: number) => void
+  /** The height mid-drag, for the room the page leaves under the rack. Not kept. */
+  onHeightDrag?: (height: number) => void
   /** Draw a swung pattern where its notes are heard, rather than on its written grid. */
   showSwing: boolean
 }
@@ -182,6 +185,7 @@ export const SongDock = memo(function SongDock({
   onOpenChange,
   height,
   onHeight,
+  onHeightDrag,
   showSwing,
 }: Props) {
   const [parts, setParts] = useState(dockParts)
@@ -208,7 +212,6 @@ export const SongDock = memo(function SongDock({
     setGridState(ticks)
     savePrefs({ grid: ticks })
   }
-  const [dragFrom, setDragFrom] = useState<{ y: number; height: number } | null>(null)
 
   const pattern = song.patterns.find((p) => p.id === patternId)
   const target = targets.get(trackId)
@@ -238,8 +241,11 @@ export const SongDock = memo(function SongDock({
   // draw behind it.
   const placedAt = firstPlacement(song, patternId)
   const inContext = view === 'roll' && rollPlays === 'song'
-  // Its bars are the song's where it first sits: see `patternBars`.
-  const rollBars = patternBars(song, placedAt)
+  // Its bars are the song's where it first sits: see `patternBars`. Kept, as
+  // the roll redraws for new bars: a pattern placed after a change of meter
+  // is handed a new object on every call.
+  const { meter, meters } = song
+  const rollBars = useMemo(() => patternBars({ meter, meters }, placedAt), [meter, meters, placedAt])
   const bars = Math.max(1, barsIn(rollBars, pattern?.length ?? rollBars.bar(0).length))
 
   const show = (next: 'roll' | 'song' | 'mix') => {
@@ -252,14 +258,21 @@ export const SongDock = memo(function SongDock({
   // a guide -- writing a bass line against a drum part you cannot see is
   // writing it blind. So is whatever the other patterns play over the same
   // bars, which is drawn behind it too, whichever way the roll is playing.
-  const mine = pattern?.notes.filter((n) => n.track === trackId) ?? []
-  const others = pattern?.notes.filter((n) => n.track !== trackId) ?? []
-  // Hidden tracks still play, but are left out of what is drawn behind.
-  const hiddenTracks = new Set(song.tracks.filter((t) => t.hidden).map((t) => t.id))
-  const ghosts = [
-    ...others,
-    ...(placedAt === null ? [] : contextNotes(song, patternId, placedAt, showSwing)),
-  ].filter((n) => !hiddenTracks.has(n.track))
+  //
+  // Each kept until what it is made from changes. The roll tells a change by
+  // identity, so an array rebuilt on every render of the dock, whatever the
+  // render was for, made it redraw everything and compare every note.
+  const notes = pattern?.notes
+  const mine = useMemo(() => notes?.filter((n) => n.track === trackId) ?? [], [notes, trackId])
+  const others = useMemo(() => notes?.filter((n) => n.track !== trackId) ?? [], [notes, trackId])
+  const ghosts = useMemo(() => {
+    // Hidden tracks still play, but are left out of what is drawn behind.
+    const hiddenTracks = new Set(song.tracks.filter((t) => t.hidden).map((t) => t.id))
+    return [
+      ...others,
+      ...(placedAt === null ? [] : contextNotes(song, patternId, placedAt, showSwing)),
+    ].filter((n) => !hiddenTracks.has(n.track))
+  }, [song, others, patternId, placedAt, showSwing])
 
   const trackHues = useMemo(
     () => new Map(song.tracks.flatMap((t) => (t.color === undefined ? [] : [[t.id, t.color] as const]))),
@@ -301,24 +314,41 @@ export const SongDock = memo(function SongDock({
   const dockMax = useDockMax(chrome)
   const bodyHeight = dockHeightWithin(height, dockMax)
 
+  // Mid-drag, the height goes straight onto the body's style and to the app
+  // through `onHeightDrag`, and nothing re-renders; it is committed once,
+  // when the edge is let go. Committed on every pointer move, as it was, each
+  // frame of the drag re-rendered the app and every unit in the rack.
+  const dragFrom = useRef<{ y: number; height: number; at: number; moved: boolean } | null>(null)
+
   const onGrabResize = useCallback(
     (e: React.PointerEvent) => {
       e.currentTarget.setPointerCapture(e.pointerId)
-      setDragFrom({ y: e.clientY, height: bodyHeight })
+      dragFrom.current = { y: e.clientY, height: bodyHeight, at: bodyHeight, moved: false }
     },
     [bodyHeight],
   )
 
   const onResize = useCallback(
     (e: React.PointerEvent) => {
-      if (!dragFrom) return
+      const from = dragFrom.current
+      if (!from) return
       // Upward is taller: the dock is anchored to the bottom of the window.
-      onHeight(
-        clamp(dragFrom.height + (dragFrom.y - e.clientY), Math.min(DOCK_MIN_H, dockMax), dockMax),
-      )
+      const next = clamp(from.height + (from.y - e.clientY), Math.min(DOCK_MIN_H, dockMax), dockMax)
+      if (next === from.at) return
+      from.at = next
+      from.moved = true
+      if (bodyRef.current) bodyRef.current.style.height = `${next}px`
+      onHeightDrag?.(next)
     },
-    [dragFrom, onHeight, dockMax],
+    [onHeightDrag, dockMax],
   )
+
+  const onResized = useCallback(() => {
+    const from = dragFrom.current
+    if (!from) return
+    dragFrom.current = null
+    if (from.moved) onHeight(from.at)
+  }, [onHeight])
 
   return (
     <div className={`dock${open ? '' : ' dock-closed'}`} ref={dockRef}>
@@ -327,8 +357,8 @@ export const SongDock = memo(function SongDock({
           className="dock-grip"
           onPointerDown={onGrabResize}
           onPointerMove={onResize}
-          onPointerUp={() => setDragFrom(null)}
-          onPointerCancel={() => setDragFrom(null)}
+          onPointerUp={onResized}
+          onPointerCancel={onResized}
           role="separator"
           aria-label="Resize the Music dock"
         />

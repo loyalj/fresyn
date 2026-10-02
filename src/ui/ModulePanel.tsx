@@ -182,12 +182,7 @@ export function ModulePanel({
         {knobs.length > 0 && (
           <div className="controls">
             {knobs.map((spec) => (
-              <Control
-                key={spec.id}
-                spec={spec}
-                value={valueOf(spec.id)}
-                onChange={(v) => onChange(spec.id, v)}
-              />
+              <Control key={spec.id} spec={spec} value={valueOf(spec.id)} onChange={onChange} />
             ))}
           </div>
         )}

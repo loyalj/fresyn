@@ -21,6 +21,35 @@ const FLOOR_DB = -78
 /** Scratch buffers, so a redraw at 30 Hz allocates nothing. */
 let re = new Float32Array(0)
 let im = new Float32Array(0)
+/** The Hann window for the capture length in use, worked out once per length. */
+let hann = new Float32Array(0)
+
+/**
+ * Each canvas's size on the page, kept up to date by an observer rather than
+ * asked for at every redraw: `clientWidth` is a layout read, and at 30 Hz per
+ * scope it forced a layout whenever anything else on the page had changed.
+ */
+const sizes = new WeakMap<Element, { width: number; height: number }>()
+let observer: ResizeObserver | null = null
+
+function sizeOf(canvas: HTMLCanvasElement) {
+  let size = sizes.get(canvas)
+  if (size) return size
+  size = { width: canvas.clientWidth, height: canvas.clientHeight }
+  sizes.set(canvas, size)
+  if (typeof ResizeObserver !== 'undefined') {
+    observer ??= new ResizeObserver((entries) => {
+      for (const e of entries) {
+        const box = e.contentBoxSize?.[0]
+        sizes.set(e.target, box
+          ? { width: box.inlineSize, height: box.blockSize }
+          : { width: e.contentRect.width, height: e.contentRect.height })
+      }
+    })
+    observer.observe(canvas)
+  }
+  return size
+}
 
 export function drawScope(
   canvas: HTMLCanvasElement,
@@ -29,8 +58,9 @@ export function drawScope(
   view: ScopeView,
 ) {
   const dpr = window.devicePixelRatio || 1
-  const w = Math.max(1, Math.round(canvas.clientWidth * dpr))
-  const h = Math.max(1, Math.round(canvas.clientHeight * dpr))
+  const size = sizeOf(canvas)
+  const w = Math.max(1, Math.round(size.width * dpr))
+  const h = Math.max(1, Math.round(size.height * dpr))
   if (canvas.width !== w || canvas.height !== h) {
     canvas.width = w
     canvas.height = h
@@ -186,11 +216,15 @@ function drawSpectrum(
     re = new Float32Array(n)
     im = new Float32Array(n)
   }
-
   // Hann window: without one, the ends of the capture are a discontinuity and
   // every partial smears into a wide skirt that hides everything near it.
+  if (hann.length !== n) {
+    hann = new Float32Array(n)
+    for (let i = 0; i < n; i++) hann[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (n - 1))
+  }
+
   for (let i = 0; i < n; i++) {
-    re[i] = data[i] * (0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (n - 1)))
+    re[i] = data[i] * hann[i]
     im[i] = 0
   }
   fft(re, im)

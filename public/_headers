@@ -3,18 +3,18 @@
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
 
-# The entry point is the one unhashed file. If it gets cached, new deploys
-# never reach anyone.
-/index.html
-  Cache-Control: public, max-age=0, must-revalidate
+# The page itself needs no rule. It is the one unhashed file, and Pages
+# already serves it at / with max-age=0, must-revalidate -- a rule for
+# /index.html never matched, because Pages redirects that path to /.
 
+# The last two are cross-origin isolation, which is what lets the page share
+# memory with the audio thread and the bounce workers: decoded samples held
+# once rather than copied to each, and the meters and scopes written straight
+# into memory the page reads (see src/audio/shared.ts). The dev server sets
+# the same pair in vite.config.ts. require-corp also blocks any cross-origin
+# subresource that does not opt in through CORP or CORS; the app loads none.
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
-
-# Required in production before the param bus can move to SharedArrayBuffer
-# (see vite.config.ts, which already sets these on the dev server). Uncomment
-# both at once. Note that require-corp also blocks any cross-origin
-# subresource that doesn't explicitly opt in via CORP/CORS.
-#  Cross-Origin-Opener-Policy: same-origin
-#  Cross-Origin-Embedder-Policy: require-corp
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp

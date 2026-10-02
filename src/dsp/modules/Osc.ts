@@ -95,30 +95,17 @@ export class OscModule extends DspModule implements Metering {
     return this.report
   }
 
-  process(slots: Float32Array) {
-    if (this.sync.rose(slots[this.ins[IN_SYNC]])) this.osc.syncAt(this.sync.crossing)
-
+  processBlock(from: number, to: number) {
     // Parameters first: gateOn() branches on the delay time, so setting the
     // stage lengths afterwards would skip the delay on the very sample the
     // envelope is triggered.
-    this.env.delay = this.params[P_DELAY]
-    this.env.attack = this.params[P_ATTACK]
-    this.env.hold = this.params[P_HOLD]
-    this.env.decay = this.params[P_DECAY]
-    this.env.sustain = this.params[P_SUSTAIN]
-    this.env.release = this.params[P_RELEASE]
-
-    // Either the panel trigger or a cable into the Gate jack will fire it;
-    // whichever arrives first opens the envelope and the last to leave closes
-    // it, so the two can be used together without fighting.
-    const open = this.gateOpen || slots[this.ins[IN_GATE]] > 0.5
-    if (open !== this.envOpen) {
-      this.envOpen = open
-      if (open) this.env.gateOn()
-      else this.env.gateOff()
-    }
-
-    const e = this.env.next()
+    const env = this.env
+    env.delay = this.params[P_DELAY]
+    env.attack = this.params[P_ATTACK]
+    env.hold = this.params[P_HOLD]
+    env.decay = this.params[P_DECAY]
+    env.sustain = this.params[P_SUSTAIN]
+    env.release = this.params[P_RELEASE]
 
     // Folded into the pitch smoother rather than multiplied in afterwards, so
     // that changing octave while a note is sounding glides the same way the
@@ -127,15 +114,82 @@ export class OscModule extends DspModule implements Metering {
       this.octaveAt = this.params[P_OCTAVE]
       this.octaveScale = Math.pow(2, Math.round(this.octaveAt))
     }
-
+    const pitchTarget = this.params[P_PITCH] * this.octaveScale
+    const widthTarget = this.params[P_WIDTH]
+    const fmTarget = this.params[P_FM_AMOUNT]
+    const envPitchTarget = this.params[P_ENV_PITCH]
+    const envWidthTarget = this.params[P_ENV_WIDTH]
     this.envAmount.set(this.params[P_ENV_AMOUNT])
     this.level.set(this.params[P_LEVEL])
+    this.pitch.set(pitchTarget)
+    this.width.set(widthTarget)
+    this.fmAmount.set(fmTarget)
+    this.envPitch.set(envPitchTarget)
+    this.envWidth.set(envWidthTarget)
+    const linear = this.params[P_FM_MODE] >= 0.5
+    const wave = WAVEFORMS[Math.round(this.params[P_WAVE])] ?? 'saw'
 
-    // A blend, not a multiply: at zero the oscillator is wide open, at one it
-    // is entirely the envelope's to shape. Level is a plain multiply after
-    // it, because that is what a level is.
-    const amount = this.envAmount.next()
-    const gain = (1 - amount + amount * e) * this.level.next()
+    const sync = this.inputs[IN_SYNC]
+    const gate = this.inputs[IN_GATE]
+    const fmIn = this.inputs[IN_FM]
+    const pwmIn = this.inputs[IN_PWM]
+    const pitchIn = this.inputs[IN_PITCH]
+    const outAudio = this.outputs[OUT_AUDIO]
+    const outEnv = this.outputs[OUT_ENV]
+    const held = this.gateOpen
+    const osc = this.osc
+    let peak = this.peak
+
+    // A knob that is not moving hands back the same number every sample, so
+    // each smoother that has arrived is read once here rather than stepped
+    // seven times a sample. The panel's knobs are still nearly all the time.
+    const envAmount = this.envAmount
+    const level = this.level
+    const pitchS = this.pitch
+    const fmS = this.fmAmount
+    const envPitchS = this.envPitch
+    const widthS = this.width
+    const envWidthS = this.envWidth
+    const amountFixed = envAmount.settled
+    const levelFixed = level.settled
+    const pitchFixed = pitchS.settled
+    const fmFixed = fmS.settled
+    const envPitchFixed = envPitchS.settled
+    const widthFixed = widthS.settled
+    const envWidthFixed = envWidthS.settled
+    const amountNow = envAmount.current
+    const levelNow = level.current
+    const pitchNow = pitchS.current
+    const fmNow = fmS.current
+    const envPitchNow = envPitchS.current
+    const widthNow = widthS.current
+    const envWidthNow = envWidthS.current
+    // The exponent last raised, and 2 to it: a played note holds its pitch
+    // for the whole block, so this is one power a note rather than one a
+    // sample.
+    let powFor = this.powFor
+    let powIs = this.powIs
+
+    for (let i = from; i < to; i++) {
+      if (this.sync.rose(sync[i])) osc.syncAt(this.sync.crossing)
+
+      // Either the panel trigger or a cable into the Gate jack will fire it;
+      // whichever arrives first opens the envelope and the last to leave
+      // closes it, so the two can be used together without fighting.
+      const open = held || gate[i] > 0.5
+      if (open !== this.envOpen) {
+        this.envOpen = open
+        if (open) env.gateOn()
+        else env.gateOff()
+      }
+
+      const e = env.next()
+
+      // A blend, not a multiply: at zero the oscillator is wide open, at one
+      // it is entirely the envelope's to shape. Level is a plain multiply
+      // after it, because that is what a level is.
+      const amount = amountFixed ? amountNow : envAmount.next()
+      const gain = (1 - amount + amount * e) * (levelFixed ? levelNow : level.next())
 
     // Nothing can come out at a gain of exactly zero, so nothing is made.
     // That is Env Amt at 1 with the envelope shut -- a one-shot voice between
@@ -155,31 +209,25 @@ export class OscModule extends DspModule implements Metering {
     // it. A knob turned to the end by hand arrives asymptotically and starts
     // skipping a few seconds later, which costs nothing but a few seconds of
     // work nobody hears.
-    if (gain === 0) {
-      // Jumped rather than glided: there is no zipper to smooth out in
-      // silence, and a knob moved between notes has to be at its new value
-      // when the next one starts rather than sliding into it.
-      this.pitch.reset(this.params[P_PITCH] * this.octaveScale)
-      this.width.reset(this.params[P_WIDTH])
-      this.fmAmount.reset(this.params[P_FM_AMOUNT])
-      this.envPitch.reset(this.params[P_ENV_PITCH])
-      this.envWidth.reset(this.params[P_ENV_WIDTH])
-      // The phase stays where it stopped, so the next note begins where this
-      // one left off instead of wherever a free-running oscillator had got
-      // to. Both are arbitrary; neither is heard.
-      slots[this.outs[OUT_AUDIO]] = 0
-      slots[this.outs[OUT_ENV]] = e
-      return
-    }
+      if (gain === 0) {
+        // Jumped rather than glided: there is no zipper to smooth out in
+        // silence, and a knob moved between notes has to be at its new value
+        // when the next one starts rather than sliding into it.
+        pitchS.reset(pitchTarget)
+        widthS.reset(widthTarget)
+        fmS.reset(fmTarget)
+        envPitchS.reset(envPitchTarget)
+        envWidthS.reset(envWidthTarget)
+        // The phase stays where it stopped, so the next note begins where
+        // this one left off instead of wherever a free-running oscillator had
+        // got to. Both are arbitrary; neither is heard.
+        outAudio[i] = 0
+        outEnv[i] = e
+        continue
+      }
 
-    this.pitch.set(this.params[P_PITCH] * this.octaveScale)
-    this.width.set(this.params[P_WIDTH])
-    this.fmAmount.set(this.params[P_FM_AMOUNT])
-    this.envPitch.set(this.params[P_ENV_PITCH])
-    this.envWidth.set(this.params[P_ENV_WIDTH])
-
-    const pitch = this.pitch.next()
-    const fm = slots[this.ins[IN_FM]] * this.fmAmount.next()
+      const pitch = pitchFixed ? pitchNow : pitchS.next()
+      const fm = fmIn[i] * (fmFixed ? fmNow : fmS.next())
     // The envelope's own pitch amount is in octaves whatever the FM jack is
     // set to: it is a sweep rather than a modulator, and a sweep is an
     // interval. In exponential mode it is simply another term in the same
@@ -188,7 +236,7 @@ export class OscModule extends DspModule implements Metering {
     // The Pitch jack is a third term in the same exponent, whichever mode FM
     // is in, so a played note moves the whole voice -- sidebands and all -- by
     // an interval, and linear FM keeps the same index at every key.
-    const swept = e * this.envPitch.next() + slots[this.ins[IN_PITCH]]
+      const swept = e * (envPitchFixed ? envPitchNow : envPitchS.next()) + pitchIn[i]
     // Exponential, so a 1.0 signal with the amount at +1 is one octave up.
     // Musical, and the right thing for a pitch that is being played or swept.
     //
@@ -201,22 +249,31 @@ export class OscModule extends DspModule implements Metering {
     // the core lets a frequency go negative: at an amount past 1 this drives
     // straight through zero, and stopping there would fold the pitch back up
     // exactly where the interesting part starts.
-    const freq =
-      this.params[P_FM_MODE] >= 0.5
-        ? pitch * Math.pow(2, swept) * (1 + fm)
-        : pitch * Math.pow(2, swept + fm)
+      const exponent = linear ? swept : swept + fm
+      if (exponent !== powFor) {
+        powFor = exponent
+        powIs = Math.pow(2, exponent)
+      }
+      const freq = linear ? pitch * powIs * (1 + fm) : pitch * powIs
 
-    const pw =
-      this.width.next() +
-      slots[this.ins[IN_PWM]] * WIDTH_SWING +
-      e * this.envWidth.next() * WIDTH_SWING
-    const wave = WAVEFORMS[Math.round(this.params[P_WAVE])] ?? 'saw'
+      const pw =
+        (widthFixed ? widthNow : widthS.next()) +
+        pwmIn[i] * WIDTH_SWING +
+        e * (envWidthFixed ? envWidthNow : envWidthS.next()) * WIDTH_SWING
 
-    const out = this.osc.process(freq, wave, pw) * gain
-    const size = out < 0 ? -out : out
-    if (size > this.peak) this.peak = size
+      const out = osc.process(freq, wave, pw) * gain
+      const size = out < 0 ? -out : out
+      if (size > peak) peak = size
 
-    slots[this.outs[OUT_AUDIO]] = out
-    slots[this.outs[OUT_ENV]] = e
+      outAudio[i] = out
+      outEnv[i] = e
+    }
+    this.peak = peak
+    this.powFor = powFor
+    this.powIs = powIs
   }
+
+  /** See `powFor` in `processBlock`. */
+  private powFor = NaN
+  private powIs = 1
 }

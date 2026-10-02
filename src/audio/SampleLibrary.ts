@@ -1,5 +1,6 @@
 import type { SampleBank, SampleData, SampleRecord } from '../dsp/samples'
 import { getSample, idFor, putSample, type StoredSample } from './sampleStore'
+import { canShare, sharedCopy } from './shared'
 
 /**
  * The rate every dropped file is decoded to.
@@ -35,7 +36,11 @@ async function decode(bytes: ArrayBuffer): Promise<SampleData> {
   const buffer = await decodeContext().decodeAudioData(bytes.slice(0))
   const channels: Float32Array[] = []
   for (let c = 0; c < buffer.numberOfChannels && c < 2; c++) {
-    channels.push(buffer.getChannelData(c))
+    // Into shared memory where the page has some, so the worklet and a bounce
+    // are handed this very copy rather than one each: three minutes of stereo
+    // is seventy megabytes, held once instead of three times.
+    const data = buffer.getChannelData(c)
+    channels.push(canShare ? sharedCopy(data) : data)
   }
   return { channels, rate: buffer.sampleRate, frames: buffer.length }
 }
@@ -143,22 +148,25 @@ export class SampleLibrary {
    * needs to say so once rather than look every time it draws.
    */
   async hydrate(ids: readonly string[]): Promise<void> {
-    let moved = false
-    for (const id of new Set(ids)) {
-      if (this.loaded.has(id) || this.absent.has(id)) continue
-      const stored = await getSample(id)
-      if (!stored) {
-        this.absent.add(id)
-        moved = true
-        continue
-      }
-      try {
-        this.loaded.set(id, { id, name: stored.name, data: await decode(stored.bytes) })
-      } catch {
-        this.absent.add(id)
-      }
-      moved = true
-    }
-    if (moved) this.changed()
+    const wanted = [...new Set(ids)].filter((id) => !this.loaded.has(id) && !this.absent.has(id))
+    if (wanted.length === 0) return
+    // All at once rather than one after another: each is a storage read and
+    // a decode, both of which happen off this thread, so a project with a
+    // dozen samples waited out a dozen round trips in a row for nothing.
+    await Promise.all(
+      wanted.map(async (id) => {
+        const stored = await getSample(id)
+        if (!stored) {
+          this.absent.add(id)
+          return
+        }
+        try {
+          this.loaded.set(id, { id, name: stored.name, data: await decode(stored.bytes) })
+        } catch {
+          this.absent.add(id)
+        }
+      }),
+    )
+    this.changed()
   }
 }

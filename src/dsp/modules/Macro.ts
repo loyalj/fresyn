@@ -76,26 +76,30 @@ export class MacroModule extends DspModule {
     this.amount = new Smoothed(this.params[P_AMOUNT], this.ctx.sampleRate)
   }
 
-  process(slots: Float32Array) {
+  processBlock(from: number, to: number) {
     this.amount.set(this.params[P_AMOUNT])
-    // Smoothed at the knob and not at the jack: a hand or a game setting the
-    // knob jumps, and a jump in a cutoff is a click. A cable is already the
-    // signal someone meant to send.
-    let amount = this.amount.next() + slots[this.ins[IN_AMOUNT]]
-    if (!(amount > 0)) amount = 0
-    else if (amount > 1) amount = 1
-
+    const jack = this.inputs[IN_AMOUNT]
+    const outs = this.outputs
     const p = this.params
-    for (let lane = 0; lane < MACRO_LANES; lane++) {
-      const base = 1 + lane * LANE_PARAMS
-      slots[this.outs[lane]] = macroLane(
-        amount,
-        p[base + LANE_FROM],
-        p[base + LANE_TO],
-        p[base + LANE_CURVE],
-        p[base + LANE_START],
-        p[base + LANE_END],
-      )
+    for (let i = from; i < to; i++) {
+      // Smoothed at the knob and not at the jack: a hand or a game setting
+      // the knob jumps, and a jump in a cutoff is a click. A cable is already
+      // the signal someone meant to send.
+      let amount = this.amount.next() + jack[i]
+      if (!(amount > 0)) amount = 0
+      else if (amount > 1) amount = 1
+
+      for (let lane = 0; lane < MACRO_LANES; lane++) {
+        const base = 1 + lane * LANE_PARAMS
+        outs[lane][i] = macroLane(
+          amount,
+          p[base + LANE_FROM],
+          p[base + LANE_TO],
+          p[base + LANE_CURVE],
+          p[base + LANE_START],
+          p[base + LANE_END],
+        )
+      }
     }
   }
 }

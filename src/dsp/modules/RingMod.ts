@@ -41,24 +41,29 @@ export class RingModModule extends DspModule {
     this.mix = new Smoothed(this.params[P_MIX], this.ctx.sampleRate)
   }
 
-  process(slots: Float32Array) {
-    const dry = slots[this.ins[IN_SIGNAL]]
-
-    // Free-running whatever is patched, so the Freq knob always does
-    // something and the jack always has a sine on it.
-    const internal = this.osc.process(this.params[P_FREQ], 'sine', 0.5)
-
+  processBlock(from: number, to: number) {
+    const signal = this.inputs[IN_SIGNAL]
+    const carrierIn = this.inputs[IN_CARRIER]
+    const outMixed = this.outputs[OUT_MIXED]
+    const outCarrier = this.outputs[OUT_CARRIER]
+    const freq = this.params[P_FREQ]
     // An unpatched input reads ground, which is silence, and multiplying by
     // silence is silence -- so the wiring itself has to decide which carrier
     // is in use.
-    const jack = this.ins[IN_CARRIER]
-    const carrier = jack === 0 ? internal : slots[jack]
-
+    const patched = this.ins[IN_CARRIER] !== 0
     this.mix.set(this.params[P_MIX])
-    const mix = this.mix.next()
-    // Railed for the output fed back into the carrier, which squares itself
-    // every sample and overflows almost at once; see `Rail.ts`.
-    slots[this.outs[OUT_MIXED]] = railed(dry * (1 - mix) + dry * carrier * mix)
-    slots[this.outs[OUT_CARRIER]] = internal
+
+    for (let i = from; i < to; i++) {
+      const dry = signal[i]
+      // Free-running whatever is patched, so the Freq knob always does
+      // something and the jack always has a sine on it.
+      const internal = this.osc.process(freq, 'sine', 0.5)
+      const carrier = patched ? carrierIn[i] : internal
+      const mix = this.mix.next()
+      // Railed for the output fed back into the carrier, which squares itself
+      // every sample and overflows almost at once; see `Rail.ts`.
+      outMixed[i] = railed(dry * (1 - mix) + dry * carrier * mix)
+      outCarrier[i] = internal
+    }
   }
 }

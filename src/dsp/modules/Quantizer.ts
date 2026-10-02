@@ -44,26 +44,32 @@ export class QuantizerModule extends DspModule {
   private note = NaN
   private trigger = 0
 
-  process(slots: Float32Array) {
+  processBlock(from: number, to: number) {
     const steps = QUANTIZER_SCALES[Math.round(this.params[P_SCALE])] ?? QUANTIZER_SCALES[0]
     const root = Math.round(this.params[P_ROOT])
-    const semis = slots[this.ins[IN_CV]] * 12
+    const trigger = Math.round(TRIGGER_S * this.ctx.sampleRate)
+    const cv = this.inputs[IN_CV]
+    const outCv = this.outputs[OUT_CV]
+    const outGate = this.outputs[OUT_GATE]
+    for (let i = from; i < to; i++) {
+      const semis = cv[i] * 12
 
-    const best = nearest(semis, root, steps)
-    if (Number.isNaN(this.note) || Math.abs(semis - best) + HYSTERESIS < Math.abs(semis - this.note)) {
-      if (best !== this.note) this.trigger = Math.round(TRIGGER_S * this.ctx.sampleRate)
-      this.note = best
-    }
-    // A note the scale no longer has, after the Scale or Root knob moved,
-    // gives way at once rather than waiting for the input to move.
-    if (!inScale(this.note, root, steps)) {
-      this.note = best
-      this.trigger = Math.round(TRIGGER_S * this.ctx.sampleRate)
-    }
+      const best = nearest(semis, root, steps)
+      if (Number.isNaN(this.note) || Math.abs(semis - best) + HYSTERESIS < Math.abs(semis - this.note)) {
+        if (best !== this.note) this.trigger = trigger
+        this.note = best
+      }
+      // A note the scale no longer has, after the Scale or Root knob moved,
+      // gives way at once rather than waiting for the input to move.
+      if (!inScale(this.note, root, steps)) {
+        this.note = best
+        this.trigger = trigger
+      }
 
-    slots[this.outs[OUT_CV]] = this.note / 12
-    slots[this.outs[OUT_GATE]] = this.trigger > 0 ? 1 : 0
-    if (this.trigger > 0) this.trigger--
+      outCv[i] = this.note / 12
+      outGate[i] = this.trigger > 0 ? 1 : 0
+      if (this.trigger > 0) this.trigger--
+    }
   }
 }
 

@@ -46,42 +46,54 @@ export class DustModule extends DspModule {
     this.trigLength = pulseSamples(this.ctx.sampleRate)
   }
 
-  process(slots: Float32Array) {
+  processBlock(from: number, to: number) {
     const sr = this.ctx.sampleRate
-
-    // Exponential CV, like every rate in the rack: a fixed amount moves the
-    // density by the same number of doublings wherever the knob sits.
-    const density = expCv(this.params[P_DENSITY], slots[this.ins[IN_DENSITY]], this.params[P_CV_AMOUNT])
-    const chance = density / sr
-
-    // Four draws every sample whether or not one fires, so the stream stays
-    // in step: a Density change moves where the impulses land without
-    // reshuffling which amplitude each of them gets, and switching Tone
-    // changes the sound without moving the impulses at all.
-    const roll = this.random()
-    const size = this.random()
-    const sign = this.random()
-    const hiss = this.random() * 2 - 1
-
-    if (roll < chance) {
-      this.env = (1 - this.params[P_SPREAD] * size) * (sign < 0.5 ? -1 : 1)
-      if (this.trigLeft > 0) this.trigGap = true
-      this.trigLeft = this.trigLength
-    }
-
-    slots[this.outs[OUT_AUDIO]] = Math.round(this.params[P_TONE]) === 1 ? this.env * hiss : this.env
-
-    // After the sample goes out, so an impulse's first sample is its full
-    // height and Spread at zero really is every one at full scale.
+    const densityCv = this.inputs[IN_DENSITY]
+    const outAudio = this.outputs[OUT_AUDIO]
+    const outTrig = this.outputs[OUT_TRIG]
+    const base = this.params[P_DENSITY]
+    const amount = this.params[P_CV_AMOUNT]
+    const spread = this.params[P_SPREAD]
+    const noisy = Math.round(this.params[P_TONE]) === 1
+    // Worked out once a block rather than once a sample: it is the same
+    // number every time until the knob moves.
     const decay = this.params[P_DECAY]
-    this.env *= decay > 0 ? tauDecay(decay * sr) : 0
+    const fall = decay > 0 ? tauDecay(decay * sr) : 0
 
-    if (this.trigGap) {
-      slots[this.outs[OUT_TRIG]] = 0
-      this.trigGap = false
-    } else {
-      slots[this.outs[OUT_TRIG]] = this.trigLeft > 0 ? 1 : 0
+    for (let i = from; i < to; i++) {
+      // Exponential CV, like every rate in the rack: a fixed amount moves the
+      // density by the same number of doublings wherever the knob sits.
+      const density = expCv(base, densityCv[i], amount)
+      const chance = density / sr
+
+      // Four draws every sample whether or not one fires, so the stream stays
+      // in step: a Density change moves where the impulses land without
+      // reshuffling which amplitude each of them gets, and switching Tone
+      // changes the sound without moving the impulses at all.
+      const roll = this.random()
+      const size = this.random()
+      const sign = this.random()
+      const hiss = this.random() * 2 - 1
+
+      if (roll < chance) {
+        this.env = (1 - spread * size) * (sign < 0.5 ? -1 : 1)
+        if (this.trigLeft > 0) this.trigGap = true
+        this.trigLeft = this.trigLength
+      }
+
+      outAudio[i] = noisy ? this.env * hiss : this.env
+
+      // After the sample goes out, so an impulse's first sample is its full
+      // height and Spread at zero really is every one at full scale.
+      this.env *= fall
+
+      if (this.trigGap) {
+        outTrig[i] = 0
+        this.trigGap = false
+      } else {
+        outTrig[i] = this.trigLeft > 0 ? 1 : 0
+      }
+      if (this.trigLeft > 0) this.trigLeft--
     }
-    if (this.trigLeft > 0) this.trigLeft--
   }
 }

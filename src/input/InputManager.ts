@@ -63,6 +63,11 @@ function isTextEntry(target: EventTarget | null) {
  * so the same rule is read off the row that holds focus instead.
  */
 function ownsKeyboard(target: EventTarget | null, e?: KeyboardEvent) {
+  // Whatever says so keeps the keys it names while the focus is inside it:
+  // `data-claims-keys="Space"`, by code, several split by spaces. A tap-tempo
+  // pad takes Space this way, which would otherwise play the rack.
+  const claim = target instanceof Element ? target.closest('[data-claims-keys]') : null
+  if (claim && e && claim.getAttribute('data-claims-keys')!.split(' ').includes(e.code)) return true
   // A knob, a switch position or a jack is a control drawn out of elements
   // that are not form fields, and says so with its role. It takes the keys
   // its role moves with, as a range input does, and nothing else.

@@ -1,6 +1,7 @@
 import { defOf } from './defs'
 import { kitSlots, padPrefix } from './kit'
-import type { Cable, Patch, PatchModule } from './types'
+import { addNote, editNote, keepNotes, notesOf } from './notes'
+import type { Cable, Patch, PatchModule, RackNote } from './types'
 
 export interface PortRef {
   module: string
@@ -198,6 +199,8 @@ export function setModuleKey(patch: Patch, id: string, key: string | undefined):
 export interface ModuleClip {
   modules: PatchModule[]
   cables: Cable[]
+  /** The notes on those modules, which go with them. */
+  notes?: RackNote[]
 }
 
 export function copyModules(
@@ -222,7 +225,10 @@ export function copyModules(
   const cables = patch.cables
     .filter((c) => wanted.has(c.from.module) && wanted.has(c.to.module))
     .map((c) => ({ ...c, from: { ...c.from }, to: { ...c.to } }))
-  return { modules, cables }
+  const notes = notesOf(patch)
+    .filter((n) => wanted.has(n.module))
+    .map((n) => ({ ...n }))
+  return notes.length ? { modules, cables, notes } : { modules, cables }
 }
 
 /**
@@ -250,6 +256,13 @@ export function pasteModules(
     const to = { module: renamed.get(c.to.module)!, port: c.to.port }
     const wired = connect(next, from, to)
     next = c.color === undefined ? wired : setCableColor(wired, cableId(from, to), c.color)
+  }
+  // Each note onto its module's new id, under a new id of its own.
+  for (const n of clip.notes ?? []) {
+    const module = renamed.get(n.module)
+    if (!module) continue
+    const made = addNote(next, module, n.face, n.x, n.y)
+    next = editNote(made.patch, made.id, { text: n.text, color: n.color, collapsed: n.collapsed })
   }
   const out = reconcileValues(next, values)
   for (const m of added) {
@@ -300,10 +313,13 @@ export function nextModuleId(patch: Patch, type: string): string {
 
 /** Pull a module out of the rack, along with everything patched to it. */
 export function removeModule(patch: Patch, id: string): Patch {
-  return {
+  // Spread, so whatever else the patch carries stays; and its notes go with
+  // it, as its cables do.
+  return keepNotes({
+    ...patch,
     modules: patch.modules.filter((m) => m.id !== id),
     cables: patch.cables.filter((c) => c.from.module !== id && c.to.module !== id),
-  }
+  })
 }
 
 /**

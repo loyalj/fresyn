@@ -1,8 +1,8 @@
 import { useCallback } from 'react'
+import * as offline from '../audio/offline'
 import type { StemMix } from '../audio/renderSong'
 import type { SampleLibrary } from '../audio/SampleLibrary'
 import type { Transport } from '../audio/Transport'
-import { makeZip, type ZipEntry } from '../audio/zip'
 import { downloadBytes, slug } from '../patch/storage'
 import type { Rack } from '../song/project'
 import { songEnd } from '../song/schedule'
@@ -11,7 +11,6 @@ import { songToMidi } from '../song/midi'
 import { rowZero, tuningOf } from '../song/tuning'
 import type { BounceSettings } from '../ui/BounceDialog'
 import { progress, reason, warn, type SetNotice } from '../ui/notice'
-import { nextFrame } from './nextFrame'
 
 interface Options {
   song: Song
@@ -25,18 +24,38 @@ interface Options {
 }
 
 /**
+ * A progress callback that only touches the notice when the percentage it
+ * shows has changed. The worker reports every tenth of a second or so, and
+ * each notice is a render of the app's notice area; most of those would
+ * draw the same number again.
+ */
+function percentNotice(setNotice: SetNotice, say: (p: offline.OfflineProgress) => string) {
+  let last = ''
+  return (p: offline.OfflineProgress) => {
+    const text = say(p)
+    if (text === last) return
+    last = text
+    setNotice(progress(text))
+  }
+}
+
+/**
  * The arrangement as audio: the whole mix, or a file per track.
  *
- * The renderer is fetched when a bounce is asked for rather than with the
- * page. It is a second copy of the whole DSP, and most sessions never bounce.
+ * Both run in the bounce worker (`audio/offline.ts`), so the page stays
+ * live while they do and a bounce left running in a background tab carries
+ * on. The renderer and the encoders are fetched with the worker, when a
+ * bounce is first asked for, rather than with the page: they are a second
+ * copy of the whole DSP, and most sessions never bounce.
  */
 export function useBounce({ song, racks, name, samples, transport, setNotice, runJob }: Options) {
   /**
    * Bounce the arrangement to a file.
    *
-   * The transport is stopped first. The bounce runs its own player and would
-   * be correct either way, but the two would be competing for the same thread
-   * and the loop you were listening to would stutter for as long as it took.
+   * The transport is stopped first. The bounce runs its own player in its
+   * own thread and would be correct either way, but it wants a whole core
+   * for as long as it takes, and on a machine without one to spare it is the
+   * loop you were listening to that would stutter.
    */
   const bounceSong = useCallback(async (settings: BounceSettings) => {
     if (songEnd(song) <= 0) {
@@ -47,22 +66,15 @@ export function useBounce({ song, racks, name, samples, transport, setNotice, ru
       transport.stop()
       setNotice(progress('Bouncing...'))
       try {
-        const [{ renderSong }, { encodeAudio }] = await Promise.all([
-          import('../audio/renderSong'),
-          import('../audio/encoders'),
-        ])
-        const audio = await renderSong(song, racks, {
-          sampleRate: settings.sampleRate,
-          samples: samples.bank(),
-          onProgress: async (done) => {
-            setNotice(progress(`Bouncing ${Math.round(done * 100)}%`))
-            await nextFrame()
-          },
-        })
-        setNotice(progress(`Encoding ${settings.format.toUpperCase()}...`))
-        await nextFrame()
-        const file = await encodeAudio([audio.left, audio.right], audio.sampleRate, settings)
-        downloadBytes(file.bytes as BlobPart, `${slug(name)}.${file.extension}`, file.mime)
+        const audio = await offline.bounceSong(
+          { song, racks, samples: samples.bank(), sampleRate: settings.sampleRate, encode: settings },
+          percentNotice(setNotice, (p) =>
+            p.stage === 'encode'
+              ? `Encoding ${settings.format.toUpperCase()}...`
+              : `Bouncing ${Math.round(p.done * 100)}%`,
+          ),
+        )
+        downloadBytes(audio.blob, `${slug(name)}.${audio.extension}`, audio.mime)
         setNotice(
           audio.peak > 1
             ? warn(`Bounced ${audio.seconds.toFixed(1)}s -- it clips at ${audio.peak.toFixed(2)}, so bring the levels down`)
@@ -89,34 +101,28 @@ export function useBounce({ song, racks, name, samples, transport, setNotice, ru
         transport.stop()
         setNotice(progress('Bouncing stems...'))
         try {
-          const [{ renderStems }, { encodeAudio }] = await Promise.all([
-            import('../audio/renderSong'),
-            import('../audio/encoders'),
-          ])
-          const stems = await renderStems(song, racks, {
-            stemMix,
-            sampleRate: settings.sampleRate,
-            samples: samples.bank(),
-            onProgress: async (done) => {
-              setNotice(progress(`Bouncing stems ${Math.round(done * 100)}%`))
-              await nextFrame()
+          const stems = await offline.bounceStems(
+            {
+              song,
+              racks,
+              samples: samples.bank(),
+              sampleRate: settings.sampleRate,
+              encode: settings,
+              stemMix,
+              names: Object.fromEntries(song.tracks.map((t) => [t.id, slug(t.name)])),
             },
-          })
-          if (stems.length === 0) {
+            percentNotice(setNotice, (p) =>
+              p.stage === 'encode'
+                ? `Encoding stem ${(p.index ?? 0) + 1} of ${p.count}...`
+                : `Bouncing stems ${Math.round(p.done * 100)}%`,
+            ),
+          )
+          if (!stems.zip) {
             setNotice('Every track is muted, so there are no stems to write')
             return
           }
-          // Numbered, so they sort into the order the tracks are in rather than
-          // alphabetically -- which is the order anybody will want to line them up.
-          const entries: ZipEntry[] = []
-          for (const [i, stem] of stems.entries()) {
-            setNotice(progress(`Encoding stem ${i + 1} of ${stems.length}...`))
-            await nextFrame()
-            const file = await encodeAudio([stem.audio.left, stem.audio.right], stem.audio.sampleRate, settings)
-            entries.push({ name: `${String(i + 1).padStart(2, '0')} ${slug(stem.name)}.${file.extension}`, data: file.bytes })
-          }
-          downloadBytes(makeZip(entries) as BlobPart, `${slug(name)}-stems.zip`, 'application/zip')
-          setNotice(`Bounced ${stems.length} stem${stems.length === 1 ? '' : 's'}`)
+          downloadBytes(stems.zip, `${slug(name)}-stems.zip`, 'application/zip')
+          setNotice(`Bounced ${stems.count} stem${stems.count === 1 ? '' : 's'}`)
         } catch (err) {
           setNotice(warn(`Bounce failed: ${reason(err)}`))
         }

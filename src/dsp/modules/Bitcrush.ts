@@ -31,6 +31,8 @@ const IN_CV = 1
  * the rack could quantise a level at all.
  */
 export class BitcrushModule extends DspModule {
+  /** Works only on what reaches it, so it may rest; see `DspModule.rests`. */
+  readonly rests = true
   /** Where the sampler is between one reading and the next. */
   private phase = 0
   /** The reading it is holding. */
@@ -42,30 +44,37 @@ export class BitcrushModule extends DspModule {
     this.mix = new Smoothed(this.params[P_MIX], this.ctx.sampleRate)
   }
 
-  process(slots: Float32Array) {
-    const dry = slots[this.ins[IN_SIGNAL]]
-
-    // A falling envelope into Rate is a machine winding down: the sampler
-    // slows, the steps get longer and the pitch of what it is holding drops
-    // with it.
-    const rate =
-      expCv(this.params[P_RATE], slots[this.ins[IN_CV]], this.params[P_CV_AMOUNT])
-    this.phase += rate / this.ctx.sampleRate
-    if (this.phase >= 1) {
-      // Not a while loop: asking for a rate above the one the rack runs at
-      // means every sample is a fresh reading, which is what dropping the
-      // leftover phase gives, and a loop would spin for the same answer.
-      this.phase -= Math.floor(this.phase)
-
-      // Quantise on the way in, so the level held between readings is the
-      // level that was actually stored rather than a rounded copy of it.
-      const levels = Math.pow(2, Math.round(this.params[P_BITS]) - 1)
-      const step = Math.round(dry * levels)
-      this.held = levels > 0 ? step / levels : 0
-    }
-
+  processBlock(from: number, to: number) {
+    const signal = this.inputs[IN_SIGNAL]
+    const cv = this.inputs[IN_CV]
+    const out = this.outputs[0]
+    const baseRate = this.params[P_RATE]
+    const cvAmount = this.params[P_CV_AMOUNT]
+    const sr = this.ctx.sampleRate
+    // Quantise on the way in, so the level held between readings is the
+    // level that was actually stored rather than a rounded copy of it.
+    const levels = Math.pow(2, Math.round(this.params[P_BITS]) - 1)
     this.mix.set(this.params[P_MIX])
-    const mix = this.mix.next()
-    slots[this.outs[0]] = dry * (1 - mix) + this.held * mix
+
+    for (let i = from; i < to; i++) {
+      const dry = signal[i]
+
+      // A falling envelope into Rate is a machine winding down: the sampler
+      // slows, the steps get longer and the pitch of what it is holding drops
+      // with it.
+      const rate = expCv(baseRate, cv[i], cvAmount)
+      this.phase += rate / sr
+      if (this.phase >= 1) {
+        // Not a while loop: asking for a rate above the one the rack runs at
+        // means every sample is a fresh reading, which is what dropping the
+        // leftover phase gives, and a loop would spin for the same answer.
+        this.phase -= Math.floor(this.phase)
+        const step = Math.round(dry * levels)
+        this.held = levels > 0 ? step / levels : 0
+      }
+
+      const mix = this.mix.next()
+      out[i] = dry * (1 - mix) + this.held * mix
+    }
   }
 }

@@ -12,6 +12,9 @@ const P_SOLO = P_MUTE + CHANNELS
 const OUT_L = 0
 const OUT_R = 1
 
+/** How long the loudness goes on being measured after a report asks for it. */
+const LISTEN_SAMPLES = 48000
+
 /**
  * 8:2 mixer. Each channel is its own input jack, which is how a patch sums
  * signals at all: every other input in the rack takes exactly one cable, as
@@ -25,6 +28,8 @@ const OUT_R = 1
  * do, done where the signal is actually balanced.
  */
 export class MixerModule extends DspModule implements Metering {
+  /** Works only on what reaches it, so it may rest; see `DspModule.rests`. */
+  readonly rests = true
   /** This module meters itself; see `DspModule.meter`. */
   readonly meter: Metering = this
 
@@ -48,6 +53,16 @@ export class MixerModule extends DspModule implements Metering {
    */
   private report = new Float32Array(CHANNELS + 3)
   private loudness = new LiveLoudness(this.ctx.sampleRate)
+  /**
+   * Samples left for which the loudness is worth measuring: some after each
+   * report, so it runs while a panel is showing it and not otherwise. Four
+   * K-weighting filters a sample was a tenth of the rack on a song, spent on
+   * every track's mixer for the one meter on screen -- and on every mixer in
+   * a bounce, where nothing reads it at all.
+   */
+  private listening = 0
+  /** Channels with anything to do this block, in order; see `processBlock`. */
+  private live = new Int32Array(CHANNELS)
 
   /**
    * Peaks since the last call, then reset so the next report covers only the
@@ -55,6 +70,9 @@ export class MixerModule extends DspModule implements Metering {
    * array thirty times a second would put a collection on the audio thread.
    */
   levels(): Float32Array {
+    // Long enough to cover the gap to the next report, and the three
+    // seconds short-term loudness is measured over once it has started.
+    this.listening = LISTEN_SAMPLES * (this.ctx.sampleRate / 48000)
     this.report.set(this.peaks)
     this.peaks.fill(0)
     // Silence reads as -Infinity, which is not a number a message can be
@@ -128,42 +146,60 @@ export class MixerModule extends DspModule implements Metering {
     }
   }
 
-  process(slots: Float32Array) {
+  processBlock(from: number, to: number) {
     // Trig only when a knob actually moved; the smoothers carry the rest.
     this.updateGains(false)
     this.master.set(this.params[P_MASTER])
 
-    let l = 0
-    let r = 0
+    // The channels worth visiting this block: every patched one, and an
+    // unpatched one only while its fader is still gliding. An unpatched
+    // channel adds nothing, and a settled smoother hands back what it did
+    // last time, so skipping the rest changes no sample.
+    const live = this.live
+    let count = 0
     for (let c = 0; c < CHANNELS; c++) {
-      const gl = this.gainL[c].next()
-      const gr = this.gainR[c].next()
-      const slot = this.ins[c]
-      if (slot === 0) continue // unpatched: reads ground
-      const x = slots[slot]
-      l += x * gl
-      r += x * gr
-
-      // Post-fader and pre-pan, which is what the fader beside the meter is
-      // setting: constant-power panning keeps the two gains' magnitude at the
-      // fader value, so this is the channel's contribution to the bus however
-      // it is placed in the image.
-      // Post-fader, and post-mute with it: a strip that is switched off reads
-      // dark, which is how you tell a muted channel from a silent one.
-      const a = (x < 0 ? -x : x) * this.params[c * 2] * this.open[c]
-      if (a > this.peaks[c]) this.peaks[c] = a
+      if (this.ins[c] !== 0 || !this.gainL[c].settled || !this.gainR[c].settled) live[count++] = c
     }
 
-    const m = this.master.next()
-    const outL = Math.tanh(this.dcL.process(l * m))
-    const outR = Math.tanh(this.dcR.process(r * m))
-    slots[this.outs[OUT_L]] = outL
-    slots[this.outs[OUT_R]] = outR
+    const ins = this.inputs
+    const outL = this.outputs[OUT_L]
+    const outR = this.outputs[OUT_R]
+    const peaks = this.peaks
+    const listening = this.listening > 0
+    for (let i = from; i < to; i++) {
+      let l = 0
+      let r = 0
+      for (let k = 0; k < count; k++) {
+        const c = live[k]
+        const gl = this.gainL[c].next()
+        const gr = this.gainR[c].next()
+        if (this.ins[c] === 0) continue // unpatched: reads ground
+        const x = ins[c][i]
+        l += x * gl
+        r += x * gr
 
-    const al = outL < 0 ? -outL : outL
-    const ar = outR < 0 ? -outR : outR
-    const bus = al > ar ? al : ar
-    if (bus > this.peaks[CHANNELS]) this.peaks[CHANNELS] = bus
-    this.loudness.push(outL, outR)
+        // Post-fader and pre-pan, which is what the fader beside the meter is
+        // setting: constant-power panning keeps the two gains' magnitude at
+        // the fader value, so this is the channel's contribution to the bus
+        // however it is placed in the image.
+        // Post-fader, and post-mute with it: a strip that is switched off
+        // reads dark, which is how you tell a muted channel from a silent one.
+        const a = (x < 0 ? -x : x) * this.params[c * 2] * this.open[c]
+        if (a > peaks[c]) peaks[c] = a
+      }
+
+      const m = this.master.next()
+      const yl = Math.tanh(this.dcL.process(l * m))
+      const yr = Math.tanh(this.dcR.process(r * m))
+      outL[i] = yl
+      outR[i] = yr
+
+      const al = yl < 0 ? -yl : yl
+      const ar = yr < 0 ? -yr : yr
+      const bus = al > ar ? al : ar
+      if (bus > peaks[CHANNELS]) peaks[CHANNELS] = bus
+      if (listening) this.loudness.push(yl, yr)
+    }
+    if (listening) this.listening -= to - from
   }
 }

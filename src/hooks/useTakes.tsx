@@ -1,18 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AudioEngine } from '../audio/AudioEngine'
-import { normalize } from '../audio/normalize'
+import { renderTakes, writeWavs } from '../audio/offline'
 import type { SampleLibrary } from '../audio/SampleLibrary'
-import { encodeWav } from '../audio/wav'
-import { peakEnvelope } from '../audio/waveform'
-import { makeZip, type ZipEntry } from '../audio/zip'
 import { downloadBytes, slug } from '../patch/storage'
 import type { Patch } from '../patch/types'
 import { DEFAULT_EXPORT, ExportPanel, type ExportSettings } from '../ui/ExportPanel'
 import { reason, warn, type SetNotice } from '../ui/notice'
 import { TakeList, type Take } from '../ui/TakeList'
-import { nextFrame } from './nextFrame'
-
-const WAVE_COLUMNS = 200
 
 interface Options {
   engine: AudioEngine
@@ -90,51 +84,27 @@ export function useTakes({ engine, samples, trackId, patchName, patch, values, s
       setExporting('Rendering')
 
       try {
-        // The offline renderer is the whole DSP a second time over, so it is
-        // fetched the first time something is rendered rather than with the
-        // page.
-        const { renderVariation } = await import('../audio/render')
+        // In the takes worker, a take at a time: the page stays live while
+        // a long batch renders, and the panel counts them in as they arrive.
         const rendered: Take[] = []
         let limited = 0
-        for (let i = 0; i < settings.count; i++) {
-          setExporting(`Take ${i + 1} of ${settings.count}`)
-          // Rendering is synchronous and fast, but a batch still has to let
-          // the page paint between takes or the progress never appears.
-          await nextFrame()
-
-          const take = renderVariation(
-            patch,
-            values,
-            {
-              sampleRate: settings.sampleRate,
-              duration: settings.duration,
-              gateSeconds: settings.gateSeconds,
-              seed: settings.seed,
-              // A take has to contain whatever a Sampler is playing, so the
-              // offline pass gets the same audio the live rack has.
-              samples: samples.bank(),
-            },
-            i,
-            settings.spread,
-          )
-          // Levelled here, before anything is drawn or heard, so the take
-          // you audition is the take that gets saved.
-          const level = normalize(take.left, take.right, take.sampleRate, settings.normalize)
-          if (level.limited) limited++
+        await renderTakes({ patch, values, samples: samples.bank(), settings }, (take) => {
+          if (take.limited) limited++
           rendered.push({
-            index: i,
+            index: take.index,
             seed: take.seed,
             seconds: take.seconds,
-            peak: level.peak,
+            peak: take.peak,
             sampleRate: take.sampleRate,
-            left: level.left,
-            right: level.right,
-            envelope: peakEnvelope(level.left, level.right, WAVE_COLUMNS),
+            left: take.left,
+            right: take.right,
+            envelope: take.envelope,
             keep: true,
             source,
             bitDepth: settings.bitDepth,
           })
-        }
+          if (rendered.length < settings.count) setExporting(`Take ${rendered.length + 1} of ${settings.count}`)
+        })
         setTakes(id, () => rendered)
         setNotice(
           `Rendered ${rendered.length} take${rendered.length === 1 ? '' : 's'}` +
@@ -174,24 +144,32 @@ export function useTakes({ engine, samples, trackId, patchName, patch, values, s
     [engine, takes, playing, stop],
   )
 
-  const onDownloadTakes = useCallback(() => {
+  const onDownloadTakes = useCallback(async () => {
     const kept = takes.filter((t) => t.keep)
     if (kept.length === 0) return
 
     // Named after the sound they were rendered from, as it was called then.
     const base = slug(kept[0].source)
     const bitDepth = kept[0].bitDepth
-    const files: ZipEntry[] = kept.map((take) => ({
-      name:
-        kept.length === 1
-          ? `${base}.wav`
-          : `${base}_${String(take.index + 1).padStart(2, '0')}.wav`,
-      data: encodeWav([take.left, take.right], take.sampleRate, bitDepth),
-    }))
-
-    if (files.length === 1) downloadBytes(files[0].data, files[0].name, 'audio/wav')
-    else downloadBytes(makeZip(files), `${base}.zip`, 'application/zip')
-    setNotice(`Downloaded ${files.length} take${files.length === 1 ? '' : 's'}`)
+    const one = kept.length === 1
+    try {
+      // Written in the worker too: a batch of long takes at 24 bits is a
+      // good many megabytes of arithmetic.
+      const { blob } = await writeWavs(
+        kept.map((take) => ({
+          name: one ? `${base}.wav` : `${base}_${String(take.index + 1).padStart(2, '0')}.wav`,
+          left: take.left,
+          right: take.right,
+          sampleRate: take.sampleRate,
+          bitDepth,
+        })),
+        !one,
+      )
+      downloadBytes(blob, one ? `${base}.wav` : `${base}.zip`, one ? 'audio/wav' : 'application/zip')
+      setNotice(`Downloaded ${kept.length} take${one ? '' : 's'}`)
+    } catch (err) {
+      setNotice(warn(`Download failed: ${reason(err)}`))
+    }
   }, [takes, setNotice])
 
   /**
@@ -217,7 +195,7 @@ export function useTakes({ engine, samples, trackId, patchName, patch, values, s
             setTakes(trackId, (prev) => prev.map((t) => (t.index === i ? { ...t, keep: !t.keep } : t)))
           }
           onKeepAll={(keep) => setTakes(trackId, (prev) => prev.map((t) => ({ ...t, keep })))}
-          onExport={onDownloadTakes}
+          onExport={() => void onDownloadTakes()}
           onDiscard={() => {
             stop()
             setTakes(trackId, () => [])

@@ -41,6 +41,8 @@ const RECTIFY = 3
  * and without it they fold back down as a whistle unrelated to the note.
  */
 export class DriveModule extends DspModule {
+  /** Works only on what reaches it, so it may rest; see `DspModule.rests`. */
+  readonly rests = true
   /**
    * Asymmetry is the point of the Bias knob, and asymmetry puts a DC offset
    * on the output by definition. Left in, it would eat headroom everywhere
@@ -65,17 +67,14 @@ export class DriveModule extends DspModule {
     this.level = new Smoothed(this.params[P_LEVEL], sr)
   }
 
-  process(slots: Float32Array) {
+  processBlock(from: number, to: number) {
     this.drive.set(this.params[P_DRIVE])
     this.bias.set(this.params[P_BIAS])
     this.level.set(this.params[P_LEVEL])
-
-    const x = slots[this.ins[IN_SIGNAL]] + this.bias.next()
-    // An envelope into Drive is a transient: loud and dirty at the moment of
-    // the hit and clean as it falls away, which is what a struck thing does
-    // and what a fixed drive never does.
-    const drive = expCv(this.drive.next(), slots[this.ins[IN_CV]], this.params[P_CV_AMOUNT])
-    const driven = saneInput(x * drive)
+    const signal = this.inputs[IN_SIGNAL]
+    const cv = this.inputs[IN_CV]
+    const out = this.outputs[0]
+    const amount = this.params[P_CV_AMOUNT]
 
     const curve = Math.round(this.params[P_CURVE])
     // A different curve has a different antiderivative, so the one held for
@@ -85,13 +84,23 @@ export class DriveModule extends DspModule {
       this.curve1 = curve
       this.f1 = integral(curve, this.x1)
     }
-    const f = integral(curve, driven)
-    const dx = driven - this.x1
-    const y = dx > ADAA_EPS || dx < -ADAA_EPS ? (f - this.f1) / dx : shape(curve, 0.5 * (driven + this.x1))
-    this.x1 = driven
-    this.f1 = f
 
-    slots[this.outs[0]] = this.dc.process(y) * this.level.next()
+    for (let i = from; i < to; i++) {
+      const x = signal[i] + this.bias.next()
+      // An envelope into Drive is a transient: loud and dirty at the moment
+      // of the hit and clean as it falls away, which is what a struck thing
+      // does and what a fixed drive never does.
+      const drive = expCv(this.drive.next(), cv[i], amount)
+      const driven = saneInput(x * drive)
+
+      const f = integral(curve, driven)
+      const dx = driven - this.x1
+      const y = dx > ADAA_EPS || dx < -ADAA_EPS ? (f - this.f1) / dx : shape(curve, 0.5 * (driven + this.x1))
+      this.x1 = driven
+      this.f1 = f
+
+      out[i] = this.dc.process(y) * this.level.next()
+    }
   }
 }
 

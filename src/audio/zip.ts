@@ -16,9 +16,21 @@ export interface ZipEntry {
 const UTF8_NAMES = 0x0800
 
 export function makeZip(entries: ZipEntry[]): Uint8Array<ArrayBuffer> {
+  return concat(zipParts(entries))
+}
+
+/**
+ * The same archive as `makeZip`, as the pieces it is made of, in order:
+ * each header, then each entry's own bytes as they are, then the directory.
+ *
+ * For a zip that is going straight into a `Blob`, which takes a list of
+ * parts: a set of stems is tens of megabytes, and gluing it into one array
+ * first only to hand it to a Blob would hold every byte of it twice.
+ */
+export function zipParts(entries: ZipEntry[]): Uint8Array<ArrayBuffer>[] {
   const encoder = new TextEncoder()
-  const locals: Uint8Array[] = []
-  const centrals: Uint8Array[] = []
+  const locals: Uint8Array<ArrayBuffer>[] = []
+  const centrals: Uint8Array<ArrayBuffer>[] = []
   let offset = 0
 
   for (const entry of entries) {
@@ -82,7 +94,7 @@ export function makeZip(entries: ZipEntry[]): Uint8Array<ArrayBuffer> {
   ev.setUint32(16, offset, true)
   ev.setUint16(20, 0, true) // comment length
 
-  return concat([...locals, ...centrals, end])
+  return [...locals, ...centrals, end]
 }
 
 function concat(parts: Uint8Array[]): Uint8Array<ArrayBuffer> {

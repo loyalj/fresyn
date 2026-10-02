@@ -6,12 +6,14 @@ export interface ModuleContext {
 }
 
 /**
- * One node in the patch graph. Modules are stepped a single sample at a time
- * and communicate only through the shared slot array, which is what lets a
- * feedback cable cost exactly one sample.
- *
- * `process` runs at audio rate: no allocation, no closures, no exceptions.
+ * How many samples the engine works on at a time: the Web Audio render
+ * quantum, so the live rack does one block per callback.
  */
+export const BLOCK = 128
+
+/** What a module's ports are before an engine has bound them. */
+const UNBOUND: Float32Array[] = []
+
 /**
  * A module that records what reaches it so the UI can draw it. The engine
  * collects these through this interface rather than by module type, so the
@@ -75,6 +77,25 @@ export interface Playable {
   voiced?: boolean
 }
 
+/**
+ * One node in the patch graph.
+ *
+ * Modules communicate only through their ports, and a port is a block of
+ * samples: `inputs[k]` and `outputs[k]` are views the engine binds onto its
+ * own buffers, one per jack, and `processBlock(from, to)` works through the
+ * samples from `from` up to `to` of every one of them in a single call. A
+ * cable is two modules bound to the same block, so nothing is ever copied
+ * along one.
+ *
+ * Every output must be written on every sample of the range: whatever is
+ * downstream reads that sample of the block, and a sample skipped is last
+ * block's value, not the last one written.
+ *
+ * `processBlock` runs at audio rate: no allocation, no closures, no
+ * exceptions. Parameters, gates and the sample are fixed for the length of a
+ * call -- the engine stops at anything that changes them -- so reading them
+ * once at the top is the same as reading them on every sample.
+ */
 export abstract class DspModule {
   /** Module type, so a rewire can tell whether an instance is still reusable. */
   type = ''
@@ -121,6 +142,30 @@ export abstract class DspModule {
   gateOpen = false
 
   /**
+   * Set by a module that only ever works on what reaches its jacks -- a
+   * filter, a reverb, a mixer -- and that nothing but its jacks can wake: no
+   * gate, no note, no clock of its own that anything downstream is waiting
+   * on. Fed silence for long enough and gone quiet itself, such a module is
+   * working out silence, and the engine lets it rest: skipped, putting out
+   * silence, until something arrives at a jack again. See `GraphEngine`.
+   *
+   * Not for anything whose state has to keep moving while it is quiet, like
+   * a compressor still letting go of the last peak.
+   */
+  readonly rests: boolean = false
+  /**
+   * The longest it can go on to say something after a stretch of silence,
+   * in seconds: a delay's line, a granulator's buffer. Silent between two
+   * echoes is not empty, so a module that holds sound for later rests only
+   * once it has been quiet for longer than it can hold anything.
+   */
+  readonly memory: number = 0
+  /** The engine's: this module is resting. */
+  resting = false
+  /** The engine's: how many samples it has been fed nothing and said nothing. */
+  quietRun = 0
+
+  /**
    * Set by modules that publish their input for display. Left null by every
    * other module, which is how the engine picks the scopes out of a patch.
    */
@@ -142,6 +187,10 @@ export abstract class DspModule {
   outs: Int32Array = new Int32Array(0)
   /** View onto this module's span of the flat parameter array. */
   params: Float32Array = new Float32Array(0)
+  /** This block of each input port, in the def's port order. Bound by the engine. */
+  inputs: Float32Array[] = UNBOUND
+  /** This block of each output port. */
+  outputs: Float32Array[] = UNBOUND
   /**
    * The audio this module plays, or null when it has none or its file is
    * missing. Resolved by the engine when the rack is built and again whenever
@@ -157,7 +206,30 @@ export abstract class DspModule {
   /** Called once after wiring is bound, before the first sample. */
   prepare(): void {}
 
-  abstract process(slots: Float32Array): void
+  /** Samples `from` up to (not including) `to` of this block. */
+  abstract processBlock(from: number, to: number): void
+
+  /**
+   * One sample, through a slot array of the caller's -- for a module run on
+   * its own, outside any engine, the way the checks drive one. `ins` and
+   * `outs` index `slots` exactly as they index an engine's.
+   */
+  process(slots: Float32Array) {
+    let io = this.single
+    if (!io || io.inputs.length !== this.ins.length || io.outputs.length !== this.outs.length) {
+      io = {
+        inputs: Array.from(this.ins, () => new Float32Array(1)),
+        outputs: Array.from(this.outs, () => new Float32Array(1)),
+      }
+      this.single = io
+    }
+    this.inputs = io.inputs
+    this.outputs = io.outputs
+    for (let k = 0; k < this.ins.length; k++) io.inputs[k][0] = slots[this.ins[k]]
+    this.processBlock(0, 1)
+    for (let k = 0; k < this.outs.length; k++) slots[this.outs[k]] = io.outputs[k][0]
+  }
+  private single: { inputs: Float32Array[]; outputs: Float32Array[] } | null = null
 }
 
 /**

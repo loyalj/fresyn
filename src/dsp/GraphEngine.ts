@@ -1,6 +1,6 @@
 import type { CompiledPad, CompiledPatch } from '../patch/compile'
 import { MODULE_FACTORIES, type DspModule } from './modules'
-import type { Capturing, Metering, Playable } from './modules/types'
+import { BLOCK, type Capturing, type Metering, type Playable } from './modules/types'
 import { DEFAULT_SEED } from './Rng'
 import { emptyBank, type SampleBank } from './samples'
 
@@ -27,18 +27,47 @@ const SILENCE = 1e-4
 /** And it has to stay there this long, so a note between cycles is not cut. */
 const SILENT_FOR = 0.05
 
+/** Ground: the block every unpatched input reads, and nothing ever writes. */
+const GROUND = 0
+
+/** What a resting module counts as silence: -120 dB. */
+const QUIET = 1e-6
+/**
+ * How long a module that may rest must be fed nothing and say nothing
+ * before it does: long enough that a tail has really died away, not a gap
+ * between two notes.
+ */
+const QUIET_FOR = 0.25
+
 /**
  * Executes a compiled patch on the audio thread.
  *
- * The whole graph advances one sample at a time rather than one block at a
- * time. That costs some per-sample call overhead, and buys the two things a
- * modular rack cannot do without: audio-rate modulation of any input, and
- * feedback cables that cost a single sample instead of a whole block.
+ * **Blocks.** Every cable is a block of samples, and each module works
+ * through a whole block of them in one call. The graph used to be stepped a
+ * sample at a time instead -- every module called once per sample -- and
+ * that call was most of the cost of the rack: forty kinds of module behind
+ * one call site is a call the JIT cannot inline, made 48,000 times a second
+ * per module. In a block, each module's loop is its own code, and runs as
+ * fast as straight-line arithmetic does.
+ *
+ * **Feedback.** A modular rack has to be able to patch a module's output back
+ * into something upstream, and hear it one sample later rather than one block
+ * later -- a block of delay in a loop is a different sound, a comb at 375 Hz.
+ * So the modules a feedback cable spans are stepped a sample at a time, as
+ * every module used to be, while the rest of the rack runs in blocks. The
+ * cable reads a copy of its source one sample behind: see `fbDst`.
+ *
+ * **The grid.** Blocks are laid on the transport's own frames -- block N is
+ * frames 128N to 128N+127 -- whatever lengths a caller renders in. Events
+ * split a block where they land, and voices and pads are put to sleep only at
+ * the end of one, so how a render is chopped up changes nothing that is
+ * heard: a song rendered 37 samples at a time is the same song, to the bit.
  */
 export class GraphEngine {
-  private slots: Float32Array
   private paramValues: Float32Array
   private modules: DspModule[] = []
+  /** Each module's id, in the same order. */
+  private ids: string[] = []
   /** Audio the patch refers to by hash. Empty until something is loaded. */
   private samples: SampleBank = emptyBank()
   /** Modules with a trigger of their own, in patch order. */
@@ -66,8 +95,9 @@ export class GraphEngine {
    * cannot if the counting happens somewhere only one of them goes.
    */
   private frame = 0
-  /** Pending events, soonest first. */
+  /** Pending events, soonest first, from `queueHead` on. */
   private queue: EngineEvent[] = []
+  private queueHead = 0
   private byId = new Map<string, DspModule>()
   /** Bus slots summed into the speaker pair, split for a tight inner loop. */
   private monL = new Int32Array(0)
@@ -86,6 +116,64 @@ export class GraphEngine {
   private outR = 0
   private seed: number
   private readonly ctx: { sampleRate: number }
+
+  // --- buffers ---------------------------------------------------------
+  //
+  // One block of samples per slot, end to end in a single array, and a view
+  // onto each: a module's ports are bound to those views, so a cable is two
+  // modules sharing one. A block is indexed by where it sits on the grid, so
+  // sample N of the transport is always index N % 128.
+
+  /** Slots, blocks of `BLOCK`, in one array. */
+  private buf = new Float32Array(0)
+  /** A view per slot onto `buf`. */
+  private views: Float32Array[] = []
+  /** How many slots there are, including the copies feedback cables read. */
+  private slotTotal = 0
+  /**
+   * Where on the grid the last sample was written: what "the sample before"
+   * means for the first sample of the next stretch, which is how a feedback
+   * cable, or a module that has been asleep, knows what it last said.
+   */
+  private lastIndex = BLOCK - 1
+  /** The same, as it was when the stretch being rendered began. */
+  private before = BLOCK - 1
+  /** Where the stretch being rendered began. */
+  private stretchFrom = 0
+  /**
+   * Where on the grid the current block's first stretch began, or -1 before
+   * one has: what the voices' silence is counted from.
+   */
+  private periodFrom = -1
+
+  // --- the schedule ----------------------------------------------------
+  //
+  // The execution order, cut into steps. Most steps are one module run over
+  // the whole stretch; a step that a feedback cable spans is a run of modules
+  // stepped together, a sample at a time.
+
+  /** Per step: its first module and one past its last. */
+  private stepFrom = new Int32Array(0)
+  private stepTo = new Int32Array(0)
+  /** Per step: 1 when its modules go a sample at a time. */
+  private stepLoop = new Uint8Array(0)
+  /**
+   * Each feedback cable's copy and what it copies: the slot a module reads
+   * and the one it was patched from. The copy is refreshed a sample at a time
+   * with its source's previous sample -- the one-sample delay a feedback
+   * cable has always had.
+   */
+  private fbDst = new Int32Array(0)
+  private fbSrc = new Int32Array(0)
+  /**
+   * The whole rack a sample at a time, for a patch the blocks cannot run
+   * exactly: a sleeping pad woken through its Trig jack by something that
+   * runs after it. Also a check's switch, since stepped the engine renders
+   * exactly what a sample-at-a-time rack always did.
+   */
+  private stepwise = false
+  /** Every rack stepped a sample at a time; for checks. See `stepwise`. */
+  static forceStepwise = false
 
   // --- voices ----------------------------------------------------------
   //
@@ -110,8 +198,18 @@ export class GraphEngine {
   private bcast: Int32Array[] = []
   /** Per module: outputs the shared part reads, which the voices sum into. */
   private sumOuts: Int32Array[] = []
-  /** A slot array per voice, so each one's cables carry its own note. */
-  private voiceSlots: Float32Array[] = []
+  /** A buffer per voice, so each one's cables carry its own note. */
+  private voiceBufs: Float32Array[] = []
+  private voiceViews: Float32Array[][] = []
+  /**
+   * How many voices have been built: as many as the Voices knob has asked
+   * for, and never fewer once built. A voice is a copy of every module a note
+   * passes through, and a copy of a Delay is two seconds of line, so a rack
+   * set to one voice no longer carries seven more nobody can play.
+   */
+  private built = 1
+  /** Per per-voice module: its input slots, for binding a voice built later. */
+  private polyInSlots: Int32Array[] = []
   /**
    * Each per-voice module's copies for voices 1 and up, by module id: kept
    * across an edit, and how every copy of one module is gated at once.
@@ -143,19 +241,31 @@ export class GraphEngine {
   private onAt = new Float64Array(MAX_VOICES)
   private offAt = new Float64Array(MAX_VOICES)
   private silent = new Int32Array(MAX_VOICES)
-  private peak = new Float32Array(MAX_VOICES)
+  /**
+   * Where in the block each voice started running -- 0, or the sample a hand
+   * on the Gate jack woke it -- and the last sample in the block it was
+   * audible at, or -1: what `settleVoices` judges it by.
+   */
+  private voiceFrom = new Int32Array(MAX_VOICES)
+  private loudAt = new Int32Array(MAX_VOICES).fill(-1)
+  /**
+   * Where a voice's silence was last started over by a press or a release in
+   * this block, or -1: before then, however quiet it was does not count.
+   */
+  private quietFrom = new Int32Array(MAX_VOICES).fill(-1)
   /** Which voices are running, in the order they are processed. */
   private activeList: number[] = []
   /** Orders presses and releases, for choosing which voice to take. */
   private stamp = 0
   private readonly silentFrames: number
+
   // --- pads -----------------------------------------------------------
   //
   // A Drum Kit's pads are sixteen racks laid into the patch, and a beat
-  // plays two or three of them at a time. Running the rest every sample
-  // would cost most of a core for silence, so a pad sleeps -- its modules
-  // skipped -- from the moment it has been let go of and gone quiet, the
-  // same rule a voice finishes by, until a note or a gate wakes it.
+  // plays two or three of them at a time. Running the rest would cost most
+  // of a core for silence, so a pad sleeps -- its modules skipped -- from the
+  // moment it has been let go of and gone quiet, the same rule a voice
+  // finishes by, until a note or a gate wakes it.
 
   private pads: CompiledPad[] = []
   /** Per module, in execution order: its pad plus one, or 0 for none. */
@@ -166,8 +276,37 @@ export class GraphEngine {
   /** A hand is holding it: its Trigger's own gate, open from the panel or a render. */
   private padGate = new Uint8Array(0)
   private padSilent = new Int32Array(0)
+  /**
+   * Where in the block each pad is running from: 0 when it was already
+   * awake, the sample after the one its Trig jack went high on, or `BLOCK`
+   * while it sleeps. Settled once per stretch, by the first of its modules
+   * to run; `padSpan` says which stretch that was.
+   */
+  private padFrom = new Int32Array(0)
+  private padSpan = new Int32Array(0)
+  /** Per pad: its Trig jack is written before any of its modules run. */
+  private padTrigFirst = new Uint8Array(0)
   /** The pad each waking module belongs to, by id. */
   private padByModule = new Map<string, number>()
+  /** Counts stretches, so a pad can tell a new one from the one it is in. */
+  private spanId = 0
+
+  // --- resting ---------------------------------------------------------
+  //
+  // An effect fed silence works out silence, sample after sample, on every
+  // track with nothing playing -- a reverb, a chorus and a mixer idling on
+  // each rack of a song were most of what an idle song cost. A module that
+  // may rest (see `DspModule.rests`) and has been fed nothing and said
+  // nothing for `QUIET_FOR` is skipped, putting out silence, until the sample
+  // something arrives at one of its jacks, which it runs from. It is only put
+  // to rest where voices are put to sleep, so this too is the same in any
+  // block size.
+
+  /** The shared modules that may rest, by place in the order. */
+  private restable = new Int32Array(0)
+  /** Per entry in `restable`: how many quiet samples it must count first. */
+  private restAfter = new Int32Array(0)
+  private readonly restFrames: number
 
   /** What a track's notes are handed to when the rack has voices. */
   private readonly voicePlayable: Playable = {
@@ -191,7 +330,7 @@ export class GraphEngine {
     this.seed = seed
     this.ctx = { sampleRate }
     this.silentFrames = Math.round(sampleRate * SILENT_FOR)
-    this.slots = new Float32Array(compiled.slotCount)
+    this.restFrames = Math.round(sampleRate * QUIET_FOR)
     this.paramValues = new Float32Array(compiled.params)
     if (samples) this.samples = samples
     this.apply(compiled, initialParams)
@@ -208,15 +347,12 @@ export class GraphEngine {
    */
   setSamples(samples: SampleBank) {
     this.samples = samples
-    for (const mod of this.everyInstance()) {
-      mod.sample = mod.sampleId ? (samples.get(mod.sampleId) ?? null) : null
-    }
+    for (const mod of this.modules) this.resolveSample(mod)
+    for (const copies of this.polyById.values()) for (const mod of copies) this.resolveSample(mod)
   }
 
-  /** Every module in the rack, and every voice's copy of it. */
-  private *everyInstance(): Iterable<DspModule> {
-    yield* this.modules
-    for (const copies of this.polyById.values()) yield* copies
+  private resolveSample(mod: DspModule) {
+    mod.sample = mod.sampleId ? (this.samples.get(mod.sampleId) ?? null) : null
   }
 
   /**
@@ -233,10 +369,6 @@ export class GraphEngine {
   private apply(compiled: CompiledPatch, params?: ArrayLike<number>) {
     const surviving = this.byId
 
-    if (this.slots.length !== compiled.slotCount) {
-      this.slots = new Float32Array(compiled.slotCount)
-    }
-
     this.paramValues = new Float32Array(compiled.params)
     if (params) {
       const n = Math.min(params.length, this.paramValues.length)
@@ -251,6 +383,7 @@ export class GraphEngine {
     this.renderSlotR = compiled.renderSlotR
     this.setTap(this.tap)
     this.modules = []
+    this.ids = []
     this.triggerable = []
     this.played = []
     this.captures = []
@@ -283,7 +416,7 @@ export class GraphEngine {
       // message traffic.
       mod.params = this.paramValues.subarray(m.paramBase, m.paramBase + m.paramCount)
       mod.sampleId = m.sample ?? ''
-      mod.sample = mod.sampleId ? (this.samples.get(mod.sampleId) ?? null) : null
+      this.resolveSample(mod)
       // Only a fresh module is prepared; preparing a reused one would reseed
       // its smoothers and undo the point of keeping it. The same goes for its
       // random stream: restarting it on every cable drag would make the noise
@@ -294,6 +427,7 @@ export class GraphEngine {
       }
 
       this.modules.push(mod)
+      this.ids.push(m.id)
       padOf.push(padOfCompiled[index])
       next.set(m.id, mod)
       if (mod.hasTrigger) this.triggerable.push(mod)
@@ -310,8 +444,101 @@ export class GraphEngine {
     // what should not happen.
 
     this.byId = next
+    const inSlots = this.layOut(compiled.slotCount)
     this.applyPads(compiled.pads ?? [], padOf)
-    this.applyVoices(compiled)
+    this.applyVoices(compiled, inSlots)
+    for (let i = 0; i < this.modules.length; i++) {
+      if (!this.polyFlag[i]) this.bind(this.modules[i], inSlots[i], this.views)
+    }
+
+    // Everything wakes on an edit, so a module rewired while it rested hears
+    // its new cables straight away.
+    const restable: number[] = []
+    for (let i = 0; i < this.modules.length; i++) {
+      const mod = this.modules[i]
+      mod.resting = false
+      mod.quietRun = 0
+      if (mod.rests && !this.polyFlag[i] && !this.padOf[i]) restable.push(i)
+    }
+    this.restable = Int32Array.from(restable)
+    this.restAfter = Int32Array.from(restable, (i) => this.restFrames + Math.round(this.modules[i].memory * this.ctx.sampleRate))
+    this.heldWhole = new Uint8Array(this.modules.length)
+  }
+
+  /**
+   * Cut the execution order into steps, give every feedback cable a copy to
+   * read, and size the buffers. Hands back each module's input slots with
+   * those copies in place of the cables they stand for.
+   */
+  private layOut(slotCount: number): Int32Array[] {
+    const mods = this.modules
+    const n = mods.length
+    // Who writes each slot, by place in the order.
+    const writer = new Int32Array(slotCount).fill(-1)
+    for (let m = 0; m < n; m++) for (const s of mods[m].outs) writer[s] = m
+
+    // A cable is feedback when what it reads runs later than the module
+    // reading it, or is the module itself: last sample's value is all there
+    // is. Everything between the two ends is stepped together.
+    const reach = new Int32Array(n).fill(-1)
+    const dst: number[] = []
+    const src: number[] = []
+    const inSlots: Int32Array[] = []
+    let total = slotCount
+    for (let m = 0; m < n; m++) {
+      const ins = Int32Array.from(mods[m].ins)
+      for (let k = 0; k < ins.length; k++) {
+        const s = ins[k]
+        if (s === GROUND || s >= slotCount || writer[s] < m) continue
+        ins[k] = total
+        dst.push(total++)
+        src.push(s)
+        if (writer[s] > reach[m]) reach[m] = writer[s]
+      }
+      inSlots.push(ins)
+    }
+    this.fbDst = Int32Array.from(dst)
+    this.fbSrc = Int32Array.from(src)
+
+    const from: number[] = []
+    const to: number[] = []
+    const loop: number[] = []
+    for (let m = 0; m < n; ) {
+      if (reach[m] < m) {
+        from.push(m)
+        to.push(m + 1)
+        loop.push(0)
+        m++
+        continue
+      }
+      // From the module reading the cable to the one writing it, grown until
+      // nothing inside reaches past the end.
+      let end = reach[m] + 1
+      for (let k = m; k < end; k++) if (reach[k] + 1 > end) end = reach[k] + 1
+      from.push(m)
+      to.push(end)
+      loop.push(1)
+      m = end
+    }
+    this.stepFrom = Int32Array.from(from)
+    this.stepTo = Int32Array.from(to)
+    this.stepLoop = Uint8Array.from(loop)
+
+    if (total !== this.slotTotal) {
+      // New slots start from silence, as a fresh slot array always did.
+      this.slotTotal = total
+      this.buf = new Float32Array(total * BLOCK)
+      this.views = viewsOf(this.buf, total)
+      this.voiceBufs = []
+      this.voiceViews = []
+    }
+    return inSlots
+  }
+
+  /** Point a module's ports at a set of blocks. */
+  private bind(mod: DspModule, inSlots: Int32Array, views: Float32Array[]) {
+    mod.inputs = Array.from(inSlots, (s) => views[s])
+    mod.outputs = Array.from(mod.outs, (s) => views[s])
   }
 
   /**
@@ -325,10 +552,35 @@ export class GraphEngine {
     this.padHeld = new Uint8Array(pads.length)
     this.padGate = new Uint8Array(pads.length)
     this.padSilent = new Int32Array(pads.length)
+    this.padFrom = new Int32Array(pads.length)
+    this.padSpan = new Int32Array(pads.length).fill(-1)
+    this.padTrigFirst = new Uint8Array(pads.length)
     this.padByModule.clear()
     pads.forEach((pad, k) => {
       for (const id of pad.wake) this.padByModule.set(id, k)
     })
+
+    // A pad can wake part way through a block only if its Trig jack has been
+    // written by the time its first module runs, which it is whenever what
+    // feeds the jack runs earlier -- as it does unless something in the pad
+    // feeds back into what triggers it. Otherwise the rack goes a sample at a
+    // time, which is how every rack used to go.
+    this.stepwise = GraphEngine.forceStepwise
+    for (let k = 0; k < pads.length; k++) {
+      const trig = pads[k].trig
+      if (trig === GROUND) continue
+      let first = this.modules.length
+      for (let m = 0; m < this.modules.length; m++) {
+        if (this.padOf[m] === k + 1) {
+          first = m
+          break
+        }
+      }
+      let writer = -1
+      for (let m = 0; m < this.modules.length; m++) if (this.modules[m].outs.includes(trig)) writer = m
+      if (writer < first) this.padTrigFirst[k] = 1
+      else this.stepwise = true
+    }
   }
 
   private wakePad(k: number) {
@@ -350,30 +602,63 @@ export class GraphEngine {
   }
 
   /**
-   * Once a sample: wake a pad a gate has arrived at, and put to sleep one
-   * that has been let go of and silent for long enough -- its returns zeroed
-   * on the way, so the kit does not go on hearing the last thing it said.
+   * Where pad `k` runs from in the stretch `from` to `to`, worked out the
+   * first time one of its modules asks.
+   *
+   * A sleeping pad is woken by its Trig jack going high: it runs from the
+   * sample after, exactly as when the whole rack went a sample at a time and
+   * a pad was only woken once the sample it was struck on had finished.
    */
-  private settlePads() {
-    const slots = this.slots
+  private padStart(k: number, from: number, to: number): number {
+    if (this.padSpan[k] === this.spanId) return this.padFrom[k]
+    this.padSpan[k] = this.spanId
+    let start = from
+    if (!this.padAwake[k]) {
+      start = BLOCK
+      const trig = this.pads[k].trig
+      if (trig !== GROUND && this.padTrigFirst[k]) {
+        const t = this.views[trig]
+        for (let i = from; i < to; i++) {
+          if (t[i] > 0.5) {
+            this.wakePad(k)
+            start = i + 1
+            break
+          }
+        }
+      }
+    }
+    this.padFrom[k] = start
+    return start
+  }
+
+  /**
+   * At the end of each block (each sample, stepped): put to sleep a pad that
+   * has been let go of and silent for long enough -- its returns zeroed on
+   * the way, so the kit does not go on hearing the last thing it said -- and
+   * wake one whose Trig jack went high while it slept, where it could not be
+   * woken on the sample it was struck. That is only ever a rack going a
+   * sample at a time, so `from` to `to` is the one sample.
+   */
+  private settlePads(from: number, to: number) {
     for (let k = 0; k < this.pads.length; k++) {
       const pad = this.pads[k]
-      const gated = pad.trig !== 0 && slots[pad.trig] > 0.5
       if (!this.padAwake[k]) {
-        if (gated) this.wakePad(k)
+        if (pad.trig !== GROUND && !this.padTrigFirst[k]) {
+          const trig = this.views[pad.trig]
+          for (let i = from; i < to; i++) {
+            if (trig[i] > 0.5) {
+              this.wakePad(k)
+              break
+            }
+          }
+        }
         continue
       }
-      if (gated || this.padHeld[k] || this.padGate[k]) {
-        this.padSilent[k] = 0
-        continue
-      }
-      const l = slots[pad.retL]
-      const r = slots[pad.retR]
-      if (l > SILENCE || l < -SILENCE || r > SILENCE || r < -SILENCE) this.padSilent[k] = 0
-      else if (++this.padSilent[k] >= this.silentFrames) {
+      if (this.padSilent[k] >= this.silentFrames) {
         this.padAwake[k] = 0
-        if (pad.retL) slots[pad.retL] = 0
-        if (pad.retR) slots[pad.retR] = 0
+        // What it said last is what the kit will hear while it sleeps.
+        if (pad.retL) this.views[pad.retL][to - 1] = 0
+        if (pad.retR) this.views[pad.retR][to - 1] = 0
       }
     }
   }
@@ -476,8 +761,9 @@ export class GraphEngine {
     // window of events oldest first, so this almost always appends without
     // moving anything, and stays correct when something arrives out of turn.
     let i = q.length
-    while (i > 0 && q[i - 1].frame > event.frame) i--
-    q.splice(i, 0, event)
+    while (i > this.queueHead && q[i - 1].frame > event.frame) i--
+    if (i === q.length) q.push(event)
+    else q.splice(i, 0, event)
   }
 
   /** Move the clock and drop anything queued against the old position. */
@@ -496,6 +782,7 @@ export class GraphEngine {
    */
   clearSchedule() {
     this.queue.length = 0
+    this.queueHead = 0
   }
 
   /**
@@ -506,7 +793,7 @@ export class GraphEngine {
   dropFrom(frame: number) {
     const q = this.queue
     let i = q.length
-    while (i > 0 && q[i - 1].frame >= frame) i--
+    while (i > this.queueHead && q[i - 1].frame >= frame) i--
     q.length = i
   }
 
@@ -530,8 +817,8 @@ export class GraphEngine {
    * Instances are kept across an edit exactly as the rack's own are, voice
    * by voice, so re-patching a cable while a chord rings does not cut it.
    */
-  private applyVoices(compiled: CompiledPatch) {
-    const mods = compiled.modules
+  private applyVoices(compiled: CompiledPatch, inSlots: Int32Array[]) {
+    const mods = this.modules
     const n = mods.length
     const info = compiled.voices
     const rootId = info?.root ?? ''
@@ -547,9 +834,15 @@ export class GraphEngine {
     const previous = this.polyById
     this.polyById = new Map()
 
+    const polyIds = new Set(compiled.modules.filter((m) => m.poly).map((m) => m.id))
+    // A feedback cable's copy counts as whatever it copies.
+    const original = new Map<number, number>()
+    for (let f = 0; f < this.fbDst.length; f++) original.set(this.fbDst[f], this.fbSrc[f])
+    const origin = (s: number) => original.get(s) ?? s
+
     const polyOut = new Set<number>()
     for (let i = 0; i < n; i++) {
-      if (!mods[i].poly) continue
+      if (!polyIds.has(this.ids[i])) continue
       this.polyFlag[i] = 1
       this.hasPoly = true
       for (const s of mods[i].outs) polyOut.add(s)
@@ -562,14 +855,16 @@ export class GraphEngine {
       sharedReads.add(m.l)
       sharedReads.add(m.r)
     }
-    for (let i = 0; i < n; i++) if (!mods[i].poly) for (const s of mods[i].ins) sharedReads.add(s)
+    for (let i = 0; i < n; i++) if (!this.polyFlag[i]) for (const s of inSlots[i]) sharedReads.add(origin(s))
 
-    if (this.hasPoly && this.voiceSlots[0]?.length !== compiled.slotCount) {
-      this.voiceSlots = Array.from({ length: MAX_VOICES }, () => new Float32Array(compiled.slotCount))
-    }
+    // The copies the knob asks for now, and any already built.
+    const raw = info && info.voicesParam >= 0 ? this.paramValues[info.voicesParam] : 1
+    const built = Math.max(this.built, Math.max(1, Math.min(MAX_VOICES, Math.round(raw) || 1)))
+    this.built = built
+    if (this.hasPoly) this.voiceBuffers(built)
+    this.polyInSlots = inSlots
 
     for (let i = 0; i < n; i++) {
-      const m = mods[i]
       if (!this.polyFlag[i]) {
         this.voiceMods.push([])
         this.bcast.push(new Int32Array(0))
@@ -577,43 +872,36 @@ export class GraphEngine {
         continue
       }
 
-      const first = this.modules[i]
-      const kept = previous.get(m.id) ?? []
+      const first = mods[i]
+      const id = this.ids[i]
+      const kept = previous.get(id) ?? []
       const copies: DspModule[] = []
-      for (let v = 1; v < MAX_VOICES; v++) {
+      for (let v = 1; v < built; v++) {
         const existing = kept[v - 1]
-        const reused = existing && existing.type === m.type
-        const mod = reused ? existing : MODULE_FACTORIES[m.type](this.ctx)
-        mod.type = m.type
-        mod.ins = first.ins
-        mod.outs = first.outs
-        mod.params = first.params
-        mod.sampleId = first.sampleId
-        mod.sample = first.sample
-        if (!reused) {
-          mod.seedFrom(this.seed, voiceKey(m.id, v))
-          mod.prepare()
-        }
-        copies.push(mod)
+        copies.push(existing && existing.type === first.type ? this.voiceCopy(first, existing) : this.voiceCopy(first, null, id, v))
       }
-      this.voiceMods.push([first, ...copies])
-      this.polyById.set(m.id, copies)
+      const insts = [first, ...copies]
+      insts.forEach((mod, v) => this.bind(mod, inSlots[i], this.voiceViews[v]))
+      this.voiceMods.push(insts)
+      this.polyById.set(id, copies)
 
-      this.bcast.push(Int32Array.from(new Set(m.ins.filter((s) => s !== 0 && !polyOut.has(s)))))
-      this.sumOuts.push(Int32Array.from(m.outs.filter((s) => sharedReads.has(s))))
+      this.bcast.push(Int32Array.from(new Set([...inSlots[i]].filter((s) => s !== GROUND && !polyOut.has(origin(s))))))
+      this.sumOuts.push(Int32Array.from([...first.outs].filter((s) => sharedReads.has(s))))
 
-      if (m.id === rootId) this.rootIndex = i
+      if (id === rootId) this.rootIndex = i
       // A meter on a module that is copied per voice reads the loudest of
       // them, so the panel shows the chord rather than whichever note
       // happened to land on voice 0.
       if (first.meter) {
-        const at = this.meters.findIndex((x) => x.id === m.id)
-        if (at >= 0) this.meters[at] = { id: m.id, mod: new VoiceMeter([first, ...copies]) }
+        const at = this.meters.findIndex((x) => x.id === id)
+        if (at >= 0) this.meters[at] = { id, mod: new VoiceMeter(insts) }
       }
     }
 
     if (!this.hasPoly || this.rootIndex < 0) {
       this.hasPoly = false
+      // Nothing runs per voice after all, so each runs as the rack's own.
+      this.polyFlag.fill(0)
       return
     }
 
@@ -627,12 +915,62 @@ export class GraphEngine {
     this.syncVoices()
   }
 
+  /**
+   * A voice's copy of `first`: `kept` rewired to match, or a new one, seeded
+   * and prepared as voice `v`.
+   */
+  private voiceCopy(first: DspModule, kept: DspModule | null, id = '', v = 0): DspModule {
+    const mod = kept ?? MODULE_FACTORIES[first.type](this.ctx)
+    mod.type = first.type
+    mod.ins = first.ins
+    mod.outs = first.outs
+    mod.params = first.params
+    mod.sampleId = first.sampleId
+    mod.sample = first.sample
+    if (!kept) {
+      mod.seedFrom(this.seed, voiceKey(id, v))
+      mod.prepare()
+    }
+    return mod
+  }
+
+  /** A buffer for each of the first `n` voices. */
+  private voiceBuffers(n: number) {
+    while (this.voiceBufs.length < n) {
+      const buf = new Float32Array(this.slotTotal * BLOCK)
+      this.voiceBufs.push(buf)
+      this.voiceViews.push(viewsOf(buf, this.slotTotal))
+    }
+  }
+
+  /**
+   * Build voices up to `n`, for a Voices knob turned past what has been
+   * built. Each is a copy of every per-voice module, prepared at the knobs
+   * as they are now and bound to a buffer of its own.
+   */
+  private buildVoices(n: number) {
+    if (n <= this.built) return
+    this.voiceBuffers(n)
+    for (let i = 0; i < this.modules.length; i++) {
+      if (!this.polyFlag[i]) continue
+      const insts = this.voiceMods[i]
+      const copies = this.polyById.get(this.ids[i])!
+      for (let v = this.built; v < n; v++) {
+        const mod = this.voiceCopy(insts[0], null, this.ids[i], v)
+        this.bind(mod, this.polyInSlots[i], this.voiceViews[v])
+        insts.push(mod)
+        copies.push(mod)
+      }
+    }
+    this.built = n
+  }
+
   /** Every voice silent and waiting, as a rack with a new keyboard starts. */
   private resetVoices() {
     this.held.fill(0)
     this.byHand.fill(0)
     this.active.fill(0)
-    this.activeList = []
+    this.activeList.length = 0
     this.rootGateWas = false
     this.panelHeld = false
     this.newest = 0
@@ -654,34 +992,43 @@ export class GraphEngine {
     const count = Math.max(1, Math.min(MAX_VOICES, Math.round(raw)))
     if (count === this.voiceCount) return
     this.voiceCount = count
+    this.buildVoices(count)
 
     const mono = count === 1
-    for (let v = 0; v < MAX_VOICES; v++) this.keysOf(v).voiced = !mono
+    for (let v = 0; v < this.built; v++) this.keysOf(v).voiced = !mono
 
     for (let v = 0; v < MAX_VOICES; v++) {
       // Notes on voices the knob no longer reaches are let go, and ring out.
-      if (this.held[v] && (mono ? v > 0 : v >= count)) this.release(v)
+      if (this.held[v] && (mono ? v > 0 : v >= count)) this.release(v, this.frame % BLOCK)
     }
     if (mono) {
-      this.wake(0)
+      this.wake(0, this.frame % BLOCK)
       this.newest = 0
     } else if (this.active[0] && !this.held[0]) this.offAt[0] = ++this.stamp
   }
 
-  private wake(v: number) {
-    this.silent[v] = 0
-    this.peak[v] = 0
+  /** Voice `v` running from sample `at` of this block, if it was not already. */
+  private wake(v: number, at: number) {
+    this.quiet(v, at)
     if (this.active[v]) return
     this.active[v] = 1
+    this.voiceFrom[v] = at
     this.activeList.push(v)
   }
 
-  private release(v: number) {
+  /** Voice `v`'s silence counted afresh from sample `at`. */
+  private quiet(v: number, at: number) {
+    this.silent[v] = 0
+    this.loudAt[v] = -1
+    this.quietFrom[v] = at
+  }
+
+  private release(v: number, at: number) {
     this.keysOf(v).noteOff()
     this.held[v] = 0
     this.byHand[v] = 0
     this.offAt[v] = ++this.stamp
-    this.silent[v] = 0
+    this.quiet(v, at)
   }
 
   /**
@@ -717,7 +1064,7 @@ export class GraphEngine {
     return best
   }
 
-  private voiceOn(pitch: number, velocity: number, hand: boolean) {
+  private voiceOn(pitch: number, velocity: number, hand: boolean, at = this.frame % BLOCK) {
     this.syncVoices()
     if (this.voiceCount === 1) {
       this.keysOf(0).noteOn(pitch, velocity)
@@ -731,7 +1078,7 @@ export class GraphEngine {
     this.pitchOf[v] = pitch
     this.onAt[v] = ++this.stamp
     this.newest = v
-    this.wake(v)
+    this.wake(v, at)
   }
 
   /**
@@ -746,8 +1093,9 @@ export class GraphEngine {
       this.held[0] = 0
       return
     }
+    const at = this.frame % BLOCK
     if (pitch === undefined) {
-      for (let v = 0; v < MAX_VOICES; v++) if (this.held[v]) this.release(v)
+      for (let v = 0; v < MAX_VOICES; v++) if (this.held[v]) this.release(v, at)
       return
     }
     let best = -1
@@ -756,7 +1104,7 @@ export class GraphEngine {
         if (best < 0 || this.onAt[v] < this.onAt[best]) best = v
       }
     }
-    if (best >= 0) this.release(best)
+    if (best >= 0) this.release(best, at)
   }
 
   /**
@@ -774,93 +1122,143 @@ export class GraphEngine {
       this.voiceMods[this.rootIndex][0].gateOpen = open
       return
     }
-    if (open) this.handPress()
-    else if (!this.rootGateWas) this.handRelease()
+    if (open) this.handPress(this.frame % BLOCK)
+    else if (!this.rootGateWas) this.handRelease(this.frame % BLOCK)
   }
 
-  private handPress() {
-    this.handRelease()
+  private handPress(at: number) {
+    this.handRelease(at)
     const note = this.noteParam >= 0 ? this.paramValues[this.noteParam] : 0
-    this.voiceOn(note, 1, true)
+    this.voiceOn(note, 1, true, at)
   }
 
-  private handRelease() {
-    for (let v = 0; v < MAX_VOICES; v++) if (this.held[v] && this.byHand[v]) this.release(v)
+  private handRelease(at: number) {
+    for (let v = 0; v < MAX_VOICES; v++) if (this.held[v] && this.byHand[v]) this.release(v, at)
   }
 
-  /** Run one per-voice module, on every voice that is awake. */
-  private runPoly(m: number) {
-    const slots = this.slots
+  /** Run one per-voice module over `from` to `to`, on every voice that is awake. */
+  private runPoly(m: number, from: number, to: number) {
     if (m === this.rootIndex) {
-      // The Gate jack, heard here rather than by each voice; see `voiced`.
-      const gate = this.rootGateSlot !== 0 && slots[this.rootGateSlot] > 0.5
-      // The jack and the panel are one hand, so either one alone holds it.
-      if (gate !== this.rootGateWas) {
-        this.rootGateWas = gate
-        if (this.voiceCount > 1 && !this.panelHeld) {
-          if (gate) this.handPress()
-          else this.handRelease()
-        }
-      }
+      this.runRoot(from, to)
+      return
     }
-
     const insts = this.voiceMods[m]
     const bc = this.bcast[m]
     const so = this.sumOuts[m]
     const list = this.activeList
     const voices = list.length
-    const vslots = this.voiceSlots
+    const vviews = this.voiceViews
+    const views = this.views
 
     for (let k = 0; k < voices; k++) {
       const v = list[k]
-      const vs = vslots[v]
-      for (let j = 0; j < bc.length; j++) vs[bc[j]] = slots[bc[j]]
-      insts[v].process(vs)
+      const start = this.voiceFrom[v] > from ? this.voiceFrom[v] : from
+      if (start >= to) continue
+      const vv = vviews[v]
+      for (let j = 0; j < bc.length; j++) copy(views[bc[j]], vv[bc[j]], start, to)
+      insts[v].processBlock(start, to)
     }
 
+    // Summed where the shared part reads it, and measured on the way: a voice
+    // is finished when nothing it sends is audible.
+    const loudAt = this.loudAt
+    const voiceFrom = this.voiceFrom
+    for (let j = 0; j < so.length; j++) {
+      const s = so[j]
+      const out = views[s]
+      for (let i = from; i < to; i++) {
+        let acc = 0
+        for (let k = 0; k < voices; k++) {
+          const v = list[k]
+          if (i < voiceFrom[v]) continue
+          const x = vviews[v][s][i]
+          acc += x
+          if (x >= SILENCE || x <= -SILENCE) loudAt[v] = i
+        }
+        out[i] = acc
+      }
+    }
+  }
+
+  /**
+   * The keyboard's voices, stopping at each change on its Gate jack.
+   *
+   * The jack is heard here rather than by each voice (see `voiced`), and a
+   * change on it is a hand pressing or letting go -- a voice woken or
+   * released on that very sample. So the voices run up to it, the hand acts,
+   * and they carry on from there.
+   */
+  private runRoot(from: number, to: number) {
+    const gateSlot = this.rootGateSlot
+    const gate = gateSlot !== GROUND ? this.views[gateSlot] : null
+    let at = from
+    if (gate) {
+      for (let i = from; i < to; i++) {
+        // The jack and the panel are one hand, so either one alone holds it.
+        const g = gate[i] > 0.5
+        if (g === this.rootGateWas) continue
+        this.rootGateWas = g
+        if (this.voiceCount > 1 && !this.panelHeld) {
+          this.runRootVoices(at, i)
+          at = i
+          if (g) this.handPress(i)
+          else this.handRelease(i)
+        }
+      }
+    }
+    this.runRootVoices(at, to)
+  }
+
+  private runRootVoices(from: number, to: number) {
+    if (from >= to) return
+    const insts = this.voiceMods[this.rootIndex]
+    const bc = this.bcast[this.rootIndex]
+    const list = this.activeList
+    const vviews = this.voiceViews
+    const views = this.views
+    for (let k = 0; k < list.length; k++) {
+      const v = list[k]
+      const start = this.voiceFrom[v] > from ? this.voiceFrom[v] : from
+      if (start >= to) continue
+      const vv = vviews[v]
+      for (let j = 0; j < bc.length; j++) copy(views[bc[j]], vv[bc[j]], start, to)
+      insts[v].processBlock(start, to)
+    }
     // The keyboard's own outputs are the newest note, as a single keyboard's
     // are: a pitch summed across a chord is no pitch at all. They are not
     // what decides a voice has finished, either, since a pitch never falls
     // silent -- the sound downstream of it does.
-    if (m === this.rootIndex) {
-      const newest = vslots[this.newest]
-      for (let j = 0; j < so.length; j++) slots[so[j]] = newest[so[j]]
-      return
-    }
-
-    // Everything else is summed where the shared part reads it, and measured
-    // on the way: a voice is finished when nothing it sends is audible.
-    const peak = this.peak
-    for (let j = 0; j < so.length; j++) {
-      const s = so[j]
-      let acc = 0
-      for (let k = 0; k < voices; k++) {
-        const v = list[k]
-        const x = vslots[v][s]
-        acc += x
-        const a = x < 0 ? -x : x
-        if (a > peak[v]) peak[v] = a
-      }
-      slots[s] = acc
-    }
+    const so = this.sumOuts[this.rootIndex]
+    const newest = vviews[this.newest]
+    for (let j = 0; j < so.length; j++) copy(newest[so[j]], views[so[j]], from, to)
   }
 
-  /** Put to sleep every released voice that has gone quiet. Once a sample. */
-  private settleVoices() {
+  /**
+   * At the end of each block and before each event (each sample, stepped):
+   * put to sleep every released voice that has gone quiet since `from`.
+   */
+  private settleVoices(from: number, to: number) {
     const list = this.activeList
-    let finished = false
+    let kept = 0
     for (let k = 0; k < list.length; k++) {
       const v = list[k]
-      const loud = this.peak[v] >= SILENCE
-      this.peak[v] = 0
-      if (this.held[v] || (v === 0 && this.voiceCount === 1)) continue
-      if (loud) this.silent[v] = 0
-      else if (++this.silent[v] >= this.silentFrames) {
-        this.active[v] = 0
-        finished = true
+      const loudAt = this.loudAt[v]
+      const quietFrom = this.quietFrom[v]
+      const start = this.voiceFrom[v] > from ? this.voiceFrom[v] : from
+      this.loudAt[v] = -1
+      this.quietFrom[v] = -1
+      this.voiceFrom[v] = 0
+      if (this.held[v] || (v === 0 && this.voiceCount === 1)) {
+        list[kept++] = v
+        continue
       }
+      if (loudAt >= 0) this.silent[v] = to - 1 - loudAt
+      else if (quietFrom >= 0) this.silent[v] = to - quietFrom
+      else this.silent[v] += to - start
+      if (this.silent[v] >= this.silentFrames) this.active[v] = 0
+      else list[kept++] = v
     }
-    if (finished) this.activeList = list.filter((v) => this.active[v])
+    list.length = kept
   }
 
   private fire(event: EngineEvent) {
@@ -897,86 +1295,275 @@ export class GraphEngine {
    *
    * The split is what makes a note land on its own sample instead of on the
    * next block boundary. A rack with nothing sequencing it has an empty queue
-   * and takes the whole buffer in a single span, so the inner loop is exactly
-   * what it was before any of this existed.
+   * and takes each block whole.
    */
   render(left: Float32Array, right: Float32Array) {
     const total = left.length
     const queue = this.queue
     let at = 0
-    // Once a block: the knob is read here rather than per sample.
+    // Once a call: the knob is read here rather than per sample.
     if (this.hasPoly) this.syncVoices()
     if (this.pads.length) this.holdPads()
 
     while (at < total) {
-      // Everything due, applied before a single sample of the span is
+      // Everything due, applied before a single sample of the stretch is
       // computed -- so an event stamped at frame N is heard from frame N.
-      while (queue.length > 0 && queue[0].frame <= this.frame) this.fire(queue.shift()!)
+      while (this.queueHead < queue.length && queue[this.queueHead].frame <= this.frame) {
+        this.fire(queue[this.queueHead++])
+      }
+      if (this.queueHead === queue.length) {
+        queue.length = 0
+        this.queueHead = 0
+      } else if (this.queueHead > 256) {
+        queue.splice(0, this.queueHead)
+        this.queueHead = 0
+      }
 
-      let span = total - at
-      if (queue.length > 0) {
+      // To the next event, the end of the buffer or the end of the block on
+      // the grid, whichever is soonest.
+      const index = this.frame % BLOCK
+      let span = BLOCK - index
+      // Voices and pads are settled at the end of a block and before an
+      // event, never merely where a buffer ends: an event is on the same
+      // frame however the render is chopped up, so a note finds the same
+      // voices asleep in any block size -- and the one it takes is the one it
+      // always took, not whichever the end of a block happened to leave awake.
+      let settle = true
+      if (this.queueHead < queue.length) {
         // Every remaining event is strictly ahead of the clock, the loop above
         // having taken the rest, so this is at least one sample.
-        const ahead = queue[0].frame - this.frame
+        const ahead = queue[this.queueHead].frame - this.frame
         if (ahead < span) span = ahead
       }
-      this.renderSpan(left, right, at, span)
+      if (total - at < span) {
+        span = total - at
+        settle = index + span === BLOCK
+      }
+      this.renderSpan(index, index + span, settle)
+
+      const outL = this.views[this.outL]
+      const outR = this.views[this.outR]
+      for (let i = 0; i < span; i++) {
+        left[at + i] = outL[index + i]
+        right[at + i] = outR[index + i]
+      }
       at += span
     }
   }
 
-  private renderSpan(left: Float32Array, right: Float32Array, from: number, count: number) {
-    const slots = this.slots
-    const modules = this.modules
-    const moduleCount = modules.length
+  /** Samples `from` to `to` of the current block, through every module. */
+  private renderSpan(from: number, to: number, settle: boolean) {
+    if (this.stepwise) {
+      for (let i = from; i < to; i++) this.renderStretch(i, i + 1, true)
+    } else {
+      this.renderStretch(from, to, settle)
+    }
+  }
+
+  private renderStretch(from: number, to: number, settle: boolean) {
+    this.spanId++
+    this.stretchFrom = from
+    this.before = this.lastIndex
+    if (this.periodFrom < 0) this.periodFrom = from
+    const stepFrom = this.stepFrom
+    const stepTo = this.stepTo
+    const loop = this.stepLoop
+    for (let s = 0; s < stepFrom.length; s++) {
+      if (!loop[s]) {
+        this.runModule(stepFrom[s], from, to)
+        continue
+      }
+      // A feedback loop: its modules a sample at a time, each cable's copy
+      // brought up to its source's previous sample first.
+      for (let i = from; i < to; i++) {
+        this.carryFeedback(i)
+        for (let m = stepFrom[s]; m < stepTo[s]; m++) this.runModule(m, i, i + 1)
+      }
+    }
+
+    // Every main mix lands in the speaker pair. Summed here rather than by
+    // a module, because which buses are main mixes is a property of the
+    // wiring and not of anything in the rack.
+    const views = this.views
     const monL = this.monL
     const monR = this.monR
     const buses = monL.length
-    const end = from + count
-
-    const poly = this.hasPoly ? this.polyFlag : null
-    const padOf = this.pads.length ? this.padOf : null
-    const awake = this.padAwake
-
-    for (let i = from; i < end; i++) {
-      // Slots deliberately keep their values between samples: that residue is
-      // exactly the one-sample delay a feedback cable reads.
-      if (poly) {
-        for (let m = 0; m < moduleCount; m++) {
-          if (padOf && padOf[m] && !awake[padOf[m] - 1]) continue
-          if (poly[m]) this.runPoly(m)
-          else modules[m].process(slots)
-        }
-        this.settleVoices()
-      } else if (padOf) {
-        for (let m = 0; m < moduleCount; m++) {
-          const pad = padOf[m]
-          if (pad && !awake[pad - 1]) continue
-          modules[m].process(slots)
-        }
-      } else {
-        for (let m = 0; m < moduleCount; m++) modules[m].process(slots)
-      }
-      if (padOf) this.settlePads()
-
-      // Every main mix lands in the speaker pair. Summed here rather than by
-      // a module, because which buses are main mixes is a property of the
-      // wiring and not of anything in the rack.
+    const speakL = views[this.monSlotL]
+    const speakR = views[this.monSlotR]
+    for (let i = from; i < to; i++) {
       let l = 0
       let r = 0
       for (let b = 0; b < buses; b++) {
-        l += slots[monL[b]]
-        r += slots[monR[b]]
+        l += views[monL[b]][i]
+        r += views[monR[b]][i]
       }
-      slots[this.monSlotL] = l
-      slots[this.monSlotR] = r
-
-      left[i] = slots[this.outL]
-      right[i] = slots[this.outR]
+      speakL[i] = l
+      speakR[i] = r
     }
 
-    this.frame += count
+    // Pads are judged sample by sample as they go, and voices keep a note of
+    // the last sample they were heard at; either is put to sleep only at the
+    // end of the block.
+    if (this.pads.length) this.countPads(from, to)
+    if (settle) {
+      if (this.restable.length) this.settleRest()
+      if (this.hasPoly) this.settleVoices(this.periodFrom, to)
+      if (this.pads.length) this.settlePads(from, to)
+      this.periodFrom = -1
+    }
+    this.lastIndex = to - 1
+    this.frame += to - from
   }
+
+  /** How long each pad has been silent, carried on through `from` to `to`. */
+  private countPads(from: number, to: number) {
+    for (let k = 0; k < this.pads.length; k++) {
+      if (!this.padAwake[k]) continue
+      const pad = this.pads[k]
+      if (this.padHeld[k] || this.padGate[k]) {
+        this.padSilent[k] = 0
+        continue
+      }
+      const trig = pad.trig !== GROUND ? this.views[pad.trig] : null
+      const start = this.padSpan[k] === this.spanId ? this.padFrom[k] : from
+      const l = this.views[pad.retL]
+      const r = this.views[pad.retR]
+      let silent = this.padSilent[k]
+      for (let i = start < from ? from : start; i < to; i++) {
+        const a = l[i]
+        const b = r[i]
+        if ((trig && trig[i] > 0.5) || a > SILENCE || a < -SILENCE || b > SILENCE || b < -SILENCE) silent = 0
+        else silent++
+      }
+      this.padSilent[k] = silent
+    }
+  }
+
+  /** Module `m` over `from` to `to`: asleep, per voice, or as it is. */
+  private runModule(m: number, from: number, to: number) {
+    const pad = this.padOf[m]
+    if (pad) {
+      const start = this.padStart(pad - 1, from, to)
+      if (start > from) {
+        // Asleep for all or part of it: what it last said, held.
+        this.hold(m, from, start < to ? start : to)
+        if (start >= to) return
+        from = start
+      }
+    }
+    this.heldWhole[m] = 0
+    const mod = this.modules[m]
+    if (this.polyFlag[m]) this.runPoly(m, from, to)
+    else if (mod.rests) this.runRestable(mod, from, to)
+    else mod.processBlock(from, to)
+  }
+
+  /**
+   * A module that may rest: skipped while it does, until the first sample
+   * anything reaches it, and watched while it runs for how long it has been
+   * quiet.
+   */
+  private runRestable(mod: DspModule, from: number, to: number) {
+    const inputs = mod.inputs
+    const outputs = mod.outputs
+    const ins = mod.ins
+    if (mod.resting) {
+      let wake = to
+      for (let k = 0; k < inputs.length; k++) {
+        if (ins[k] === GROUND) continue
+        const x = inputs[k]
+        for (let i = from; i < wake; i++) {
+          if (x[i] > QUIET || x[i] < -QUIET) {
+            wake = i
+            break
+          }
+        }
+      }
+      for (let k = 0; k < outputs.length; k++) outputs[k].fill(0, from, wake)
+      if (wake === to) return
+      mod.resting = false
+      mod.quietRun = 0
+      from = wake
+    }
+    mod.processBlock(from, to)
+
+    // The last sample anything was heard at, going in or coming out.
+    let heard = -1
+    for (let k = 0; k < inputs.length; k++) {
+      if (ins[k] === GROUND) continue
+      const x = inputs[k]
+      for (let i = to - 1; i > heard && i >= from; i--) {
+        if (x[i] > QUIET || x[i] < -QUIET) {
+          heard = i
+          break
+        }
+      }
+    }
+    for (let k = 0; k < outputs.length; k++) {
+      const y = outputs[k]
+      for (let i = to - 1; i > heard && i >= from; i--) {
+        if (y[i] > QUIET || y[i] < -QUIET) {
+          heard = i
+          break
+        }
+      }
+    }
+    mod.quietRun = heard >= from ? to - 1 - heard : mod.quietRun + (to - from)
+  }
+
+  /** Where voices are settled: anything that may rest and has been quiet long enough does. */
+  private settleRest() {
+    const restable = this.restable
+    for (let k = 0; k < restable.length; k++) {
+      const mod = this.modules[restable[k]]
+      if (!mod.resting && mod.quietRun >= this.restAfter[k]) mod.resting = true
+    }
+  }
+
+  /**
+   * A module that is not running goes on saying what it last said.
+   *
+   * Once a whole block of it has been held nothing else writes there, so the
+   * block already says it everywhere and every block after is left alone: a
+   * sleeping pad's dozens of modules cost nothing at all.
+   */
+  private hold(m: number, from: number, to: number) {
+    if (this.heldWhole[m]) return
+    const before = from > this.stretchFrom ? from - 1 : this.before
+    const outs = this.modules[m].outs
+    for (let k = 0; k < outs.length; k++) {
+      const o = this.views[outs[k]]
+      o.fill(o[before], from, to)
+    }
+    if (from === 0 && to === BLOCK) this.heldWhole[m] = 1
+  }
+  /** Per module: a whole block of it has been held, and it has not run since. */
+  private heldWhole = new Uint8Array(0)
+
+  /** Every feedback cable's copy, at sample `i`: its source one sample back. */
+  private carryFeedback(i: number) {
+    const dst = this.fbDst
+    if (dst.length === 0) return
+    const src = this.fbSrc
+    const before = i > this.stretchFrom ? i - 1 : this.before
+    const views = this.views
+    for (let f = 0; f < dst.length; f++) views[dst[f]][i] = views[src[f]][before]
+    if (!this.hasPoly) return
+    for (let k = 0; k < this.activeList.length; k++) {
+      const vv = this.voiceViews[this.activeList[k]]
+      for (let f = 0; f < dst.length; f++) vv[dst[f]][i] = vv[src[f]][before]
+    }
+  }
+}
+
+/** Samples `from` to `to` of one block into another. */
+function copy(src: Float32Array, dst: Float32Array, from: number, to: number) {
+  for (let i = from; i < to; i++) dst[i] = src[i]
+}
+
+/** A view per slot onto a buffer of blocks. */
+function viewsOf(buf: Float32Array, slots: number): Float32Array[] {
+  return Array.from({ length: slots }, (_, s) => buf.subarray(s * BLOCK, (s + 1) * BLOCK))
 }
 
 /** A voice's copy of a module draws its own random stream, not voice 0's. */

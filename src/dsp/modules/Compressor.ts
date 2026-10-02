@@ -64,39 +64,49 @@ export class CompressorModule extends DspModule {
     this.makeup = new Smoothed(this.params[P_MAKEUP], this.ctx.sampleRate)
   }
 
-  process(slots: Float32Array) {
+  processBlock(from: number, to: number) {
     this.makeup.set(this.params[P_MAKEUP])
-
-    const x = slots[this.ins[IN_SIGNAL]]
+    const signal = this.inputs[IN_SIGNAL]
     // Ground reads zero and never crosses the threshold, so an unpatched Key
     // is the same as no Key at all -- but the branch is on the wiring rather
     // than on the value, or a silent moment in a patched sidechain would hand
     // the detector back to the signal for as long as it lasted.
-    const key = this.ins[IN_KEY]
-    const detector = key === 0 ? x : slots[key]
-
-    // Peak rather than RMS. Sound effects are transients, and an averaging
-    // detector hears a gunshot as quiet because most of it is over quickly.
-    const level = detector < 0 ? -detector : detector
-    const db = Math.log(level + FLOOR) * DB
-
+    const keyed = this.ins[IN_KEY] !== 0
+    const key = this.inputs[IN_KEY]
+    const outSignal = this.outputs[OUT_SIGNAL]
+    const outGr = this.outputs[OUT_GR]
     let ratio = this.params[P_RATIO]
     if (!(ratio >= 1)) ratio = 1
-    const over = db - this.params[P_THRESHOLD]
-    const target = over > 0 ? over * (1 - 1 / ratio) : 0
+    const threshold = this.params[P_THRESHOLD]
+    const attack = this.attack()
+    const release = this.release()
 
-    // Attack while the reduction is deepening and release while it is easing
-    // off, which is what makes those two knobs mean what their names say.
-    const coeff = target > this.reduction ? this.attack() : this.release()
-    this.reduction += (target - this.reduction) * coeff
+    for (let i = from; i < to; i++) {
+      const x = signal[i]
+      const detector = keyed ? key[i] : x
 
-    const gain = Math.exp((this.makeup.next() - this.reduction) / DB)
-    slots[this.outs[OUT_SIGNAL]] = x * gain
+      // Peak rather than RMS. Sound effects are transients, and an averaging
+      // detector hears a gunshot as quiet because most of it is over quickly.
+      const level = detector < 0 ? -detector : detector
+      const db = Math.log(level + FLOOR) * DB
 
-    // Reported as the fraction of the signal taken away rather than as
-    // decibels, because everything that reads a control voltage in this rack
-    // is scaled nought to one. 6 dB of reduction arrives as 0.5.
-    slots[this.outs[OUT_GR]] = 1 - Math.exp(-this.reduction / DB)
+      const over = db - threshold
+      const target = over > 0 ? over * (1 - 1 / ratio) : 0
+
+      // Attack while the reduction is deepening and release while it is
+      // easing off, which is what makes those two knobs mean what their names
+      // say.
+      const coeff = target > this.reduction ? attack : release
+      this.reduction += (target - this.reduction) * coeff
+
+      const gain = Math.exp((this.makeup.next() - this.reduction) / DB)
+      outSignal[i] = x * gain
+
+      // Reported as the fraction of the signal taken away rather than as
+      // decibels, because everything that reads a control voltage in this
+      // rack is scaled nought to one. 6 dB of reduction arrives as 0.5.
+      outGr[i] = 1 - Math.exp(-this.reduction / DB)
+    }
   }
 
   /**

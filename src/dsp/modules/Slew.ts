@@ -18,26 +18,39 @@ const SHAPE_LINEAR = 0
  * something clicking.
  */
 export class SlewModule extends DspModule {
+  /** Works only on what reaches it, so it may rest; see `DspModule.rests`. */
+  readonly rests = true
   private value = 0
 
-  process(slots: Float32Array) {
-    const target = slots[this.ins[0]]
-    const rising = target > this.value
-    const time = rising ? this.params[P_RISE] : this.params[P_FALL]
+  processBlock(from: number, to: number) {
+    const input = this.inputs[0]
+    const out = this.outputs[0]
+    const sr = this.ctx.sampleRate
+    const rise = this.params[P_RISE]
+    const fall = this.params[P_FALL]
+    const linear = Math.round(this.params[P_SHAPE]) === SHAPE_LINEAR
+    // Each direction's rate, worked out once a block: they are the same
+    // numbers every sample until a knob moves.
+    const up = linear ? 1 / (rise * sr) : tauStep(rise * sr)
+    const down = linear ? 1 / (fall * sr) : tauStep(fall * sr)
+    let value = this.value
 
-    if (Math.round(this.params[P_SHAPE]) === SHAPE_LINEAR) {
-      // Constant rate: the time is how long a full one-unit move takes, so
-      // the ramp is straight and a square edge comes out as a triangle.
-      const step = 1 / (time * this.ctx.sampleRate)
-      const delta = target - this.value
-      this.value += delta > step ? step : delta < -step ? -step : delta
-    } else {
-      // One-pole: the time is a time constant, covering 63% of what is left
-      // in that long and never quite arriving. This is what a hardware slew
-      // limiter does, and it is the shape portamento wants.
-      this.value += (target - this.value) * tauStep(time * this.ctx.sampleRate)
+    for (let i = from; i < to; i++) {
+      const target = input[i]
+      const k = target > value ? up : down
+      if (linear) {
+        // Constant rate: the time is how long a full one-unit move takes, so
+        // the ramp is straight and a square edge comes out as a triangle.
+        const delta = target - value
+        value += delta > k ? k : delta < -k ? -k : delta
+      } else {
+        // One-pole: the time is a time constant, covering 63% of what is left
+        // in that long and never quite arriving. This is what a hardware slew
+        // limiter does, and it is the shape portamento wants.
+        value += (target - value) * k
+      }
+      out[i] = value
     }
-
-    slots[this.outs[0]] = this.value
+    this.value = value
   }
 }

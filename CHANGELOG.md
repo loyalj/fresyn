@@ -4,6 +4,146 @@ What changed, newest first. The README says what Fresyn is now; this is how
 it got there. The older entries are the milestone notes that used to sit at
 the top of the README, moved here as they were written.
 
+## Scales and chords, progressions, and Euclidean rhythms
+
+Three utilities for getting a song started. **Scales & chords** shows a key
+on a keyboard and the circle of fifths, spelled as the key spells it, with
+the chords on each degree and their numerals, as triads or sevenths; a chord
+clicked plays through the rack on the bench, and **Set song's key** makes it
+the song's key for the roll. **Progressions** sketches a progression — from
+nine well-known ones or chord by chord — and writes it into the pattern on
+the bench track, voiced close, smooth, spread or over a bass, in one of seven
+rhythms, as one step of undo, lengthening the pattern when it has to. The
+two share their key and progression, so a chord added in one appears in the
+other. **Rhythm** writes Euclidean rhythms into a Drum Kit pattern, a lane
+per pad, with rotation, accents, a chance for the unaccented hits, lanes of
+any length and lanes fitted to the bar for polyrhythms, and six grooves to
+start from.
+
+Utilities now see the tracks — how each is played, how a real note becomes
+one of its rows, a kit's pads — the pattern open in the roll, and can sound a
+row through a track's rack; `editSong` takes a name for the History list.
+`check-utilities` covers the chord theory, voicing, rhythms and Bjorklund's
+algorithm; `check-utilities-ui` sets a key, writes a progression and a
+rhythm, and reads them back from the saved song.
+
+## A metronome, and notes and frequencies
+
+Two more utilities. **Metronome** clicks at a tempo and time signature, with
+the first beat accented, two, three or four clicks to the beat, three sounds,
+a volume, a Tap button and lamps that light as each click is heard; Space
+starts and stops it while its panel has the focus. Its clicks are scheduled
+ahead on the audio clock, so they land on the sample whatever the page is
+doing, and further ahead in a background tab; they play through the rack's
+device but not the rack or the desk, so a bounce never has them in it.
+**Notes & frequencies** converts a note, a MIDI number or a frequency to the
+others, with the cents off the nearest note, the period, the octave around
+it, a transposition as a Sampler's speed, and twelve harmonics, at a
+reference A of the user's choosing; anything copies with a click, and it can
+play the pitch.
+
+`usePanelKey` is now how a utility takes a key from the rack while its panel
+has the focus -- Tap tempo moved onto it -- and a utility can open the audio
+device for a sound of its own. `check-utilities` covers the click count and
+the pitch arithmetic; `check-utilities-ui` starts, stops and closes the
+metronome, counting the clicks, and works the converter.
+
+## Notes on the rack
+
+**A note can be stuck to any unit**, for why a knob is where it is or what a
+cable is for. Right-click a unit and choose **Add note here**, or pick one and
+use **Edit → Add note to module**. A note is stuck to its unit rather than to
+a spot on the rack, so it stays with it through reordering, resizing and the
+compact rack, and on the face it was left on, front or back. Drag it by its
+top strip, onto another unit to move it there; fold it to its first line;
+give it one of five colours. **View → Show notes** hides them all.
+
+Notes are part of the patch, so they go wherever a patch goes -- the project,
+the autosave, patch files, the library, a Drum Kit's pads -- and are copied,
+pasted and duplicated with their module and removed with it. Every change is
+a step of undo, with a burst of typing folded into one; the History list
+names them as rack notes.
+
+Underneath, `Patch.notes` holds them, read and written by `patch/notes.ts`,
+whose reader drops notes on missing modules and makes anything else in one
+sensible. None of it reaches the audio thread: the rack's engine sync skips a
+patch whose modules and cables have not changed, and `setTrackPatch` now
+skips a recompile that comes out the same -- which also spares the audio
+thread a rebuild for a cable's colour. `check-patch` covers the data, in
+pads and projects too; `check-notes` drives the whole thing in a browser and
+counts the rebuilds a note costs, which is none.
+
+## Utilities, and a Timing calculator
+
+**A Utilities menu**, for tools that sit beside the music rather than in it.
+Each opens as a panel that floats over the app without taking anything away
+-- the rack still plays and the song goes on -- is dragged by its title,
+closes with Escape or its ×, and is where it was left after a reload. A
+utility's code is fetched the first time it is opened, so the page carries
+none of it until then.
+
+**Timing** is the first. *Song length* turns a running time into bars and
+beats at a tempo and time signature, and bars back into time, with a budget of
+sections underneath that lays the song's parts end to end and says how far
+they are from the length being aimed for. *Note lengths* lists every note from
+a whole to a 1/64, straight, dotted and triplet, in milliseconds for a Delay,
+hertz for an LFO, or samples; click one to copy it. Tempo counts quarter notes
+in every time signature, as the song's does. It starts at the song's tempo and
+keeps its own after that, so trying numbers never changes the song. *Tap
+tempo* reads a tempo from taps on Space or on a pad, and sets the song to it
+-- its opening tempo, or a tempo change from a bar -- as one step of undo.
+Space is the panel's only while that tab is showing and the panel has the
+focus: `data-claims-keys` is a new way for any element to keep keys from the
+rack while the focus is inside it.
+
+`check-utilities` holds the arithmetic to the song's own clock in five time
+signatures, and tap tempo to a steady and an uneven hand; `check-utilities-ui`
+opens the menu and works the panel end to end, tapping with Space and setting
+the song from the start and from a bar.
+
+## Three times the tracks, and nothing waits on a bounce
+
+**The audio engine is about three times faster.** An eight-track song that
+took 150% of the audio thread's time -- and so could not play without
+dropping out -- takes 45% of it, and sixteen tracks now play in real time.
+A song with nothing playing costs a seventh of what it did.
+
+Underneath, `GraphEngine` runs every module over a block of 128 samples in
+one call, where it used to call every module once a sample: forty kinds of
+module behind one call site is a call the JIT cannot inline, and it was most
+of what the rack cost. A cable is now two modules bound to the same block.
+Only the modules a feedback cable spans are still stepped a sample at a time,
+so a loop still costs one sample. Blocks lie on the transport's own frames,
+and anything that changes state does it at the end of a block or at an event,
+so a render is the same in any buffer size. Effects that only work on what
+reaches them -- filters, reverbs, mixers, a delay once its line is empty --
+rest while fed silence; voices are built only up to the Voices knob; the
+Mixer measures loudness only while its panel is showing it; and the maths a
+knob only changes when it moves is worked out when it moves.
+
+**Bounces, stems and takes run in workers.** The page no longer freezes while
+a song is written out, a bounce finishes with the tab in the background, and
+stems cost about what the mix does rather than six times as much, sample for
+sample the same.
+
+**The rack is lighter to use.** A knob turn re-renders its own unit rather
+than the whole rack; resizing the dock no longer restyles the page; units lie
+flat at rest and are 3D only while they turn, so a big rack is a dozen
+compositing layers rather than two hundred; and a knob reaches the audio from
+the hand rather than after the render.
+
+**Shared memory.** The site is now cross-origin isolated, so a decoded sample
+is held once and shared with the audio thread and the bounce worker, each
+file is sent to the audio thread once, and the meters and scopes are written
+into memory the page reads rather than posted thirty times a second.
+
+Also: samples load for every track after a reload, not only the one on the
+bench; a scope's B trace shows inside a Drum Kit pad; Firefox no longer asks
+about storage before anything has been stored; the page no longer rewrites
+its autosave as it opens; the worklet's code is fetched while the page is
+idle, ahead of the first note. `PERFORMANCE.md` has the audit, the plan and
+the measurements.
+
 ## Editing a pad while the kit plays
 
 **Edit pad**, beside the kit's pads, opens that pad's rack on the bench while

@@ -4,6 +4,7 @@ import { MODULE_DEFS, defOf } from './defs'
 import { cableId, cableInto, connect, portKind } from './edit'
 import { clampValue } from './param'
 import { clampNote, KIT_SLOTS, kitSlots, padPatch, padPrefix } from './kit'
+import { readNotes, writeNotes } from './notes'
 import type { Cable, KitSlot, Patch, PatchModule } from './types'
 
 export const PATCH_FORMAT = 1
@@ -94,10 +95,14 @@ export function toStored(name: string, patch: Patch, values: Record<string, numb
     return out
   })
 
+  // Only on modules that are here, and written as no field at all when there
+  // are none, so a patch without notes is the file it always was.
+  const ids = new Set(modules.map((m) => m.id))
+  const notes = writeNotes((patch.notes ?? []).filter((n) => ids.has(n.module)))
   return {
     version: PATCH_FORMAT,
     name,
-    patch: { modules, cables: patch.cables.map((c) => ({ ...c })) },
+    patch: { modules, cables: patch.cables.map((c) => ({ ...c })), ...(notes.length ? { notes } : {}) },
   }
 }
 
@@ -240,9 +245,11 @@ export function fromStored(input: unknown): LoadResult | { error: string } {
   const song = parseSong(data.song) ?? undefined
   if (data.song && !song) warnings.push('the pattern in this file could not be read')
 
+  const notes = readNotes(body.notes, seen, warnings)
+
   return {
     name: typeof data.name === 'string' && data.name ? data.name : 'Untitled',
-    patch: { modules, cables },
+    patch: { modules, cables, ...(notes.length ? { notes } : {}) },
     ...(song ? { song } : {}),
     warnings,
   }

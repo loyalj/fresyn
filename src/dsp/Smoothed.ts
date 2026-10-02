@@ -53,4 +53,12 @@ export class Smoothed {
   get settled() {
     return this.value === this.target
   }
+
+  /**
+   * Where it is, without moving it. Once `settled`, every `next` hands back
+   * exactly this, so a block can read it once instead of stepping it.
+   */
+  get current() {
+    return this.value
+  }
 }

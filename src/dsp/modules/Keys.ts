@@ -105,7 +105,7 @@ export class KeysModule extends DspModule implements Playable {
     this.lastPanelNote = this.params[P_NOTE]
   }
 
-  process(slots: Float32Array) {
+  processBlock(from: number, to: number) {
     // A hand on the panel takes the keyboard back from whatever was playing
     // it. Pressing a key writes this parameter, so a change to it is the one
     // signal available that the note now being asked for is somebody's
@@ -129,7 +129,12 @@ export class KeysModule extends DspModule implements Playable {
     // switch stays what its label says it is: it moves the whole keyboard,
     // whoever is playing it. On a track in a song that makes it a transpose.
     const note = this.notePitch ?? panelNote
-    slots[this.outs[OUT_PITCH]] = note / OCTAVE + this.params[P_OCTAVE]
+    const pitch = note / OCTAVE + this.params[P_OCTAVE]
+    // Standing, exactly as the pitch is, and for the same reason: an envelope
+    // is still releasing after the gate shuts, and a velocity that snapped
+    // back to full at note-off would make every tail swell instead of fade.
+    // It goes back to full when a finger takes the keyboard back, above.
+    const vel = this.noteVel
 
     // Either the keys or a cable into the Gate jack will open it, whichever
     // arrives first, and the last to leave closes it.
@@ -141,13 +146,16 @@ export class KeysModule extends DspModule implements Playable {
     // gate. The note is a parameter rather than part of the gate, so choosing
     // it and firing it stay separate -- which is also why a render batch of
     // eight takes is eight versions of one note rather than eight notes.
-    const open = this.retrig.gate(this.gateOpen || (!this.voiced && slots[this.ins[IN_TRIG]] > 0.5))
-    slots[this.outs[OUT_GATE]] = open ? 1 : 0
-
-    // Standing, exactly as the pitch is, and for the same reason: an envelope
-    // is still releasing after the gate shuts, and a velocity that snapped
-    // back to full at note-off would make every tail swell instead of fade.
-    // It goes back to full when a finger takes the keyboard back, above.
-    slots[this.outs[OUT_VEL]] = this.noteVel
+    const trig = this.inputs[IN_TRIG]
+    const held = this.gateOpen
+    const jack = !this.voiced
+    const outPitch = this.outputs[OUT_PITCH]
+    const outGate = this.outputs[OUT_GATE]
+    const outVel = this.outputs[OUT_VEL]
+    for (let i = from; i < to; i++) {
+      outPitch[i] = pitch
+      outGate[i] = this.retrig.gate(held || (jack && trig[i] > 0.5)) ? 1 : 0
+      outVel[i] = vel
+    }
   }
 }

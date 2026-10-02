@@ -89,7 +89,10 @@ export function pulseSamples(sampleRate: number) {
  * module with a CV jack beside a frequency-like knob does exactly this.
  */
 export function expCv(base: number, cv: number, amount: number) {
-  return base * Math.pow(2, cv * amount)
+  // Nothing patched, or the amount at zero, is the knob exactly -- 2^0 is 1
+  // to the bit -- and it is the usual case, so it costs no power at all.
+  const octaves = cv * amount
+  return octaves === 0 ? base : base * Math.pow(2, octaves)
 }
 
 // --- panning -----------------------------------------------------------------

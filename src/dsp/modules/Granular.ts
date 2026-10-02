@@ -87,6 +87,10 @@ const WINDOW = (() => {
  * rather than one sliding one -- and it is also what a Sample & Hold is for.
  */
 export class GranularModule extends DspModule {
+  /** Works only on what reaches it, so it may rest; see `DspModule.rests`. */
+  readonly rests = true
+  /** A grain can read anything in its buffer. */
+  readonly memory = BUFFER_SECONDS
   /** The last `BUFFER_SECONDS` of input, written round and round. */
   private buffer = new Float32Array(0)
   private length = 0
@@ -123,62 +127,14 @@ export class GranularModule extends DspModule {
     this.wet = new Smoothed(this.params[P_MIX], this.ctx.sampleRate)
   }
 
-  process(slots: Float32Array) {
+  processBlock(from: number, to: number) {
     const sr = this.ctx.sampleRate
-    const x = slots[this.ins[IN_SIGNAL]]
-
-    // Recorded before anything is read, so a grain starting on this sample can
-    // reach the sample that arrived on it.
-    this.buffer[this.write] = x
-    this.write = this.write + 1 === this.length ? 0 : this.write + 1
-
+    const signal = this.inputs[IN_SIGNAL]
+    const outL = this.outputs[OUT_L]
+    const outR = this.outputs[OUT_R]
     let density = this.params[P_DENSITY]
     if (!(density > 0)) density = 0
-    this.phase += density / sr
-    // A while rather than an if: past the sample rate over two, more than one
-    // grain is due per sample, and dropping the rest would quietly cap Density.
-    while (this.phase >= 1) {
-      this.phase -= 1
-      this.startGrain(slots, sr)
-    }
-
-    let l = 0
-    let r = 0
-    for (let i = 0; i < MAX_GRAINS; i++) {
-      if (this.gOn[i] === 0) continue
-
-      const age = this.gAge[i]
-      const life = this.gLife[i]
-      if (age >= life) {
-        this.gOn[i] = 0
-        continue
-      }
-
-      // The window, interpolated between table entries: a grain is rarely a
-      // whole number of table steps long, and stepping the window instead
-      // would put a staircase on every grain's edges.
-      const at = (age / life) * WINDOW_STEPS
-      const wi = at | 0
-      const env = WINDOW[wi] + (WINDOW[wi + 1] - WINDOW[wi]) * (at - wi)
-
-      // The buffer, interpolated the same way. Without this, any Pitch but
-      // zero reads between samples and rounds, which is heard as a rasp.
-      const p = this.gPos[i]
-      const i0 = p | 0
-      const i1 = i0 + 1 === this.length ? 0 : i0 + 1
-      const s = this.buffer[i0] + (this.buffer[i1] - this.buffer[i0]) * (p - i0)
-
-      const g = s * env
-      l += g * this.gL[i]
-      r += g * this.gR[i]
-
-      let next = p + this.gRate[i]
-      if (next >= this.length) next -= this.length
-      else if (next < 0) next += this.length
-      this.gPos[i] = next
-      this.gAge[i] = age + 1
-    }
-
+    const rate = density / sr
     // Grains that overlap sum, so the more of them there are the louder the
     // cloud. The square root is the right correction for grains that are not
     // in step with each other; grains that *are* -- everything at one Position
@@ -187,22 +143,78 @@ export class GranularModule extends DspModule {
     // every ordinary setting too quiet.
     const overlap = Math.min(MAX_GRAINS, Math.max(1, this.params[P_SIZE] * density))
     const norm = 1 / Math.sqrt(overlap)
-
     const mix = this.params[P_MIX]
     this.dry.set(1 - mix)
     this.wet.set(mix)
-    const d = this.dry.next() * x
-    const w = this.wet.next()
 
-    // Only the grains are saturated. Putting the dry signal through it too
-    // would mean a granulator at Mix 0 quietly distorted whatever was passing
-    // through it, which is not what a mix control at zero should do.
-    slots[this.outs[OUT_L]] = d + Math.tanh(l * norm) * w
-    slots[this.outs[OUT_R]] = d + Math.tanh(r * norm) * w
+    for (let n = from; n < to; n++) {
+      const x = signal[n]
+
+      // Recorded before anything is read, so a grain starting on this sample
+      // can reach the sample that arrived on it.
+      this.buffer[this.write] = x
+      this.write = this.write + 1 === this.length ? 0 : this.write + 1
+
+      this.phase += rate
+      // A while rather than an if: past the sample rate over two, more than
+      // one grain is due per sample, and dropping the rest would quietly cap
+      // Density.
+      while (this.phase >= 1) {
+        this.phase -= 1
+        this.startGrain(n, sr)
+      }
+
+      let l = 0
+      let r = 0
+      for (let i = 0; i < MAX_GRAINS; i++) {
+        if (this.gOn[i] === 0) continue
+
+        const age = this.gAge[i]
+        const life = this.gLife[i]
+        if (age >= life) {
+          this.gOn[i] = 0
+          continue
+        }
+
+        // The window, interpolated between table entries: a grain is rarely a
+        // whole number of table steps long, and stepping the window instead
+        // would put a staircase on every grain's edges.
+        const at = (age / life) * WINDOW_STEPS
+        const wi = at | 0
+        const env = WINDOW[wi] + (WINDOW[wi + 1] - WINDOW[wi]) * (at - wi)
+
+        // The buffer, interpolated the same way. Without this, any Pitch but
+        // zero reads between samples and rounds, which is heard as a rasp.
+        const p = this.gPos[i]
+        const i0 = p | 0
+        const i1 = i0 + 1 === this.length ? 0 : i0 + 1
+        const s = this.buffer[i0] + (this.buffer[i1] - this.buffer[i0]) * (p - i0)
+
+        const g = s * env
+        l += g * this.gL[i]
+        r += g * this.gR[i]
+
+        let next = p + this.gRate[i]
+        if (next >= this.length) next -= this.length
+        else if (next < 0) next += this.length
+        this.gPos[i] = next
+        this.gAge[i] = age + 1
+      }
+
+      const d = this.dry.next() * x
+      const w = this.wet.next()
+
+      // Only the grains are saturated. Putting the dry signal through it too
+      // would mean a granulator at Mix 0 quietly distorted whatever was
+      // passing through it, which is not what a mix control at zero should
+      // do.
+      outL[n] = d + Math.tanh(l * norm) * w
+      outR[n] = d + Math.tanh(r * norm) * w
+    }
   }
 
-  /** Take a free voice, if there is one, and point it at the buffer. */
-  private startGrain(slots: Float32Array, sr: number) {
+  /** Take a free voice, if there is one, and point it at the buffer, at sample `n`. */
+  private startGrain(n: number, sr: number) {
     let slot = -1
     for (let i = 0; i < MAX_GRAINS; i++) {
       if (this.gOn[i] === 0) {
@@ -224,7 +236,7 @@ export class GranularModule extends DspModule {
     // sound going in now.
     const seconds =
       this.params[P_POSITION] +
-      slots[this.ins[IN_POS]] * BUFFER_SECONDS +
+      this.inputs[IN_POS][n] * BUFFER_SECONDS +
       this.random() * this.params[P_SPRAY] * BUFFER_SECONDS
 
     let back = Math.round(seconds * sr)
@@ -235,7 +247,7 @@ export class GranularModule extends DspModule {
     if (start < 0) start += this.length
 
     // Octaves, as everything else in this rack scales pitch.
-    const octaves = this.params[P_PITCH] + slots[this.ins[IN_PITCH]]
+    const octaves = this.params[P_PITCH] + this.inputs[IN_PITCH][n]
 
     // Constant power, so a grain thrown to one side is no quieter than one
     // left in the middle -- the same law the mixer pans by.

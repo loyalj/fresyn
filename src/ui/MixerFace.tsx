@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { memo, useEffect, useRef } from 'react'
 import { MIXER_CHANNELS } from '../patch/defs'
 import type { ModuleDef } from '../patch/types'
 import { useEngine, useEngineId } from './EngineContext'
@@ -129,8 +129,11 @@ interface MeterProps {
  * Hidden from assistive technology on purpose. A bar that changes sixty
  * times a second has nothing to say that the fader's own readout does not,
  * and a live region that shouted every frame would be unusable.
+ *
+ * Memoized: its props never change, so a knob turned on the mixer leaves
+ * the bars alone.
  */
-function Meter({ index, bars }: MeterProps) {
+const Meter = memo(function Meter({ index, bars }: MeterProps) {
   return (
     <div className="strip-meter level-meter" aria-hidden="true">
       <div
@@ -141,5 +144,4 @@ function Meter({ index, bars }: MeterProps) {
       />
     </div>
   )
-}
-
+})

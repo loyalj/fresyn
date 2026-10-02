@@ -1,5 +1,6 @@
 import { defOf } from './defs'
 import type { Cable, KitSlot, Patch, PatchModule } from './types'
+import { keepNotes, notesOf } from './notes'
 
 /**
  * The Drum Kit: sixteen pads, each holding a whole rack from the library.
@@ -105,7 +106,11 @@ export function padPatch(patch: Patch, values: Readonly<Record<string, number>> 
   const cables = patch.cables
     .filter((c) => !dropped.has(c.from.module) && !dropped.has(c.to.module))
     .map((c) => ({ ...c, from: { ...c.from }, to: { ...c.to } }))
-  return { modules, cables }
+  // A rack's notes come into the pad with it, on whatever it kept.
+  const notes = notesOf(patch)
+    .filter((n) => !dropped.has(n.module))
+    .map((n) => ({ ...n }))
+  return notes.length ? { modules, cables, notes } : { modules, cables }
 }
 
 /**
@@ -320,10 +325,11 @@ function padContents(patch: Patch): Patch {
   const out = patch.modules.filter((m) => m.type === 'kit' || defOf(m.type).tap).map((m) => m.id)
   if (out.length === 0) return patch
   const dropped = new Set(out)
-  return {
+  return keepNotes({
+    ...patch,
     modules: patch.modules.filter((m) => !dropped.has(m.id)),
     cables: patch.cables.filter((c) => !dropped.has(c.from.module) && !dropped.has(c.to.module)),
-  }
+  })
 }
 
 /** Modules a pad cannot hold, and so the Modules menu does not offer while one is open. */

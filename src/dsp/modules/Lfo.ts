@@ -38,32 +38,44 @@ export class LfoModule extends DspModule {
     this.depth = new Smoothed(this.params[P_DEPTH], this.ctx.sampleRate)
   }
 
-  process(slots: Float32Array) {
-    if (this.sync.rose(slots[this.ins[IN_SYNC]])) this.osc.syncAt(this.sync.crossing)
-
+  processBlock(from: number, to: number) {
     this.width.set(this.params[P_WIDTH])
     this.depth.set(this.params[P_DEPTH])
-    // The same scaling the oscillator uses, so one modulation source sweeps
-    // both by the same amount. The core clamps the result to a usable width.
-    const pw = this.width.next() + slots[this.ins[IN_PWM]] * 0.45
-
-    // Exponential, like every other rate in the rack: a fixed amount moves it
-    // by the same number of doublings wherever the knob is set, so a falling
-    // envelope slows a wobble down by an interval rather than by a number of
-    // hertz that means something different at each end of the knob.
-    //
-    // Not smoothed, because the rate is not smoothed either: an oscillator's
-    // phase is continuous through a rate change, so there is nothing to
-    // zipper -- only the step it would take to get there, which is the point.
-    const rate =
-      expCv(this.params[P_RATE], slots[this.ins[IN_CV]], this.params[P_CV_AMOUNT])
-
+    const sync = this.inputs[IN_SYNC]
+    const pwm = this.inputs[IN_PWM]
+    const cv = this.inputs[IN_CV]
+    const outBi = this.outputs[OUT_BIPOLAR]
+    const outUni = this.outputs[OUT_UNIPOLAR]
+    const base = this.params[P_RATE]
+    const amount = this.params[P_CV_AMOUNT]
     const wave = WAVEFORMS[Math.round(this.params[P_SHAPE])] ?? 'sine'
-    const v = this.osc.process(rate, wave, pw) * this.depth.next()
+    const osc = this.osc
 
-    slots[this.outs[OUT_BIPOLAR]] = v
-    // Unipolar tap, for anything that should not go negative: filter cutoff,
-    // VCA gain, pulse width.
-    slots[this.outs[OUT_UNIPOLAR]] = v * 0.5 + 0.5
+    for (let i = from; i < to; i++) {
+      if (this.sync.rose(sync[i])) osc.syncAt(this.sync.crossing)
+
+      // The same scaling the oscillator uses, so one modulation source sweeps
+      // both by the same amount. The core clamps the result to a usable
+      // width.
+      const pw = this.width.next() + pwm[i] * 0.45
+
+      // Exponential, like every other rate in the rack: a fixed amount moves
+      // it by the same number of doublings wherever the knob is set, so a
+      // falling envelope slows a wobble down by an interval rather than by a
+      // number of hertz that means something different at each end of the
+      // knob.
+      //
+      // Not smoothed, because the rate is not smoothed either: an
+      // oscillator's phase is continuous through a rate change, so there is
+      // nothing to zipper -- only the step it would take to get there, which
+      // is the point.
+      const rate = expCv(base, cv[i], amount)
+      const v = osc.process(rate, wave, pw) * this.depth.next()
+
+      outBi[i] = v
+      // Unipolar tap, for anything that should not go negative: filter
+      // cutoff, VCA gain, pulse width.
+      outUni[i] = v * 0.5 + 0.5
+    }
   }
 }

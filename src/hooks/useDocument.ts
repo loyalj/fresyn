@@ -201,22 +201,37 @@ export function useDocument(initialDoc: Doc) {
   )
 
   const editSong = useCallback(
-    (fn: (s: Song) => Song, key?: string) => {
-      commitDoc((doc) => {
-        const next = fn(doc.song)
-        return next === doc.song ? doc : { ...doc, song: next }
-      }, key)
+    (fn: (s: Song) => Song, key?: string, label?: string) => {
+      commitDoc(
+        (doc) => {
+          const next = fn(doc.song)
+          return next === doc.song ? doc : { ...doc, song: next }
+        },
+        key,
+        label,
+      )
     },
     [commitDoc],
   )
 
+  /**
+   * Handed every knob move before it becomes an edit, so the sound can follow
+   * the hand without waiting on a render. Set by whoever owns the engine; see
+   * `App`.
+   */
+  const paramTap = useRef<((track: string, key: string, value: number) => void) | null>(null)
+
   const setParam = useCallback(
     (moduleId: string, paramId: string, value: number) => {
       const key = `${moduleId}.${paramId}`
+      paramTap.current?.(trackId, enginePrefix + key, value)
       // Keyed by track as well, so dragging the same knob on two racks does
       // not fold into one step of undo.
       editRack(
-        (rack) => ({ ...rack, values: { ...rack.values, [key]: value } }),
+        // The same value is no edit. A knob held against the end of its travel
+        // goes on reporting every pointermove, and each of those was a commit
+        // that re-rendered the app for nothing.
+        (rack) => (rack.values[key] === value ? rack : { ...rack, values: { ...rack.values, [key]: value } }),
         // And by pad, so the same knob on two pads is two steps.
         `param:${trackId}.${enginePrefix}${key}`,
       )
@@ -234,8 +249,10 @@ export function useDocument(initialDoc: Doc) {
   const setParams = useCallback(
     (moduleId: string, changes: Record<string, number>) => {
       const ids = Object.keys(changes).sort()
+      for (const id of ids) paramTap.current?.(trackId, `${enginePrefix}${moduleId}.${id}`, changes[id])
       editRack(
         (rack) => {
+          if (ids.every((id) => rack.values[`${moduleId}.${id}`] === changes[id])) return rack
           const values = { ...rack.values }
           for (const id of ids) values[`${moduleId}.${id}`] = changes[id]
           return { ...rack, values }
@@ -280,6 +297,7 @@ export function useDocument(initialDoc: Doc) {
     values,
     padInfo,
     enginePrefix,
+    paramTap,
     setOpenPad,
     patchName,
     activePattern,

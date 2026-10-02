@@ -42,11 +42,22 @@ export interface SongRenderOptions {
   /**
    * Called with 0..1 as it goes, and awaited.
    *
-   * A bounce is synchronous arithmetic and holds the thread while it runs, so
-   * a long one has to hand the page back often enough to paint -- otherwise
-   * the progress it is reporting never appears.
+   * A bounce is synchronous arithmetic and holds its thread while it runs.
+   * In the app that thread is the bounce worker's, which has nothing else to
+   * do, so this only posts; a caller running it anywhere with a page to keep
+   * alive would hand the thread back here, with a macrotask rather than an
+   * animation frame -- a hidden tab never fires one, and the bounce would stop.
    */
   onProgress?: (done: number) => void | Promise<void>
+  /**
+   * How often `onProgress` is called, in milliseconds of wall-clock time.
+   *
+   * Time rather than audio: a slice measured in audio is a different length
+   * of frozen page on every machine and for every song, and a heavy song at
+   * a little under realtime turned half a second of it into half a second of
+   * nothing responding.
+   */
+  progressMs?: number
 }
 
 export interface SongRenderResult {
@@ -64,6 +75,8 @@ const DEFAULTS = {
   tailSeconds: 4,
   fadeMs: 8,
   silenceDb: -72,
+  // Inside a frame at 60 Hz, with room left over for the frame itself.
+  progressMs: 10,
 }
 
 export async function renderSong(
@@ -87,6 +100,10 @@ export async function renderSong(
     loop: null,
     only: opts.only,
     routing: opts.routing,
+    // Nothing is muted or unmuted part way through a bounce, so a track that
+    // is not heard need not run at all -- which for a stem is every track
+    // but one.
+    onlyHeard: true,
   })
 
   // The limiter looks ahead, so everything comes out this many samples late.
@@ -99,10 +116,7 @@ export async function renderSong(
   const right = new Float32Array(total)
   const bl = new Float32Array(BLOCK)
   const br = new Float32Array(BLOCK)
-  // Half a second of audio between yields: often enough that progress moves
-  // smoothly, rarely enough that the handing back costs nothing.
-  const chunk = Math.max(BLOCK, Math.round(sr / 2))
-  let sinceYield = 0
+  let lastProgress = performance.now()
 
   for (let i = 0; i < rendered; i += BLOCK) {
     player.render(bl, br)
@@ -115,10 +129,10 @@ export async function renderSong(
       right.set(br.subarray(from, to), i + from - latency)
     }
 
-    sinceYield += BLOCK
-    if (sinceYield >= chunk && opts.onProgress) {
-      sinceYield = 0
+    if (opts.onProgress && performance.now() - lastProgress >= opts.progressMs) {
       await opts.onProgress(i / rendered)
+      // From when it came back, so time spent away is not charged to the render.
+      lastProgress = performance.now()
     }
   }
 
@@ -140,13 +154,6 @@ export interface Stem {
 }
 
 /**
- * One rendering per track, so a mix can be rebuilt or re-balanced elsewhere.
- *
- * A track that is not reaching the speakers gets no file rather than a file
- * of silence: mute and solo are decisions about the piece, and a set of stems
- * that quietly ignored them would not add back up to the mix they came from.
- */
-/**
  * What a stem carries of its track's channel.
  *
  * - `raw`: the rack's own output, nothing of the desk.
@@ -165,14 +172,28 @@ export const STEM_ROUTING: Record<StemMix, Routing> = {
   sends: { strips: true, sends: true, master: false },
 }
 
-export async function renderStems(
+export type StemOptions = SongRenderOptions & { stemMix?: StemMix }
+
+/**
+ * One rendering per track, so a mix can be rebuilt or re-balanced elsewhere.
+ *
+ * A track that is not reaching the speakers gets no file rather than a file
+ * of silence: mute and solo are decisions about the piece, and a set of stems
+ * that quietly ignored them would not add back up to the mix they came from.
+ *
+ * Handed out one at a time, as each is finished, so a caller writing them to
+ * files can encode each and let its audio go before the next is rendered: a
+ * set of stems is the song's length once per track, and there is no need to
+ * hold all of it at once. Each stem runs only its own rack (see `onlyHeard`),
+ * so the set costs about what the mix does rather than the mix once per track.
+ */
+export async function* stemsOf(
   song: Song,
   racks: Readonly<Record<string, Rack>>,
-  options: SongRenderOptions & { stemMix?: StemMix },
-): Promise<Stem[]> {
+  options: StemOptions,
+): AsyncGenerator<Stem & { index: number; count: number }> {
   const mix = trackMix(song)
   const wanted = song.tracks.filter((t) => mix[t.id]?.audible)
-  const stems: Stem[] = []
 
   for (let i = 0; i < wanted.length; i++) {
     const track = wanted[i]
@@ -186,8 +207,17 @@ export async function renderStems(
         ? (done) => options.onProgress!((i + done) / wanted.length)
         : undefined,
     })
-    stems.push({ track: track.id, name: track.name, audio })
+    yield { track: track.id, name: track.name, audio, index: i, count: wanted.length }
   }
+}
 
+/** Every stem at once, for a caller that wants them all in hand. */
+export async function renderStems(
+  song: Song,
+  racks: Readonly<Record<string, Rack>>,
+  options: StemOptions,
+): Promise<Stem[]> {
+  const stems: Stem[] = []
+  for await (const { track, name, audio } of stemsOf(song, racks, options)) stems.push({ track, name, audio })
   return stems
 }

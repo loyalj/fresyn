@@ -63,27 +63,33 @@ export class BurstModule extends DspModule {
     this.endPulse = pulseSamples(this.ctx.sampleRate)
   }
 
-  process(slots: Float32Array) {
+  processBlock(from: number, to: number) {
     // Either source fires it, rather than the jack taking over from the
     // button when it is patched. Normalling the way the sample and hold
     // normals its clock would mean the button marked Trigger stopped working
     // the moment a cable went in, which is not what a button should do.
-    const trig = this.ins[IN_TRIG]
-    const fromJack = this.jack.rose(trig === 0 ? 0 : slots[trig])
-    const fromTransport = this.transport.rose(this.gateOpen ? 1 : 0)
-    if (fromJack || fromTransport) this.start()
+    const trig = this.inputs[IN_TRIG]
+    const button = this.gateOpen ? 1 : 0
+    const outGate = this.outputs[OUT_GATE]
+    const outRamp = this.outputs[OUT_RAMP]
+    const outEnd = this.outputs[OUT_END]
+    for (let i = from; i < to; i++) {
+      const fromJack = this.jack.rose(trig[i])
+      const fromTransport = this.transport.rose(button)
+      if (fromJack || fromTransport) this.start()
 
-    if (this.wait > 0) this.wait--
-    if (this.high > 0) this.high--
-    if (this.ending > 0) this.ending--
+      if (this.wait > 0) this.wait--
+      if (this.high > 0) this.high--
+      if (this.ending > 0) this.ending--
 
-    if (this.left > 0 && this.wait <= 0) this.fire()
+      if (this.left > 0 && this.wait <= 0) this.fire()
 
-    slots[this.outs[OUT_GATE]] = this.high > 0 ? 1 : 0
-    slots[this.outs[OUT_RAMP]] = this.ramp
-    // High for the tail of that countdown, so the pulse lands when the run
-    // has finished rather than the moment the last gate opened.
-    slots[this.outs[OUT_END]] = this.ending > 0 && this.ending <= this.endPulse ? 1 : 0
+      outGate[i] = this.high > 0 ? 1 : 0
+      outRamp[i] = this.ramp
+      // High for the tail of that countdown, so the pulse lands when the run
+      // has finished rather than the moment the last gate opened.
+      outEnd[i] = this.ending > 0 && this.ending <= this.endPulse ? 1 : 0
+    }
   }
 
   private start() {

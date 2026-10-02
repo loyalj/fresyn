@@ -1,5 +1,5 @@
 import workletUrl from '../dsp/worklet.ts?worker&url'
-import type { FromWorklet, ProcessorOptions, ToWorklet } from '../dsp/protocol'
+import type { FromWorklet, ProcessorOptions, TelemetryLayout, ToWorklet } from '../dsp/protocol'
 import type { SampleRecord } from '../dsp/samples'
 import type { MixLevels, TrackEvent, TrackMix } from '../dsp/SongEngine'
 import type { Console } from '../song/types'
@@ -7,6 +7,22 @@ import { compile, type CompiledPatch } from '../patch/compile'
 import { initialValues } from '../patch/edit'
 import { flattenKits } from '../patch/kit'
 import type { Patch } from '../patch/types'
+import { canShare } from './shared'
+
+/**
+ * Room for the reports in shared memory: two halves of a quarter of a
+ * megabyte, which holds some dozens of scopes -- far more than a rack has --
+ * with the rest of a report in a corner of it.
+ */
+const TELEMETRY_BYTES = 512 * 1024
+
+/** One half of the shared telemetry, read through views made for its layout. */
+interface TelemetrySlot {
+  levels: LevelFrames | undefined
+  scopes: ScopeFrames | undefined
+  mix: MixLevels
+  update(): void
+}
 
 /** One frame of captured samples per scope module, keyed by module id. */
 export type ScopeFrames = Record<string, Float32Array>
@@ -109,6 +125,8 @@ function latencyHint(latency: AudioSettings['latency']): AudioContextLatencyCate
 
 interface TrackState {
   compiled: CompiledPatch
+  /** The compiled patch as text, to tell an edit the audio would not hear from one it would. */
+  shape?: string
   /** Knob positions by `moduleId.paramId`, not by flat index; a recompile renumbers. */
   values: Record<string, number>
 }
@@ -425,6 +443,8 @@ export class AudioEngine {
    * was dropped -- the rack does not start until something is played.
    */
   private samples: SampleRecord[] = []
+  /** Which of them the running node already has. */
+  private sent = new Set<string>()
 
   /**
    * Hand every rack a new set of samples without rebuilding any of them.
@@ -432,10 +452,20 @@ export class AudioEngine {
    * A file landing on a panel has to reach a playing rack; rewiring instead
    * would be audible, and the module that wants the audio is usually the one
    * being listened to.
+   *
+   * Only what the node has not had yet goes over. The whole library used to,
+   * on every file dropped and every change of track -- cloned, and
+   * deserialized on the audio thread between two blocks, which for a few
+   * minutes of audio is a dropout. Where memory is shared what goes is not a
+   * copy at all (see `SampleLibrary`), but sending each file once is right
+   * either way.
    */
   setSamples(samples: SampleRecord[]) {
     this.samples = samples
-    this.post({ type: 'samples', samples })
+    const fresh = samples.filter((s) => !this.sent.has(s.id))
+    if (fresh.length === 0 || !this.node) return
+    for (const s of fresh) this.sent.add(s.id)
+    this.post({ type: 'addSamples', samples: fresh })
   }
 
   /** Current knob values for one track, laid out for its compiled patch. */
@@ -462,6 +492,30 @@ export class AudioEngine {
    * forgets, and a failure is the status's to report, not an unhandled
    * rejection's.
    */
+  /**
+   * Fetch the worklet's code ahead of the first press, once the page is idle.
+   *
+   * The context still waits for a gesture, as it has to; what need not wait
+   * is the download. The file is content-hashed and cached for good, so the
+   * `addModule` a press makes finds it already here instead of starting a
+   * round trip -- on a slow connection most of the time before the first
+   * note sounds. Fire and forget: a failure here is the press's to report.
+   */
+  prefetch() {
+    if (this.starting || typeof fetch === 'undefined') return
+    void fetch(workletUrl).catch(() => {})
+  }
+
+  /**
+   * The audio context, started if it is not yet: for something that plays
+   * through the same device as the rack but not through the rack -- a
+   * utility's click, a test tone. Null when it could not be started.
+   */
+  async context(): Promise<AudioContext | null> {
+    await this.start()
+    return this.ctx ?? null
+  }
+
   async start(): Promise<boolean> {
     let attempt = this.starting
     if (!attempt) {
@@ -544,7 +598,11 @@ export class AudioEngine {
         watch: this.watched,
         mix: this.mix,
         ...(this.desk ? { console: this.desk } : {}),
+        ...(canShare ? { telemetry: new SharedArrayBuffer(TELEMETRY_BYTES) } : {}),
       }
+      this.sent = new Set(this.samples.map((s) => s.id))
+      this.telemetry = options.telemetry ?? null
+      this.slots = []
       const node = new AudioWorkletNode(opened, 'fresyn-voice', {
         numberOfInputs: 0,
         numberOfOutputs: 1,
@@ -594,13 +652,72 @@ export class AudioEngine {
   }
 
   private receive(msg: FromWorklet) {
-    if (msg.type !== 'frame') return
-    if (msg.levels) for (const fn of this.levelListeners) fn(msg.levels)
-    for (const fn of this.mixListeners) fn(msg.mix)
-    if (msg.scopes) for (const fn of this.scopeListeners) fn(msg.scopes)
+    if (msg.type === 'layout') {
+      this.lay(msg.layout)
+      return
+    }
+    if (msg.type === 'tick') {
+      const read = this.slots[msg.slot]
+      if (!read) return
+      read.update()
+      this.deliver(msg.frame, read.levels, read.mix, read.scopes)
+      return
+    }
+    this.deliver(msg.frame, msg.levels, msg.mix, msg.scopes)
+  }
+
+  private deliver(
+    frame: number,
+    levels: LevelFrames | undefined,
+    mix: MixLevels,
+    scopes: ScopeFrames | undefined,
+  ) {
+    if (levels) for (const fn of this.levelListeners) fn(levels)
+    for (const fn of this.mixListeners) fn(mix)
+    if (scopes) for (const fn of this.scopeListeners) fn(scopes)
     // Last, so a transport filling its next window does it after the panels
     // have had this frame rather than between two of them.
-    for (const fn of this.frameListeners) fn(msg.frame)
+    for (const fn of this.frameListeners) fn(frame)
+  }
+
+  // --- shared telemetry ---------------------------------------------------
+  //
+  // Where memory can be shared, the processor writes its reports into
+  // `telemetry` and says only which half: see `TelemetryLayout`. Each half is
+  // read through views made once per layout, so a report is read without a
+  // copy and without allocating anything.
+
+  private telemetry: SharedArrayBuffer | null = null
+  private slots: TelemetrySlot[] = []
+
+  /** Views onto both halves for a new layout. */
+  private lay(layout: TelemetryLayout) {
+    const buffer = this.telemetry
+    if (!buffer) return
+    const slotFloats = Math.floor(buffer.byteLength / 4 / 2)
+    this.slots = [0, 1].map((slot) => {
+      const base = slot * slotFloats
+      const view = (at: number, length: number) => new Float32Array(buffer, (base + at) * 4, length)
+      const levels: LevelFrames = {}
+      for (const e of layout.levels) levels[e.id] = view(e.at, e.length)
+      const scopes: ScopeFrames = {}
+      for (const e of layout.scopes) scopes[e.id] = view(e.at, e.length)
+      const floats = view(layout.mixAt, layout.tracks.length + 3)
+      const mix: MixLevels = { tracks: {}, master: 0, momentary: -99, shortTerm: -99 }
+      const n = layout.tracks.length
+      return {
+        levels: layout.levels.length ? levels : undefined,
+        scopes: layout.scopes.length ? scopes : undefined,
+        mix,
+        update() {
+          // The one object, refilled: every listener reads it on the spot.
+          for (let k = 0; k < n; k++) mix.tracks[layout.tracks[k]] = floats[k]
+          mix.master = floats[n]
+          mix.momentary = floats[n + 1]
+          mix.shortTerm = floats[n + 2]
+        },
+      }
+    })
   }
 
   /**
@@ -656,12 +773,20 @@ export class AudioEngine {
   setTrackPatch(id: string, patch: Patch, values?: Record<string, number>) {
     const compiled = compile(patch)
     this.warn(id, compiled)
-    const held = this.tracks.get(id)?.values
-    this.tracks.set(id, {
-      compiled,
-      // Seed newly added modules with their defaults.
-      values: { ...initialValues(patch), ...pick(values ?? held ?? {}, patch) },
-    })
+    const was = this.tracks.get(id)
+    const held = was?.values
+    // Seed newly added modules with their defaults.
+    const nextValues = { ...initialValues(patch), ...pick(values ?? held ?? {}, patch) }
+    // An edit the audio cannot hear -- a note on the rack, a cable's colour --
+    // compiles to exactly what is already running. Rebuilding the track for
+    // it would cost the audio thread a rebuild for nothing, so only the knobs
+    // go over, and only those that moved.
+    const shape = JSON.stringify(compiled)
+    if (was && was.shape === shape) {
+      this.setValues(id, nextValues)
+      return
+    }
+    this.tracks.set(id, { compiled, shape, values: nextValues })
     this.post({
       type: 'track',
       id,
@@ -693,6 +818,22 @@ export class AudioEngine {
       if (index === undefined) continue
       this.post({ type: 'param', track: trackId, index, value })
     }
+  }
+
+  /**
+   * One knob, straight from the hand.
+   *
+   * The same message `setValues` would send a render later, sent now: a knob
+   * that waited for the edit to render and commit reached the speakers a
+   * frame or two behind the pointer. `setValues` then finds the value already
+   * here and sends nothing, so the two never disagree.
+   */
+  setValue(trackId: string, key: string, value: number) {
+    const track = this.tracks.get(trackId)
+    if (!track || track.values[key] === value) return
+    track.values[key] = value
+    const index = track.compiled.paramIndex[key]
+    if (index !== undefined) this.post({ type: 'param', track: trackId, index, value })
   }
 
   /**

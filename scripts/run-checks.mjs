@@ -28,10 +28,11 @@ const FAST = [
   ['manual', ['scripts/run-ts.mjs', 'check-manual']],
   ['instruments', ['scripts/run-ts.mjs', 'check-instruments']],
   ['modules', ['scripts/run-ts.mjs', 'check-modules']],
+  ['utilities', ['scripts/run-ts.mjs', 'check-utilities']],
   ['theme', ['scripts/check-theme.mjs']],
 ]
 
-const BROWSER = ['browser', 'audio', 'cables', 'input', 'rack', 'export', 'roll', 'sampler', 'scope', 'timing', 'kit', 'tools'].map(
+const BROWSER = ['browser', 'audio', 'cables', 'input', 'rack', 'export', 'roll', 'sampler', 'scope', 'timing', 'kit', 'tools', 'utilities-ui', 'notes'].map(
   (n) => [n, [`scripts/check-${n}.mjs`]],
 )
 

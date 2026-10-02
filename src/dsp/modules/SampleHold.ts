@@ -49,34 +49,50 @@ export class SampleHoldModule extends DspModule {
     for (let c = 2; c <= CHANNELS; c++) this.streams.push(streamFor(seed, `${id}.ch${c}`))
   }
 
-  process(slots: Float32Array) {
+  processBlock(from: number, to: number) {
+    const sr = this.ctx.sampleRate
+    // A channel at a time, every sample of the block: the channels share
+    // nothing, so the order they are worked in changes no sample.
     for (let c = 0; c < CHANNELS; c++) {
       // Ports are grouped by channel, two in and two out apiece, and the
       // parameters are one Rate per channel in the same order.
-      const signal = this.ins[c * 2]
-      const trig = this.ins[c * 2 + 1]
+      const patchedIn = this.ins[c * 2] !== 0
+      const patchedTrig = this.ins[c * 2 + 1] !== 0
+      const signal = this.inputs[c * 2]
+      const trig = this.inputs[c * 2 + 1]
+      const outHeld = this.outputs[c * 2]
+      const outClock = this.outputs[c * 2 + 1]
+      const step = this.params[c] / sr
+      const edge = this.edges[c]
+      const stream = this.streams[c]
+      let phase = this.phase[c]
+      let held = this.held[c]
 
-      // Internal clock. Free-running rather than reset by the trig input: it
-      // is an output in its own right, and a clock that stopped whenever you
-      // patched something else would be a surprise.
-      this.phase[c] += this.params[c] / this.ctx.sampleRate
-      let ticked = false
-      if (this.phase[c] >= 1) {
-        this.phase[c] -= 1
-        ticked = true
+      for (let i = from; i < to; i++) {
+        // Internal clock. Free-running rather than reset by the trig input:
+        // it is an output in its own right, and a clock that stopped whenever
+        // you patched something else would be a surprise.
+        phase += step
+        let ticked = false
+        if (phase >= 1) {
+          phase -= 1
+          ticked = true
+        }
+
+        // An unpatched input reads slot 0, which is ground and never written,
+        // so the wiring itself is what says whether to fall back to the
+        // normal.
+        const fire = patchedTrig ? edge.rose(trig[i]) : ticked
+
+        // Held in float32, as it always was.
+        if (fire) held = Math.fround(patchedIn ? signal[i] : stream() * 2 - 1)
+
+        outHeld[i] = held
+        // Square, so it reads as a gate to anything expecting one.
+        outClock[i] = phase < 0.5 ? 1 : 0
       }
-
-      // An unpatched input reads slot 0, which is ground and never written,
-      // so the wiring itself is what says whether to fall back to the normal.
-      const fire = trig === 0 ? ticked : this.edges[c].rose(slots[trig])
-
-      if (fire) {
-        this.held[c] = signal === 0 ? this.streams[c]() * 2 - 1 : slots[signal]
-      }
-
-      slots[this.outs[c * 2]] = this.held[c]
-      // Square, so it reads as a gate to anything expecting one.
-      slots[this.outs[c * 2 + 1]] = this.phase[c] < 0.5 ? 1 : 0
+      this.phase[c] = phase
+      this.held[c] = held
     }
   }
 }

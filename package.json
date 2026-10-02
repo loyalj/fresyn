@@ -21,6 +21,7 @@
     "check:manual": "node scripts/run-ts.mjs check-manual",
     "check:instruments": "node scripts/run-ts.mjs check-instruments",
     "check:modules": "node scripts/run-ts.mjs check-modules",
+    "check:utilities": "node scripts/run-ts.mjs check-utilities",
     "check:theme": "node scripts/check-theme.mjs",
     "check:browser": "node scripts/check-browser.mjs",
     "check:cables": "node scripts/check-cables.mjs",
@@ -32,7 +33,9 @@
     "check:scope": "node scripts/check-scope.mjs",
     "check:timing": "node scripts/check-timing.mjs",
     "check:kit": "node scripts/check-kit.mjs",
-    "check:tools": "node scripts/check-tools.mjs"
+    "check:tools": "node scripts/check-tools.mjs",
+    "check:utilities-ui": "node scripts/check-utilities-ui.mjs",
+    "check:notes": "node scripts/check-notes.mjs"
   },
   "dependencies": {
     "react": "^19.0.0",

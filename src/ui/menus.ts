@@ -2,6 +2,7 @@ import type { StemMix } from '../audio/renderSong'
 import { MODULE_GROUPS, modulesByGroup } from '../patch/defs'
 import type { MenuDef } from './Menu'
 import { THEMES, type Appearance } from './theme'
+import { UTILITIES, type UtilityId } from '../utilities'
 
 /** Everything the menu bar reads or does, gathered by the app. */
 export interface MenuContext {
@@ -49,6 +50,13 @@ export interface MenuContext {
   setCableColors: (by: 'signal' | 'module') => void
   appearance: Appearance
   setAppearance: (next: Appearance) => void
+  /** The utilities open now; see `utilities/index.ts`. */
+  utilitiesOpen: readonly UtilityId[]
+  toggleUtility: (id: UtilityId) => void
+  /** Notes stuck to the rack: whether they show, and a new one on the unit picked. */
+  showNotes: boolean
+  setShowNotes: (on: boolean) => void
+  addNoteToPicked: () => void
 }
 
 /** The menu bar, built from the app's state as it stands. */
@@ -104,6 +112,8 @@ export function buildMenus(ctx: MenuContext): MenuDef[] {
           kind: 'action', label: 'Paste modules', shortcut: 'Ctrl+V',
           disabled: !ctx.canPaste, onSelect: ctx.paste,
         },
+        // On the unit picked, as a right-click on any unit does.
+        { kind: 'action', label: 'Add note to module', disabled: !ctx.canCopy, onSelect: ctx.addNoteToPicked },
         { kind: 'separator' },
         // Beside the sound card, as the other thing plugged into this machine.
         { kind: 'toggle', label: 'MIDI input', checked: ctx.midiOn, onSelect: ctx.toggleMidi },
@@ -168,6 +178,12 @@ export function buildMenus(ctx: MenuContext): MenuDef[] {
         },
         {
           kind: 'toggle',
+          label: 'Show notes',
+          checked: ctx.showNotes,
+          onSelect: () => ctx.setShowNotes(!ctx.showNotes),
+        },
+        {
+          kind: 'toggle',
           label: 'Compact rack',
           checked: ctx.compact,
           onSelect: () => ctx.setCompact(!ctx.compact),
@@ -204,6 +220,18 @@ export function buildMenus(ctx: MenuContext): MenuDef[] {
           })),
         },
       ],
+    },
+    {
+      // Tools beside the music rather than in it. Each opens as a panel that
+      // floats over the app and leaves it working, so a calculator can stay
+      // open while the song plays.
+      label: 'Utilities',
+      items: UTILITIES.map((u) => ({
+        kind: 'toggle' as const,
+        label: u.name,
+        checked: ctx.utilitiesOpen.includes(u.id),
+        onSelect: () => ctx.toggleUtility(u.id),
+      })),
     },
   ]
 }

@@ -47,6 +47,8 @@ const DC_CORNER = 1
  * long as one at the bottom instead of dying the moment it is played.
  */
 export class ResonatorModule extends DspModule {
+  /** Works only on what reaches it, so it may rest; see `DspModule.rests`. */
+  readonly rests = true
   private line = new DelayLine(this.ctx.sampleRate / MIN_PITCH)
   private damper = new OnePole()
   /**
@@ -66,27 +68,44 @@ export class ResonatorModule extends DspModule {
     this.length = new Smoothed(this.loopFor(pitch, this.params[P_DAMPING]), this.ctx.sampleRate)
   }
 
-  process(slots: Float32Array) {
-    const input = slots[this.ins[IN_SIGNAL]]
-
-    const pitch = clampPitch(expCv(this.params[P_PITCH], slots[this.ins[IN_CV]], this.params[P_CV_AMOUNT]))
-
-    this.length.set(this.loopFor(pitch, this.params[P_DAMPING]))
-    const samples = this.length.next()
-
-    const read = this.line.read(samples)
-
+  processBlock(from: number, to: number) {
+    const signal = this.inputs[IN_SIGNAL]
+    const cv = this.inputs[IN_CV]
+    const out = this.outputs[0]
+    const base = this.params[P_PITCH]
+    const amount = this.params[P_CV_AMOUNT]
+    const damping = this.params[P_DAMPING]
     const decay = this.params[P_DECAY]
-    let gain = decay > 0 ? Math.pow(10, (-3 * samples) / (decay * this.ctx.sampleRate)) : 0
-    if (gain > MAX_FEEDBACK) gain = MAX_FEEDBACK
+    const sr = this.ctx.sampleRate
+    // The loop gain for the length last used: a power a sample otherwise,
+    // for a number that only changes while the pitch is moving.
+    let gainFor = NaN
+    let gain = 0
 
-    const damped = this.dc.process(this.damper.process(read, this.params[P_DAMPING]))
-    this.line.push(Math.tanh(input + damped * gain))
+    for (let i = from; i < to; i++) {
+      const input = signal[i]
 
-    // What the line is ringing with, rather than the input plus it: the rack
-    // has a mixer for blending, and a resonator that always passed its own
-    // input could not be used as a filter.
-    slots[this.outs[0]] = read
+      const pitch = clampPitch(expCv(base, cv[i], amount))
+
+      this.length.set(this.loopFor(pitch, damping))
+      const samples = this.length.next()
+
+      const read = this.line.read(samples)
+
+      if (samples !== gainFor) {
+        gainFor = samples
+        gain = decay > 0 ? Math.pow(10, (-3 * samples) / (decay * sr)) : 0
+        if (gain > MAX_FEEDBACK) gain = MAX_FEEDBACK
+      }
+
+      const damped = this.dc.process(this.damper.process(read, damping))
+      this.line.push(Math.tanh(input + damped * gain))
+
+      // What the line is ringing with, rather than the input plus it: the
+      // rack has a mixer for blending, and a resonator that always passed its
+      // own input could not be used as a filter.
+      out[i] = read
+    }
   }
 
   /**

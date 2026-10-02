@@ -52,6 +52,8 @@ const MAX_DELAY_S = 0.05
  * making one sound wider.
  */
 export class ChorusModule extends DspModule {
+  /** Works only on what reaches it, so it may rest; see `DspModule.rests`. */
+  readonly rests = true
   private lineL = new DelayLine(this.ctx.sampleRate * MAX_DELAY_S)
   private lineR = new DelayLine(this.ctx.sampleRate * MAX_DELAY_S)
   private wetL = 0
@@ -74,7 +76,7 @@ export class ChorusModule extends DspModule {
     this.mix = new Smoothed(this.params[P_MIX], sr)
   }
 
-  process(slots: Float32Array) {
+  processBlock(from: number, to: number) {
     const sr = this.ctx.sampleRate
     this.depth.set(this.params[P_DEPTH])
     this.center.set(this.params[P_CENTER])
@@ -93,19 +95,38 @@ export class ChorusModule extends DspModule {
       this.wetL = 0
       this.wetR = 0
     }
+    const signal = this.inputs[IN_SIGNAL]
+    const cv = this.inputs[IN_CV]
+    const outL = this.outputs[OUT_L]
+    const outR = this.outputs[OUT_R]
+    const step = this.params[P_RATE] / sr
 
-    let x = slots[this.ins[IN_SIGNAL]]
+    for (let i = from; i < to; i++) {
+      this.tick(signal[i], cv[i], mode, step, sr)
+      // Half and half is the deepest the notches go, which is why it is the
+      // default rather than full wet.
+      outL[i] = this.outL
+      outR[i] = this.outR
+    }
+  }
+
+  /** The two sides this sample, left in `outL` and `outR`. */
+  private outL = 0
+  private outR = 0
+
+  private tick(input: number, cvIn: number, mode: number, step: number, sr: number) {
+    let x = input
     // Kept out of the lines and the all-passes, where it would outlive the
     // sample it arrived on; the check below catches anything made inside.
     if (x - x !== 0) x = 0
     const depth = this.depth.next()
-    let center = this.center.next() + slots[this.ins[IN_CV]]
+    let center = this.center.next() + cvIn
     if (!(center >= 0)) center = 0
     else if (center > 1) center = 1
     const fb = this.feedback.next()
     const mix = this.mix.next()
 
-    this.phase += this.params[P_RATE] / sr
+    this.phase += step
     if (this.phase >= 1) this.phase -= Math.floor(this.phase)
     const lfoL = Math.sin(2 * Math.PI * this.phase)
     const lfoR = Math.cos(2 * Math.PI * this.phase)
@@ -157,10 +178,8 @@ export class ChorusModule extends DspModule {
     this.wetL = wetL
     this.wetR = wetR
 
-    // Half and half is the deepest the notches go, which is why it is the
-    // default rather than full wet.
-    slots[this.outs[OUT_L]] = x * (1 - mix) + wetL * mix
-    slots[this.outs[OUT_R]] = x * (1 - mix) + wetR * mix
+    this.outL = x * (1 - mix) + wetL * mix
+    this.outR = x * (1 - mix) + wetR * mix
   }
 
   private allpass(state: Float64Array, x: number, hz: number, sr: number) {

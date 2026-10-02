@@ -94,52 +94,64 @@ export class SeqModule extends DspModule implements Metering {
     return this.report
   }
 
-  process(slots: Float32Array) {
-    // Either source restarts the pattern, rather than the jack taking over
-    // from the button once a cable goes in -- the same arrangement the Burst
-    // makes, and for the same reason: a button should not stop working
-    // because something was patched next to it.
-    //
-    // Rising only, on both. A render closes the gate part way through, and
-    // that must not stop the sequence.
-    const fromButton = this.transport.rose(this.gateOpen ? 1 : 0)
-    const fromJack = this.resetJack.rose(slots[this.ins[IN_RESET]])
-    if (fromButton || fromJack) this.restart()
-
-    // Free-running whatever is patched, and published, so the rack has a
-    // clock to share even when this module is being driven by another one.
-    let rate = this.params[P_RATE]
-    if (!(rate > 0)) rate = 0
-    this.phase += rate / this.ctx.sampleRate
-    let ticked = false
-    while (this.phase >= 1) {
-      this.phase -= 1
-      ticked = true
-    }
-
+  processBlock(from: number, to: number) {
+    const button = this.gateOpen ? 1 : 0
+    const reset = this.inputs[IN_RESET]
+    const clock = this.inputs[IN_CLOCK]
     // An unpatched input reads ground, which never rises, so the wiring is
     // what decides whether the internal clock drives the pattern.
-    const jack = this.ins[IN_CLOCK]
-    if (jack === 0 ? ticked : this.clock.rose(slots[jack])) {
-      const length = this.length()
-      const next = (this.index + 1) % length
-      this.step(next)
-      // Chaining: the pulse says the pattern came round, not that it moved.
-      if (next === 0) this.ending = this.endPulse
+    const external = this.ins[IN_CLOCK] !== 0
+    let rate = this.params[P_RATE]
+    if (!(rate > 0)) rate = 0
+    const step = rate / this.ctx.sampleRate
+    const outCv = this.outputs[OUT_CV]
+    const outVel = this.outputs[OUT_VEL]
+    const outGate = this.outputs[OUT_GATE]
+    const outClk = this.outputs[OUT_CLK]
+    const outEnd = this.outputs[OUT_END]
+
+    for (let i = from; i < to; i++) {
+      // Either source restarts the pattern, rather than the jack taking over
+      // from the button once a cable goes in -- the same arrangement the
+      // Burst makes, and for the same reason: a button should not stop
+      // working because something was patched next to it.
+      //
+      // Rising only, on both. A render closes the gate part way through, and
+      // that must not stop the sequence.
+      const fromButton = this.transport.rose(button)
+      const fromJack = this.resetJack.rose(reset[i])
+      if (fromButton || fromJack) this.restart()
+
+      // Free-running whatever is patched, and published, so the rack has a
+      // clock to share even when this module is being driven by another one.
+      this.phase += step
+      let ticked = false
+      while (this.phase >= 1) {
+        this.phase -= 1
+        ticked = true
+      }
+
+      if (external ? this.clock.rose(clock[i]) : ticked) {
+        const length = this.length()
+        const next = (this.index + 1) % length
+        this.step(next)
+        // Chaining: the pulse says the pattern came round, not that it moved.
+        if (next === 0) this.ending = this.endPulse
+      }
+
+      this.since++
+      if (this.high > 0) this.high--
+      if (this.ending > 0) this.ending--
+
+      const level = this.params[P_LEVEL + this.index]
+      outCv[i] = this.params[P_STEP + this.index]
+      outVel[i] = level
+      // A step at zero is a rest: it still moves the CV, so a held note can
+      // change pitch under a rest, but it opens nothing.
+      outGate[i] = this.high > 0 && level > 0 ? 1 : 0
+      outClk[i] = this.phase < 0.5 ? 1 : 0
+      outEnd[i] = this.ending > 0 ? 1 : 0
     }
-
-    this.since++
-    if (this.high > 0) this.high--
-    if (this.ending > 0) this.ending--
-
-    const level = this.params[P_LEVEL + this.index]
-    slots[this.outs[OUT_CV]] = this.params[P_STEP + this.index]
-    slots[this.outs[OUT_VEL]] = level
-    // A step at zero is a rest: it still moves the CV, so a held note can
-    // change pitch under a rest, but it opens nothing.
-    slots[this.outs[OUT_GATE]] = this.high > 0 && level > 0 ? 1 : 0
-    slots[this.outs[OUT_CLK]] = this.phase < 0.5 ? 1 : 0
-    slots[this.outs[OUT_END]] = this.ending > 0 ? 1 : 0
   }
 
   /**

@@ -70,13 +70,30 @@ export function readLocalProjectText(): string | null {
   }
 }
 
+/** Whether the page opened on an autosave already in today's format; see below. */
+let openedOnAutosave = false
+
+/**
+ * The page opened on the autosave, stored under today's key, and so has no
+ * need to write it straight back.
+ *
+ * Every save was running once as the page opened, rewriting the very project
+ * it had just read: a whole-project stringify and a synchronous write, tens
+ * of milliseconds on a long arrangement, on every load. An autosave under an
+ * older key, or none at all, is still written, which is what moves it to the
+ * current one.
+ */
+export function openedOnCurrentAutosave(): boolean {
+  return openedOnAutosave
+}
+
 export function loadLocalProject(): LoadedProject | null {
   let text: string | null = null
+  let current = false
   try {
-    text =
-      localStorage.getItem(PROJECT_KEY) ??
-      localStorage.getItem(KEY) ??
-      localStorage.getItem(LEGACY_KEY)
+    text = localStorage.getItem(PROJECT_KEY)
+    current = text !== null
+    text ??= localStorage.getItem(KEY) ?? localStorage.getItem(LEGACY_KEY)
   } catch {
     return null
   }
@@ -84,7 +101,9 @@ export function loadLocalProject(): LoadedProject | null {
 
   try {
     const result = fromStoredProject(JSON.parse(text))
-    return 'error' in result ? null : result
+    if ('error' in result) return null
+    openedOnAutosave = current
+    return result
   } catch {
     return null
   }
@@ -161,10 +180,109 @@ export interface Prefs {
   cableColors?: 'signal' | 'module'
   compact?: boolean
   knobHelp?: boolean
+  /** Whether notes stuck to the rack are showing. */
+  showNotes?: boolean
   /** Whether the roll draws a swung pattern as it sounds, or on its written grid. */
   showSwing?: boolean
   /** How the audio device is opened: this machine's, never the project's. */
   audio?: AudioSettings
+  /** The utilities left open, reopened with the page. */
+  utilitiesOpen?: string[]
+  /** Where each utility's panel was left, by utility. */
+  utilityPlaces?: Record<string, { x: number; y: number }>
+  /** The Timing utility's numbers, as they were left. */
+  timing?: TimingPrefs
+  /** The Metronome's settings. */
+  metronome?: MetronomePrefs
+  /** The Notes & frequencies utility's input, reference and transposition. */
+  pitch?: PitchPrefs
+  /** The key, chords and progression the Scales & chords and Progressions utilities share. */
+  harmony?: HarmonyPrefs
+  /** The Rhythm utility's lanes and settings. */
+  rhythm?: RhythmPrefs
+}
+
+/**
+ * What the Scales & chords and the Progressions utilities share: one key,
+ * so a chord picked in one is the chord the other writes.
+ */
+export interface HarmonyPrefs {
+  /** 0..11, from C. */
+  root: number
+  /** An id from `SCALES`. */
+  mode: string
+  sevenths: boolean
+  /** The octave the first chord's root is in: 3 is C3 to B3. */
+  octave: number
+  /** The progression being sketched, as degrees of the key. */
+  degrees: number[]
+  voicing: 'close' | 'smooth' | 'spread' | 'bass'
+  rhythm: 'held' | 'beats' | 'eighths' | 'offbeats' | 'charleston' | 'arpUp' | 'arpUpDown'
+  /** How long each chord lasts, in bars. */
+  bars: number
+  /** Whether writing takes the track's notes in the pattern away first. */
+  replace: boolean
+  /** Whether the progression goes round again to fill the pattern. */
+  fill: boolean
+}
+
+export interface RhythmPrefs {
+  /** The track written to, when it is still a drum track. */
+  track?: string
+  lanes: {
+    /** The MIDI note of the pad, which picks the pad again in any kit laid out the General MIDI way. */
+    note: number
+    steps: number
+    hits: number
+    rotate: number
+    accents: number
+    probability: number
+    fit?: boolean
+    mute?: boolean
+  }[]
+  /** Grid steps to a quarter note: 4 is sixteenths, 6 sixteenth triplets. */
+  perBeat: number
+  seed: number
+  /** Whether writing takes the lanes' rows in the pattern away first. */
+  replace: boolean
+}
+
+export interface MetronomePrefs {
+  bpm: number
+  beats: number
+  unit: number
+  /** Clicks per beat. */
+  subdivision: number
+  accent: boolean
+  sound: 'click' | 'wood' | 'beep'
+  /** 0..1. */
+  volume: number
+}
+
+export interface PitchPrefs {
+  /** What was typed: a note, a MIDI number or a frequency. */
+  input: string
+  /** The reference A, in hertz. */
+  a4: number
+  /** Semitones to transpose by. */
+  transpose: number
+}
+
+/**
+ * The Timing utility's own tempo and time signature -- it starts at the
+ * song's and is free to try others -- the length and sections being planned,
+ * and how note lengths are shown.
+ */
+export interface TimingPrefs {
+  tab: 'length' | 'notes' | 'tap'
+  length: string
+  bpm: number
+  /** The time signature: beats in a bar, and the note a beat is. */
+  beats: number
+  unit: number
+  sections: { name: string; bars: number }[]
+  /** How note lengths are shown: milliseconds, hertz, or samples. */
+  show: 'ms' | 'hz' | 'samples'
 }
 
 let prefsCache: Prefs | null = null

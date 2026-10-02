@@ -46,37 +46,47 @@ export class ClockModule extends DspModule {
   private tick = 0
   private reset = new EdgeDetector()
 
-  process(slots: Float32Array) {
-    // Edge-triggered rather than level-held. A reset is a trigger, and a
-    // clock that stayed stopped for as long as something held its Reset jack
-    // high could not be reset from a gate at all.
-    if (this.reset.rose(slots[this.ins[IN_RESET]])) {
-      this.phase = 0
-      this.tick = 0
-    }
-
-    // In octaves, like every other CV amount in the rack, so an envelope into
-    // Rate CV doubles and halves the tempo rather than moving it by hertz.
-    let rate = expCv(this.params[P_RATE], slots[this.ins[IN_CV]], this.params[P_CV_AMOUNT])
-    if (!(rate > 0)) rate = 0
-    else if (rate > MAX_RATE) rate = MAX_RATE
-
-    this.phase += rate / this.ctx.sampleRate
-    while (this.phase >= 1) {
-      this.phase -= 1
-      this.tick++
-      if (this.tick >= CYCLE) this.tick -= CYCLE
-    }
-
+  processBlock(from: number, to: number) {
+    const reset = this.inputs[IN_RESET]
+    const cv = this.inputs[IN_CV]
+    const outs = this.outputs
+    const base = this.params[P_RATE]
+    const cvAmount = this.params[P_CV_AMOUNT]
     const width = this.params[P_WIDTH]
-    for (let i = 0; i < DIVISORS.length; i++) {
-      const n = DIVISORS[i]
-      // Where this output is within its own, longer period: whole ticks since
-      // it last fired, plus the fraction of the tick in progress. Comparing
-      // that against Width is what makes the division a pulse train at the
-      // divided rate rather than a gate held open for several ticks.
-      const divided = ((this.tick % n) + this.phase) / n
-      slots[this.outs[i]] = divided < width ? 1 : 0
+    const sr = this.ctx.sampleRate
+    for (let s = from; s < to; s++) {
+      // Edge-triggered rather than level-held. A reset is a trigger, and a
+      // clock that stayed stopped for as long as something held its Reset
+      // jack high could not be reset from a gate at all.
+      if (this.reset.rose(reset[s])) {
+        this.phase = 0
+        this.tick = 0
+      }
+
+      // In octaves, like every other CV amount in the rack, so an envelope
+      // into Rate CV doubles and halves the tempo rather than moving it by
+      // hertz.
+      let rate = expCv(base, cv[s], cvAmount)
+      if (!(rate > 0)) rate = 0
+      else if (rate > MAX_RATE) rate = MAX_RATE
+
+      this.phase += rate / sr
+      while (this.phase >= 1) {
+        this.phase -= 1
+        this.tick++
+        if (this.tick >= CYCLE) this.tick -= CYCLE
+      }
+
+      for (let i = 0; i < DIVISORS.length; i++) {
+        const n = DIVISORS[i]
+        // Where this output is within its own, longer period: whole ticks
+        // since it last fired, plus the fraction of the tick in progress.
+        // Comparing that against Width is what makes the division a pulse
+        // train at the divided rate rather than a gate held open for several
+        // ticks.
+        const divided = ((this.tick % n) + this.phase) / n
+        outs[i][s] = divided < width ? 1 : 0
+      }
     }
   }
 }

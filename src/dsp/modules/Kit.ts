@@ -18,6 +18,12 @@ const CHOKE_MS = 4
 /** Centre on either law, so a pad in the middle comes through at its own level. */
 const CENTRE = panLeft(0)
 
+/** Nothing but exact zeros from `from` to `to`. */
+function silent(x: Float32Array, from: number, to: number) {
+  for (let i = from; i < to; i++) if (x[i] !== 0) return false
+  return true
+}
+
 /**
  * The Drum Kit's own work: every pad's rack arrives at a return, and this
  * sets its level and pan, sums the lot, puts each pad out on its own, and
@@ -97,27 +103,54 @@ export class KitModule extends DspModule implements Playable {
     }
   }
 
-  process(slots: Float32Array) {
+  processBlock(from: number, to: number) {
     this.updateGains(false)
-    let l = 0
-    let r = 0
+    const ins = this.inputs
+    const outs = this.outputs
+
+    // The pads worth visiting a sample at a time: any with a cable into its
+    // Trig, and any whose return has something in it this block or whose
+    // gains are still gliding. The rest -- an empty pad, or one asleep with
+    // its return at zero -- add nothing and put out nothing, and their
+    // smoothers, settled, would hand back what they did last time.
+    const live = this.live
+    let count = 0
     for (let p = 0; p < PADS; p++) {
-      // A cable into Trig strikes the pad as a note does, for the choke.
-      if (this.edges[p].rose(slots[this.ins[p]])) this.strike(p)
-      const gl = this.gainL[p].next()
-      const gr = this.gainR[p].next()
-      const c = this.choke[p].next()
-      const inL = slots[this.ins[IN_RET + p * 2]]
-      const inR = slots[this.ins[IN_RET + p * 2 + 1]]
-      l += inL * gl * c
-      r += inR * gr * c
-      // On its own: after its level and its choke, before its pan.
-      slots[this.outs[OUT_PAD + p]] = (inL + inR) * 0.5 * this.params[p * 2] * c
+      const busy =
+        this.ins[p] !== 0 ||
+        !this.gainL[p].settled || !this.gainR[p].settled || !this.choke[p].settled ||
+        !silent(ins[IN_RET + p * 2], from, to) || !silent(ins[IN_RET + p * 2 + 1], from, to)
+      if (busy) live[count++] = p
+      else outs[OUT_PAD + p].fill(0, from, to)
     }
-    // Rounded off rather than clipped, as the mixer does its bus: sixteen
-    // pads struck together can pass full scale, and a kit is often the last
-    // thing before the speakers.
-    slots[this.outs[OUT_L]] = Math.tanh(l)
-    slots[this.outs[OUT_R]] = Math.tanh(r)
+
+    const outL = outs[OUT_L]
+    const outR = outs[OUT_R]
+    for (let i = from; i < to; i++) {
+      let l = 0
+      let r = 0
+      for (let k = 0; k < count; k++) {
+        const p = live[k]
+        // A cable into Trig strikes the pad as a note does, for the choke.
+        if (this.edges[p].rose(ins[p][i])) this.strike(p)
+        const gl = this.gainL[p].next()
+        const gr = this.gainR[p].next()
+        const c = this.choke[p].next()
+        const inL = ins[IN_RET + p * 2][i]
+        const inR = ins[IN_RET + p * 2 + 1][i]
+        l += inL * gl * c
+        r += inR * gr * c
+        // On its own: after its level and its choke, before its pan.
+        outs[OUT_PAD + p][i] = (inL + inR) * 0.5 * this.params[p * 2] * c
+      }
+      // Rounded off rather than clipped, as the mixer does its bus: sixteen
+      // pads struck together can pass full scale, and a kit is often the last
+      // thing before the speakers.
+      outL[i] = Math.tanh(l)
+      outR[i] = Math.tanh(r)
+    }
   }
+
+  /** The pads being visited this block, in order. */
+  private live = new Int32Array(PADS)
 }

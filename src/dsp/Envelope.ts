@@ -114,8 +114,21 @@ export class Envelope {
     return this.sustain >= 0.999 ? 'sustain' : 'decay'
   }
 
-  /** Per-sample multiplier that decays to ~1/e over `seconds`. */
+  /**
+   * Per-sample multiplier that decays to ~1/e over `seconds`.
+   *
+   * An `exp` a sample for a number that only changes when a knob does, so
+   * the last one is kept, with the time it was for. One is enough: a stage
+   * asks for its own time for as long as it lasts, and a change of stage is
+   * one new `exp`.
+   */
   private coeff(seconds: number) {
-    return tauDecay(Math.max(1, seconds * this.sampleRate))
+    if (seconds !== this.coeffFor) {
+      this.coeffFor = seconds
+      this.coeffIs = tauDecay(Math.max(1, seconds * this.sampleRate))
+    }
+    return this.coeffIs
   }
+  private coeffFor = NaN
+  private coeffIs = 0
 }

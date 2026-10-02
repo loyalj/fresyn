@@ -3,8 +3,13 @@ import { encodeFlac, type FlacDepth } from './flac'
 import { encodeWav } from './wav'
 // Static, so the bundler can leave out the package's base64 copies of the
 // binaries, which only its other entry points use. This whole file is
-// fetched only when a bounce is asked for.
+// fetched only when a bounce is asked for, inside the bounce worker.
 import { createEncoder } from 'wasm-media-encoders'
+// Only the binaries' URLs, which cost nothing until one is fetched. Static
+// rather than `import()`ed: the worker is bundled as a single IIFE, which
+// has nowhere to put a chunk split off by a dynamic import.
+import mp3Url from 'wasm-media-encoders/wasm/mp3?url'
+import oggUrl from 'wasm-media-encoders/wasm/ogg?url'
 
 /**
  * Encoding in the browser: `encode.ts`'s formats, with the WebAssembly
@@ -41,10 +46,8 @@ function loadEncoder(format: 'ogg' | 'mp3'): Promise<LossyEncoder> {
   let p = loading.get(format)
   if (!p) {
     p = (async () => {
-      const wasm = await (format === 'ogg'
-        ? import('wasm-media-encoders/wasm/ogg?url')
-        : import('wasm-media-encoders/wasm/mp3?url'))
-      return (await createEncoder(format === 'ogg' ? 'audio/ogg' : 'audio/mpeg', wasm.default)) as LossyEncoder
+      const wasm = format === 'ogg' ? oggUrl : mp3Url
+      return (await createEncoder(format === 'ogg' ? 'audio/ogg' : 'audio/mpeg', wasm)) as LossyEncoder
     })()
     // A failed fetch is tried again next time rather than remembered.
     p.catch(() => loading.delete(format))

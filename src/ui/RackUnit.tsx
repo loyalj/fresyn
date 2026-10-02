@@ -1,9 +1,12 @@
-import { memo, useCallback, useMemo } from 'react'
+import { memo, useCallback, useContext, useMemo, useState } from 'react'
 import type { PortRef } from '../patch/edit'
-import type { ModuleDef, PatchModule } from '../patch/types'
+import type { ModuleDef, PatchModule, RackNote } from '../patch/types'
 import { BackPanel } from './BackPanel'
+import { UnitBoundary } from './ErrorBoundary'
 import type { JackKind } from './Jack'
+import { ContextMenu } from './Menu'
 import { ModulePanel } from './ModulePanel'
+import { NOTE_WIDTH, NoteActionsContext, UnitNotes } from './RackNotes'
 import { TriggerButton } from './TriggerButton'
 import { FaceShown } from './useFallingMeter'
 
@@ -82,6 +85,8 @@ interface Props {
   actions: RackActions
   /** For a Keyboard: the note its bottom key plays, to name its keys by. */
   tuning?: number
+  /** The notes stuck to this module, on either face. The same array until one of them changes. */
+  notes?: readonly RackNote[]
 }
 
 /**
@@ -106,11 +111,27 @@ function sameUnit(a: Props, b: Props) {
 }
 
 /**
- * A rack unit with both of its faces. The two are stacked in the same grid
- * cell so the unit is as tall as the taller face and nothing shifts when the
- * rack turns around.
+ * A rack unit with both of its faces, in its own error boundary.
+ *
+ * The boundary is inside the memo rather than around it. A class component
+ * re-renders whenever its parent does, and the unit it wraps is new children
+ * every time, so a boundary out in the rack drew again for every knob turned
+ * anywhere -- forty-five of them on a long rack, to find forty-four units
+ * unchanged. In here it only draws when its unit does.
  */
-export const RackUnit = memo(function RackUnit({
+export const RackUnit = memo(function RackUnit(props: Props) {
+  return (
+    <UnitBoundary moduleId={props.module.id} onRemove={props.actions.remove}>
+      <UnitFaces {...props} />
+    </UnitBoundary>
+  )
+}, sameUnit)
+
+/**
+ * Both faces. The two are stacked in the same grid cell so the unit is as
+ * tall as the taller face and nothing shifts when the rack turns around.
+ */
+function UnitFaces({
   def,
   module,
   values,
@@ -125,9 +146,35 @@ export const RackUnit = memo(function RackUnit({
   isCandidate,
   actions,
   tuning,
+  notes,
 }: Props) {
   const moduleId = module.id
   const bypassed = !!module.bypass
+
+  // --- notes --------------------------------------------------------------
+  const noteActions = useContext(NoteActionsContext)
+  const [front, back] = useMemo(() => {
+    const all = notes ?? []
+    return [all.filter((n) => n.face === 'front'), all.filter((n) => n.face === 'back')]
+  }, [notes])
+  /** Where a right-click asked for a menu, and where on the face showing it was. */
+  const [menu, setMenu] = useState<{ x: number; y: number; at: { x: number; y: number } } | null>(null)
+  const onContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
+    // A knob and a switch have menus of their own, a jack is cleared by a
+    // right-click, and a field keeps the browser's; a note says what it does
+    // on its own buttons.
+    const target = e.target as Element
+    if (!noteActions || target.closest('.knob, .switch, .jack, .cables, .rack-note, input, textarea, select')) return
+    const face = e.currentTarget.querySelector<HTMLElement>(flipped ? '.unit-face-back' : '.unit-face-front')
+    if (!face) return
+    const rect = face.getBoundingClientRect()
+    // Where it was clicked, pulled in so the note fits on the unit.
+    const at = {
+      x: Math.max(0, Math.min(e.clientX - rect.left, rect.width - NOTE_WIDTH)),
+      y: Math.max(0, Math.min(e.clientY - rect.top, rect.height - 24)),
+    }
+    setMenu({ x: e.clientX, y: e.clientY, at })
+  }
 
   const valueOf = useCallback((paramId: string) => values[`${moduleId}.${paramId}`], [values, moduleId])
   const onChange = useCallback(
@@ -206,6 +253,7 @@ export const RackUnit = memo(function RackUnit({
       role="group"
       aria-label={`${def.name}, ${moduleId}`}
       style={share === undefined ? undefined : ({ '--share': share } as React.CSSProperties)}
+      onContextMenu={onContextMenu}
     >
       {/* The face turned away is inert: out of the tab order, out of reach
           of the pointer and of elementFromPoint during a cable drag, and
@@ -233,6 +281,7 @@ export const RackUnit = memo(function RackUnit({
             kit={kit}
           />
         </FaceShown.Provider>
+        <UnitNotes notes={front} />
       </div>
 
       <div className="unit-face-back" inert={!flipped}>
@@ -249,10 +298,26 @@ export const RackUnit = memo(function RackUnit({
           onBypass={onBypass}
         />
         <UnitControls moduleId={moduleId} actions={actions} />
+        <UnitNotes notes={back} />
       </div>
+
+      {menu && noteActions && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={[
+            {
+              kind: 'action',
+              label: 'Add note here',
+              onSelect: () => noteActions.add(moduleId, flipped ? 'back' : 'front', menu.at.x, menu.at.y),
+            },
+          ]}
+          onClose={() => setMenu(null)}
+        />
+      )}
     </div>
   )
-}, sameUnit)
+}
 
 interface ControlProps {
   moduleId: string

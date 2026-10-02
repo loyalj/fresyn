@@ -100,6 +100,7 @@ function run<T>(
  * and another tab starting up should not take it for an orphan.
  */
 export function putSample(sample: StoredSample): Promise<void> {
+  askToPersist()
   const stamped: StoredSample & { addedAt: number } = { ...sample, addedAt: Date.now() }
   return run('readwrite', (store) => store.put(stamped) as IDBRequest<IDBValidKey>).then(() => {})
 }
@@ -188,5 +189,14 @@ export function pruneSamples(keep: Iterable<string> | null): Promise<number> {
  * not here -- so nothing depends on the answer.
  */
 export function askToPersist() {
+  if (asked) return
+  asked = true
   void navigator.storage?.persist?.().catch(() => false)
 }
+
+/**
+ * Asked with the first sample stored, not as the page opens: Firefox answers
+ * with a permission prompt, and a prompt about storage on a first visit, before
+ * anything has been stored, is a question nobody can make sense of.
+ */
+let asked = false

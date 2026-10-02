@@ -192,9 +192,24 @@ and read the tutorial when you want to know why it works.
 | Move a unit one row | Hover it on the back, use **▲ ▼** |
 | Duplicate a unit | Hover it on the back, use **⧉** |
 | Remove a unit | Hover it on the back, use **×** |
+| Leave a note on a unit | Right-click the unit, **Add note here**; or pick it and **Edit → Add note to module** |
+| Move a note | Drag it by its top strip, onto another unit if you like |
+| Hide every note | **View → Show notes** |
 | Change the theme | The dropdown at the top |
 | Switch dark and light | The sun/moon button beside it |
 | Choose the output, buffer or sample rate | **Edit → Audio settings...** |
+
+**Notes on the rack.** A note is stuck to a unit, so it stays with that unit
+however the rack is reordered or the window resized. Right-click any part of a
+unit that is not a knob or a switch and choose **Add note here**, then type.
+Its top strip moves it — drop it on another unit and it belongs to that one —
+and holds three buttons: **▾** folds it to its first line, the dot changes its
+colour, and **×** deletes it. A note put on the back stays on the back, for
+what a cable is for. Notes are part of the patch: saved with the project, in a
+patch file, in the library and in a Drum Kit's pad; copied, pasted and
+duplicated with their unit; taken away with it and brought back by undo. Every
+change to one is a step of undo, and a burst of typing is one step.
+**View → Show notes** hides them all without losing any.
 
 **Tuning by note.** Hold **Alt** while dragging an oscillator's Pitch knob and
 it lands on whole notes only; **Alt + wheel** steps one semitone at a time.
@@ -2470,6 +2485,130 @@ before the first has happened replaces it.
 Amount is "intensity" — the filter, the drive, the extra layer and the tempo
 of a wobble all on its lanes — and the game needs to know one name and one
 number, however the patch changes afterwards.
+
+### Utilities
+
+The **Utilities** menu holds tools that sit beside the music rather than in
+it. Each opens as a panel that floats over the app without taking anything
+away: the rack still plays, the song goes on, and you can keep one open while
+you work. Drag a panel by its title to move it; its **×** closes it, and so
+does Escape while you are typing or clicking in it. Panels left open are open again next time, where
+you left them.
+
+**Timing** answers the questions a tempo raises, on three tabs.
+
+*Song length* turns a running time into bars. Type a length — `3:00`,
+`2:30.5`, `180` or `3m` all work — with a tempo and a time signature, and it
+says how many bars and beats that is, and, when it is not a whole number of
+bars, how long the bars either side of it last. Type bars into **Bars** to go
+the other way. Underneath, **Sections** is a budget: add the song's parts with
+their lengths in bars, or start from **Typical song**, and it lays them end to
+end — where each starts, how long it lasts — and says how far the total is
+from the length you are aiming for. It is a plan, not the song: nothing here
+changes the arrangement.
+
+*Note lengths* is every note value, from a whole note down to a 1/64, played
+straight, dotted and as a triplet, at the tempo. Show them in **ms** for a
+Delay's Time, in **Hz** for an LFO's Rate — once per note is the rate that
+lands on the beat — or in **samples**. Click any value to copy it. A length
+the Delay's Time cannot reach is shown dimmed.
+
+*Tap tempo* finds a tempo from taps. Tap in time with **Space** — the panel
+takes Space from the rack only while this tab is showing and the panel has the
+focus; click anywhere in the panel to give it the focus — or on the big pad.
+The reading settles within a few taps and says how steady they were; stop for
+two seconds and the next tap starts a new count. What you tap becomes the
+panel's tempo, which the other two tabs then use. To change the song itself,
+**From the start** sets its opening tempo, and **From bar** puts a tempo
+change at the start of the bar you give — the bar the playhead is in, to begin
+with, and **Playhead** fetches it again. Either sets a whole number of beats a
+minute, since tapping is good to about one, and either is one step of undo. A
+song that already changes tempo along the way keeps its other changes, and the
+panel says how many there are.
+
+The tempo counts quarter notes whatever the time signature, as the song's
+does: 6/8 at 120 is 120 quarters a minute, so a bar of it lasts a second and a
+half. Timing starts at the song's tempo and time signature and keeps its own
+after that, so trying numbers never changes the song; **Use song's** catches
+it up again.
+
+**Metronome** is a click on its own. **Start** it, or press **Space** while its
+panel has the focus. Set the tempo by typing it, with **−5 −1 +1 +5**, or by
+tapping **Tap**; the time signature; **Clicks** — the beat alone, or two,
+three (triplets) or four to the beat, the extra ones quieter; one of three
+sounds; and the volume. The first beat of each bar is a different click
+unless **Accent the first beat** is off, and the lamps light as each click is
+heard. It plays through the same device as the rack but not through the rack
+or the song's desk, so it is never in a bounce. Closing its panel stops it.
+
+**Notes & frequencies** turns a note into a frequency and back. Type a note
+(`A4`, `C#3`, `Bb2`), a MIDI number (`60`), or a frequency (`440 Hz`, `1.2
+kHz`; a plain number above 127 is hertz) and it shows the nearest note and
+how many cents off it is, the frequency, the MIDI number, the period, and the
+frequency the note would be exactly in tune. **▶** plays it. Below are the
+twelve notes of its octave (click one to look at it), a transposition — the
+note so many semitones away, and the Speed a Sampler plays at to get there —
+and its first twelve harmonics with the note each is nearest, which is where a
+Resonator or a Formant rings. **A4 is** sets the reference for music tuned
+somewhere other than 440. Click any value to copy it.
+
+**Scales & chords** lays a key out three ways. Pick a **Key** and a
+**Scale**: its notes light up on a two-octave keyboard, spelled the way the
+key spells them (F major has a B♭, not an A♯), and round the **circle of
+fifths**, where each major key has the minor key that shares its notes inside
+it. Below are the **chords in the key**, one on each degree, with the numeral
+each is known by — I ii iii IV V vi vii° in a major key, i ii° ♭III iv v ♭VI
+♭VII in a minor one — as triads or, with **Sevenths**, as seventh chords.
+Click a chord to hear it through the rack on the bench, voiced where
+Progressions would write it, and see its notes marked on the keyboard and the
+circle; click a key to hear the note; click a place on the circle to move the
+key there. A pentatonic or blues scale has too few notes to stack chords
+from, so it shows its parent's — the major's or the minor's — with a dashed
+edge on any that reach outside it. **Set song's key** makes it the song's key,
+which the roll shades and snaps to (its Snap setting is kept); **Use song's**
+goes back to the song's. If the rack on the bench has no Keyboard, chords play
+as a plain tone instead.
+
+**Progressions** sketches a chord progression and writes it into the
+pattern. It shares its key, its chords and its progression with Scales &
+chords, so **+** under a chord there adds it here. Start from one everybody
+knows — **Pop** (I–V–vi–IV), **Axis**, **Fifties**, **Jazz turnaround**
+(ii–V–I), **Circle**, **Three-chord**, **Royal road**, **Canon**, the **12-bar
+blues** — or build your own with the **+** buttons under the progression;
+click a chord in it to hear it, **×** to take it out. They are degrees of the
+key, so the same progression in a minor key is that key's own chords. Then
+choose a **Voicing**: *Close* (root position), *Smooth* (each chord inverted
+to move as little as it can from the last), *Spread* (the third lifted an
+octave) or *With bass* (smooth chords over the root an octave down); a
+**Rhythm**: *Held*, *Beats*, *Eighths*, *Off-beats*, *Charleston*, or an
+arpeggio up or up and down; how long **Each chord** lasts; and the
+**Octave** the first chord sits in. **▶ Hear it** plays it once at the song's
+tempo. **Write into** puts it into the pattern open in the roll, on the track
+on the bench, as one step of undo: it takes away the track's notes in the
+pattern first unless **Replace the track's notes** is off, goes round again
+to fill a longer pattern if **Repeat to fill the pattern** is on, and makes a
+pattern longer when it is too short to hold the progression once. Writing
+needs a track whose rack has a Keyboard.
+
+**Rhythm** writes Euclidean rhythms into a Drum Kit pattern: each lane
+spreads so many **Hits** over so many **Steps** as evenly as they go. Three
+in eight is the tresillo, x..x..x.; five in eight the cinquillo; four in
+sixteen four on the floor. **Rotate** starts it that many steps later;
+**Accent** makes that many of its hits louder, spread evenly among them; and
+**Chance** is how likely each unaccented hit is to be written — accented hits
+always are, and **Reroll** throws the dice again. Each lane has its own
+length, so a lane of five against one of sixteen drifts in and out of phase;
+tick **Bar** and a lane's steps are spread evenly over a bar whatever the
+grid, which is how three against four is made. **Step** sets the grid, from
+eighths to thirty-seconds, with triplets. Each lane plays a pad of the kit —
+**▶** hears it, **M** leaves the lane out, **×** removes it, **+ Lane** adds
+one — and the strip under it shows its cycle, accents brightest. Start from a
+groove in **Start from**, or build one. **Write into** fills the pattern open
+in the roll, round and round to its end, on the **Track** chosen — a Drum Kit
+track, or one played by a Trigger — as one step of undo, first taking away
+what was on those pads unless **Replace what is on these pads** is off. A
+groove's lanes find their pads by General MIDI note, so in a kit laid out
+another way a lane may say its pad is missing; pick another for it.
 
 ---
 

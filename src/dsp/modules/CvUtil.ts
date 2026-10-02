@@ -44,24 +44,39 @@ export class CvUtilModule extends DspModule {
     this.offset2 = new Smoothed(this.params[P_OFFSET2], sr)
   }
 
-  process(slots: Float32Array) {
+  processBlock(from: number, to: number) {
     this.gain1.set(this.params[P_GAIN1])
     this.offset1.set(this.params[P_OFFSET1])
     this.gain2.set(this.params[P_GAIN2])
     this.offset2.set(this.params[P_OFFSET2])
 
-    // Smoothed, because these knobs multiply the signal directly: a raw jump
-    // in a gain is a click, and at audio rate it is zipper noise.
-    // Railed, because a gain above one round a feedback cable doubles every
-    // sample and is at infinity inside twenty milliseconds; see `Rail.ts`.
-    const a = railed(slots[this.ins[IN_1]] * this.gain1.next() + this.offset1.next())
-    const b = railed(slots[this.ins[IN_2]] * this.gain2.next() + this.offset2.next())
+    const in1 = this.inputs[IN_1]
+    const in2 = this.inputs[IN_2]
+    const out1 = this.outputs[OUT_1]
+    const out2 = this.outputs[OUT_2]
+    const sum = this.outputs[OUT_SUM]
+    // Read once when they have arrived; see the oscillator.
+    const { gain1, offset1, gain2, offset2 } = this
+    const fixed =
+      gain1.settled && offset1.settled && gain2.settled && offset2.settled
+    const g1 = gain1.current
+    const o1 = offset1.current
+    const g2 = gain2.current
+    const o2 = offset2.current
+    for (let i = from; i < to; i++) {
+      // Smoothed, because these knobs multiply the signal directly: a raw
+      // jump in a gain is a click, and at audio rate it is zipper noise.
+      // Railed, because a gain above one round a feedback cable doubles every
+      // sample and is at infinity inside twenty milliseconds; see `Rail.ts`.
+      const a = railed(in1[i] * (fixed ? g1 : gain1.next()) + (fixed ? o1 : offset1.next()))
+      const b = railed(in2[i] * (fixed ? g2 : gain2.next()) + (fixed ? o2 : offset2.next()))
 
-    slots[this.outs[OUT_1]] = a
-    slots[this.outs[OUT_2]] = b
-    // Nothing else in the rack sums CV. The mixer could, but it is an 8:2
-    // stereo audio mixer with pan law on every channel, which is the wrong
-    // shape for adding two control voltages together.
-    slots[this.outs[OUT_SUM]] = a + b
+      out1[i] = a
+      out2[i] = b
+      // Nothing else in the rack sums CV. The mixer could, but it is an 8:2
+      // stereo audio mixer with pan law on every channel, which is the wrong
+      // shape for adding two control voltages together.
+      sum[i] = a + b
+    }
   }
 }

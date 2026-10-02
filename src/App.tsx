@@ -10,13 +10,14 @@ import {
 import { AudioEngine, type EngineStatus } from './audio/AudioEngine'
 import { Transport } from './audio/Transport'
 import { SampleLibrary } from './audio/SampleLibrary'
-import { askToPersist, pruneSamples } from './audio/sampleStore'
+import { pruneSamples } from './audio/sampleStore'
 import { useBounce } from './hooks/useBounce'
 import { useJob } from './hooks/useJob'
 import { useCableDrag } from './hooks/useCableDrag'
 import { loadInitialDoc, useDocument } from './hooks/useDocument'
 import { useProjectFiles } from './hooks/useProjectFiles'
 import { useStableActions } from './hooks/useStableActions'
+import { useUtilities } from './hooks/useUtilities'
 import { useTakes } from './hooks/useTakes'
 import { useTriggers } from './hooks/useTriggers'
 import { useInput } from './input/useInput'
@@ -48,10 +49,10 @@ import {
   type PortRef,
 } from './patch/edit'
 import { canRedo, canUndo, steps } from './patch/history'
-import { loadDock, saveDock, saveLocalProject, loadPrefs, savePrefs } from './patch/storage'
-import { engineEvents, kitRow, kitTarget, noteTarget, type NoteTarget } from './song/bind'
+import { loadDock, saveDock, saveLocalProject, loadPrefs, savePrefs, openedOnCurrentAutosave } from './patch/storage'
+import { engineEvents, KIT_ROW_ZERO, kitRow, kitTarget, noteTarget, type NoteTarget } from './song/bind'
 import { DEFAULT_KIT, kitSlots, NOT_IN_A_PAD, padPatch, setKitSlot, updateKitSlot, withPadView } from './patch/kit'
-import { midiName, rowForMidi, tuningOf } from './song/tuning'
+import { midiName, rowForMidi, rowZero, tuningOf } from './song/tuning'
 import { songEnd } from './song/schedule'
 import { sectionAt } from './song/section'
 import {
@@ -75,7 +76,6 @@ import { Cables, type DragState } from './ui/Cables'
 import { nearestCable, type JackGeometry } from './ui/cableGeometry'
 import { EngineContext, EnginePrefix } from './ui/EngineContext'
 import { SampleContext } from './ui/SampleContext'
-import { UnitBoundary } from './ui/ErrorBoundary'
 import { jackKey } from './ui/Jack'
 import { ModuleSearch, type SearchPick } from './ui/ModuleSearch'
 import { asNotice, NOTICE_FADE_MS, warn, type NoticeInput } from './ui/notice'
@@ -88,6 +88,8 @@ import { rackShares } from './ui/rackLayout'
 import { RackUnit, type RackActions } from './ui/RackUnit'
 import { AudioSettingsDialog } from './ui/AudioSettingsDialog'
 import { HistoryPanel } from './ui/HistoryPanel'
+import { UtilityPanel } from './ui/UtilityPanel'
+import { utilityById, type UtilityTrack } from './utilities'
 import { BounceDialog } from './ui/BounceDialog'
 import type { StemMix } from './audio/renderSong'
 import { SongDock } from './ui/SongDock'
@@ -95,6 +97,9 @@ import { ThemeContext, useAppearanceState } from './ui/ThemeContext'
 import { UnitSpine } from './ui/UnitSpine'
 import { dockHeightWithin, useDockMax } from './ui/useDockMax'
 import { useRackDrag } from './ui/useRackDrag'
+import { addNote, copyNotes, editNote, nextNoteId, removeNote, sameSound } from './patch/notes'
+import type { RackNote } from './patch/types'
+import { focusNoteWhenShown, NoteActionsContext, NotesShown, useNotesByModule, type NoteActions } from './ui/RackNotes'
 
 /**
  * The library, fetched when it is first opened. It carries every template
@@ -122,7 +127,7 @@ const FLIP_KEY = 'KeyF'
  * under the pointer, so without this a click on a unit's remove button would
  * also unplug whatever cable happened to run behind it.
  */
-const PANEL_CONTROLS = '.jack, .unit-controls, .unit-spine'
+const PANEL_CONTROLS = '.jack, .unit-controls, .unit-spine, .rack-note'
 
 /**
  * The colours a cable goes through on Alt+click, ending back at none -- the
@@ -138,6 +143,23 @@ const CABLE_HUES = [0, 45, 90, 160, 200, 250, 290, 330]
 let moduleClip: ModuleClip | null = null
 const AUTOSAVE_MS = 400
 
+/** Each patch's sample ids, kept while the patch lives: a knob turn changes no patch. */
+const idsOfPatch = new WeakMap<object, string[]>()
+
+/** Every sample any track names, as one sorted, comma-joined key. */
+function samplesWanted(racks: Record<string, Rack>): string {
+  const all = new Set<string>()
+  for (const rack of Object.values(racks)) {
+    let ids = idsOfPatch.get(rack.patch)
+    if (!ids) {
+      ids = [...sampleIdsIn(rack.patch.modules)]
+      idsOfPatch.set(rack.patch, ids)
+    }
+    for (const id of ids) all.add(id)
+  }
+  return [...all].sort().join(',')
+}
+
 export default function App() {
   const initialDoc = useMemo(loadInitialDoc, [])
   const {
@@ -152,6 +174,7 @@ export default function App() {
     values,
     padInfo,
     enginePrefix,
+    paramTap,
     setOpenPad,
     patchName,
     activePattern,
@@ -170,14 +193,19 @@ export default function App() {
   } = useDocument(initialDoc)
   /** The History list is showing. A view, so not saved with anything. */
   const [historyOpen, setHistoryOpen] = useState(false)
+  /** The Utilities menu's panels: see `useUtilities`. */
+  const utilities = useUtilities(
+    useCallback((name: string) => setNotice(warn(`Could not load ${name} -- check the connection and try again`)), []),
+  )
   const toggleHistory = useCallback(() => setHistoryOpen((o) => !o), [])
 
   // What the benched Keyboard plays, to name the roll's rows and the panel's
   // keys by. Kept by its three numbers, so turning any other knob in the
   // rack leaves the roll and the Keyboard alone.
   // The track's own rack, not a pad open on the bench: the roll names the
-  // track's rows.
-  const tuningNow = tuningOf(trackRack)
+  // track's rows. Worked out again only when that rack changes, not on every
+  // render of the app -- a cable hovered, a unit picked.
+  const tuningNow = useMemo(() => tuningOf(trackRack), [trackRack])
   const tuningKey = tuningNow ? `${tuningNow.source}|${tuningNow.base}|${tuningNow.octave}` : ''
   const tuning = useMemo(
     () => tuningNow,
@@ -198,6 +226,19 @@ export default function App() {
       ),
     [initialDoc],
   )
+  // Knob moves reach the engine as they happen; the render that follows finds
+  // them already sent. See `setValue`.
+  paramTap.current = (track, key, value) => engine.setValue(track, key, value)
+
+  // The worklet's code, fetched while nothing else is happening, so the first
+  // press does not wait on the network. See `prefetch`.
+  useEffect(() => {
+    const idle = window.requestIdleCallback ?? ((fn: () => void) => window.setTimeout(fn, 1000))
+    const cancel = window.cancelIdleCallback ?? window.clearTimeout
+    const handle = idle(() => engine.prefetch())
+    return () => cancel(handle)
+  }, [engine])
+
   /**
    * The rack's audio. One of these for the life of the page: samples are
    * shared by hash, so two modules pointed at the same file hold one copy of
@@ -210,6 +251,10 @@ export default function App() {
    * would drop whatever was queued.
    */
   const transport = useMemo(() => new Transport(engine, initialDoc.song), [engine, initialDoc])
+  /** Where the playhead is, for a utility that asks. */
+  const playheadTick = useCallback(() => transport.state.tick, [transport])
+  /** The audio device, for a utility that makes a sound of its own. */
+  const audioContext = useCallback(() => engine.context(), [engine])
 
   /**
    * What the audio is actually doing, read from the engine rather than
@@ -297,6 +342,8 @@ export default function App() {
    * the cards stayed out of the way. Remembered either way.
    */
   const [knobHelp, setKnobHelp] = useState(() => loadPrefs().knobHelp ?? true)
+  /** Whether the notes stuck to the rack are showing: View, Show notes. */
+  const [showNotes, setShowNotes] = useState(() => loadPrefs().showNotes ?? true)
   const [showSwing, setShowSwing] = useState(() => loadPrefs().showSwing ?? true)
   /** Smaller units, to see more of a long rack at once. */
   const [compact, setCompact] = useState(() => loadPrefs().compact ?? false)
@@ -349,8 +396,11 @@ export default function App() {
    * library, which is what a panel shows when a patch arrives from somebody
    * else.
    */
-  // Inside a Drum Kit's pads as well as on the rack's own modules.
-  const wanted = [...sampleIdsIn(trackRack.patch.modules)].sort().join(',')
+  // Inside a Drum Kit's pads as well as on the rack's own modules, and on
+  // every track rather than only the one on the bench: the song plays them
+  // all, and a Sampler on a track nobody had opened since the reload used to
+  // play silence until somebody did.
+  const wanted = samplesWanted(racks)
 
   useEffect(() => {
     let live = true
@@ -362,9 +412,6 @@ export default function App() {
       live = false
     }
   }, [wanted, samples, engine])
-
-  /** Asked once, and never waited on: see `sampleStore`. */
-  useEffect(() => askToPersist(), [])
 
   /**
    * Let go of audio nothing refers to any more, once, as the page opens.
@@ -575,7 +622,9 @@ export default function App() {
       const was = before[track.id]
       // A new track, or a rewired one, goes over as a patch; a knob moved on
       // an existing one goes over as a handful of numbers.
-      if (!was || was.patch !== rack.patch) engine.setTrackPatch(track.id, rack.patch, rack.values)
+      // A note stuck on a module changes the patch and nothing the audio
+      // hears, and goes no further than the rack. See `sameSound`.
+      if (!was || !sameSound(was.patch, rack.patch)) engine.setTrackPatch(track.id, rack.patch, rack.values)
       else if (was.values !== rack.values) engine.setValues(track.id, rack.values)
     }
     for (const id of Object.keys(before)) {
@@ -688,19 +737,19 @@ export default function App() {
    * a new answer makes a new map. A knob turn replaces the racks too, and a
    * map rebuilt for it would redraw the whole dock for nothing.
    */
-  const targetList = song.tracks.flatMap((track) => {
-    const rack = racks[track.id]
-    const target = rack && noteTarget(rack.patch)
-    return target ? [[track.id, target] as const] : []
-  })
-  // A kit's pads are part of what it says: a pad loaded, emptied or moved to
-  // another note changes where the roll's notes go.
-  const targetKey = targetList
-    .map(([id, t]) => `${id}:${t.kind}:${t.module}${t.pads ? `:${[...t.pads].map(([row, hits]) => `${row}=${hits.map((h) => h.module).join('+')}`).join(',')}` : ''}`)
-    .join('|')
+  const targetList = useMemo(
+    () =>
+      song.tracks.flatMap((track) => {
+        const rack = racks[track.id]
+        const target = rack && targetOf(rack.patch)
+        return target ? [[track.id, target] as const] : []
+      }),
+    [song.tracks, racks],
+  )
+  const targetKey = useMemo(() => targetList.map(([id, t]) => `${id}:${keyOfTarget(t)}`).join('|'), [targetList])
   const targets = useMemo(
     () => new Map<string, NoteTarget>(targetList),
-    // `targetList` is rebuilt every render; `targetKey` is what it says.
+    // `targetList` is rebuilt for every knob turn; `targetKey` is what it says.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [targetKey],
   )
@@ -710,16 +759,63 @@ export default function App() {
   }, [transport, targets])
 
   /**
+   * Every track as the utilities see it -- how it is played, and how a real
+   * note becomes one of its rows. Kept by what it says rather than rebuilt
+   * for every knob turn, so an open panel only hears of a change that is one.
+   */
+  const utilityTrackList = useMemo(
+    (): UtilityTrack[] =>
+      song.tracks.map((track) => {
+        const target = targets.get(track.id) ?? null
+        const rack = racks[track.id]
+        return {
+          id: track.id,
+          name: track.name,
+          kind: target?.kind ?? null,
+          zero: rowZero(rack && target?.kind === 'note' ? tuningOf(rack) : null),
+          pads: target?.pads
+            ? [...target.pads]
+                .sort(([a], [b]) => a - b)
+                .map(([row, hits]) => ({ row, note: row + KIT_ROW_ZERO, name: hits.map((h) => h.name).join(' + ') }))
+            : [],
+        }
+      }),
+    [song.tracks, racks, targets],
+  )
+  const utilityTrackKey = JSON.stringify(utilityTrackList)
+  const utilityTracks = useMemo(
+    () => utilityTrackList,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [utilityTrackKey],
+  )
+  /** A row of a track sounded for a utility, through its rack. */
+  const previewRow = useCallback((track: string, row: number, velocity: number) => transport.preview(track, row, velocity), [transport])
+  const releaseRow = useCallback((track: string, row: number) => transport.release(track, row), [transport])
+
+  /**
    * The autosave waiting to be written, if one is. Held so that leaving the
    * page can write it at once: debounced alone, the last 400 ms of work before
    * a tab was closed never reached storage.
    */
   const pendingSave = useRef<(() => void) | null>(null)
+  /**
+   * What is in storage now, by identity. The document is immutable, so the
+   * same three objects are the same project, and writing it again is a
+   * whole-project stringify for nothing -- which is what the page used to do
+   * as it opened, and after any edit that was undone back to where it was.
+   */
+  const saved = useRef(openedOnCurrentAutosave() ? initialDoc : null)
 
   useEffect(() => {
+    const was = saved.current
+    if (was && was.name === name && was.song === song && was.racks === racks) {
+      pendingSave.current = null
+      return
+    }
     const save = () => {
       pendingSave.current = null
       const ok = saveLocalProject(toStoredProject(name, song, racks))
+      if (ok) saved.current = { name, song, racks }
       setAutosave((was) => (ok ? 'ok' : was === 'ok' ? 'failed' : was))
     }
     pendingSave.current = save
@@ -787,9 +883,17 @@ export default function App() {
     else jackEls.current.delete(key)
   }, [])
 
+  /**
+   * Whether the back of the rack is showing and at rest: the only time there
+   * are cables to draw, and so the only time jacks are worth measuring.
+   * Facing front, every patch edit used to read every jack's rectangle and
+   * commit a second time with the answer, for cables nobody could see.
+   */
+  const measuring = useRef(false)
+
   const measure = useCallback(() => {
     const host = rackRef.current
-    if (!host) return
+    if (!host || !measuring.current) return
     const base = host.getBoundingClientRect()
     const next: JackGeometry = {}
     for (const [key, el] of jackEls.current) {
@@ -800,15 +904,18 @@ export default function App() {
         y: r.top - base.top + r.height / 2,
       }
     }
-    setGeometry(next)
+    // Where nothing moved, the geometry the cables already have stands, and
+    // nothing re-renders for it.
+    setGeometry((was) => (sameGeometry(was, next) ? was : next))
   }, [])
 
   // Jack positions are read off the DOM, so they are only meaningful once the
   // rack has finished turning and the layout has settled. `rack.order` is in
   // here so that cables follow a unit being dragged up the rack, rather than
-  // staying where it used to be until the drag is let go.
+  // staying where it used to be until the drag is let go. Turning to the back
+  // is the end of a turn with `flipped` set, and measures then.
   useLayoutEffect(() => {
-    if (turning) return
+    measuring.current = flipped && !turning
     measure()
   }, [measure, turning, flipped, patch, rack.order, compact])
 
@@ -927,7 +1034,8 @@ export default function App() {
         // the first place. The cap on the new panel is how it gets its own.
         if (source.key) copy.key = source.key
 
-        const patch = addModuleAfter(rack.patch, id, copy)
+        // Its notes come with it, as a pasted module's do.
+        const patch = copyNotes(addModuleAfter(rack.patch, id, copy), id, copy.id)
         const values = reconcileValues(patch, rack.values)
         for (const spec of defOf(source.type).params) {
           const held = rack.values[`${id}.${spec.id}`]
@@ -1115,6 +1223,16 @@ export default function App() {
   const toggleDock = useCallback(() => setDock((d) => ({ ...d, open: !d.open })), [])
   const setDockOpen = useCallback((open: boolean) => setDock((d) => ({ ...d, open })), [])
   const setDockHeight = useCallback((height: number) => setDock((d) => ({ ...d, height })), [])
+  /**
+   * The dock's edge mid-drag. Written to the page's style directly and not
+   * kept: the dock commits the height once, when the edge is let go. Through
+   * state, every frame of the drag re-rendered the app and every unit in the
+   * rack, for one number in the padding.
+   */
+  const appRef = useRef<HTMLDivElement>(null)
+  const onDockDrag = useCallback((height: number) => {
+    appRef.current?.style.setProperty('--dock-h', `${dockAllowance(true, height)}px`)
+  }, [])
 
   // --- cables --------------------------------------------------------
   const cables = useCableDrag({
@@ -1156,6 +1274,16 @@ export default function App() {
     },
     [flipped, cables, rack.id, patch, geometry, editPatch],
   )
+
+  // The hand over a cable says it can be pulled out. Set on the rack's own
+  // style rather than by a class on it: a class on the rack is matched
+  // against every selector that starts from the rack, and restyled the whole
+  // of it each time the pointer came on or off a cable.
+  const overCable = hoveredCable !== undefined
+  useLayoutEffect(() => {
+    const host = rackRef.current
+    if (host) host.style.cursor = overCable ? 'pointer' : ''
+  }, [overCable])
 
   const onRackPointerMove = useCallback(
     (e: React.PointerEvent) => {
@@ -1331,27 +1459,23 @@ export default function App() {
     [rack.order, byId],
   )
 
-  const menus = buildMenus({
+  // What the menus do, as one object that never changes (see
+  // `useStableActions`), so the bar below is rebuilt only when something it
+  // shows changes -- a tick, a greyed row -- and not on every knob turn.
+  const menuActions = useStableActions({
     newProject: onNew,
     openProject: () => void files.pickProject(),
-    saveProject: (saveAs) => void files.saveProject(saveAs),
+    saveProject: (saveAs?: boolean) => void files.saveProject(saveAs),
     bounceSong: () => setBounceOpen('song'),
-    bounceStems: (mix) => setBounceOpen(mix),
-    exportMidi: bounce.exportMidi,
-    busy: busy !== null,
-    canUndo: canUndo(history),
-    canRedo: canRedo(history),
+    bounceStems: (mix: StemMix) => setBounceOpen(mix),
+    exportMidi: () => bounce.exportMidi(),
     undo: stepBack,
     redo: stepForward,
-    historyOpen,
     toggleHistory,
-    midiOn,
     toggleMidi: () => {
       setMidiOn(!midiOn)
       savePrefs({ midi: !midiOn })
     },
-    canCopy: picked.size > 0,
-    canPaste: hasClip,
     copy: copyPicked,
     paste: pasteClip,
     openAudioSettings: () => setAudioOpen(true),
@@ -1362,34 +1486,119 @@ export default function App() {
     saveToLibrary: () => void onSaveToLibrary(),
     search: () => setSearch({}),
     addModule: onAddModule,
-    hiddenModules: padInfo ? NOT_IN_A_PAD : undefined,
-    flipped,
     flip,
-    dockOpen: dock.open,
     toggleDock,
-    showSwing,
-    setShowSwing: (on) => {
+    setShowSwing: (on: boolean) => {
       setShowSwing(on)
       savePrefs({ showSwing: on })
     },
-    knobHelp,
-    setKnobHelp: (on) => {
+    setKnobHelp: (on: boolean) => {
       setKnobHelp(on)
       savePrefs({ knobHelp: on })
     },
-    compact,
-    setCompact: (on) => {
+    setCompact: (on: boolean) => {
       setCompact(on)
       savePrefs({ compact: on })
     },
-    cableColors,
-    setCableColors: (by) => {
+    setCableColors: (by: 'signal' | 'module') => {
       setCableColors(by)
       savePrefs({ cableColors: by })
     },
-    appearance,
     setAppearance,
+    toggleUtility: utilities.toggle,
+    setShowNotes: (on: boolean) => {
+      setShowNotes(on)
+      savePrefs({ showNotes: on })
+    },
+    addNoteToPicked: () => {
+      // On the first unit picked, near its top left, on whichever side is showing.
+      const first = patch.modules.find((m) => picked.has(m.id))
+      if (first) noteActions.add(first.id, flipped ? 'back' : 'front', 16, 40)
+    },
   })
+  const isBusy = busy !== null
+  const undoable = canUndo(history)
+  const redoable = canRedo(history)
+  const canCopy = picked.size > 0
+  const inPad = !!padInfo
+  const menus = useMemo(
+    () =>
+      buildMenus({
+        ...menuActions,
+        busy: isBusy,
+        canUndo: undoable,
+        canRedo: redoable,
+        historyOpen,
+        midiOn,
+        canCopy,
+        canPaste: hasClip,
+        hiddenModules: inPad ? NOT_IN_A_PAD : undefined,
+        flipped,
+        dockOpen: dock.open,
+        showSwing,
+        knobHelp,
+        compact,
+        cableColors,
+        appearance,
+        utilitiesOpen: utilities.open,
+        showNotes,
+      }),
+    [
+      menuActions,
+      isBusy,
+      undoable,
+      redoable,
+      historyOpen,
+      midiOn,
+      canCopy,
+      hasClip,
+      inPad,
+      flipped,
+      dock.open,
+      showSwing,
+      knobHelp,
+      compact,
+      cableColors,
+      appearance,
+      utilities.open,
+      showNotes,
+    ],
+  )
+
+  // --- notes on the rack -------------------------------------------------
+
+  /**
+   * What a note does to the rack. Every one is a step of undo; typing into
+   * one is folded into a single step per burst, keyed by the note, as a knob
+   * drag is. The notes live in the patch, so these go through `editRack` --
+   * which also puts them inside a Drum Kit's pad when one is open.
+   */
+  const noteActions: NoteActions = useStableActions({
+    add: (module: string, face: RackNote['face'], x: number, y: number) => {
+      const id = nextNoteId(patch)
+      // A note added is one meant to be seen.
+      setShowNotes(true)
+      savePrefs({ showNotes: true })
+      focusNoteWhenShown(id)
+      editRack((rack) => ({ ...rack, patch: addNote(rack.patch, module, face, x, y, id).patch }))
+    },
+    edit: (id: string, change: Partial<RackNote>, typing?: boolean) => {
+      editRack(
+        (rack) => {
+          const next = editNote(rack.patch, id, change)
+          return next === rack.patch ? rack : { ...rack, patch: next }
+        },
+        typing ? `rack-note:${trackId}.${enginePrefix}${id}` : undefined,
+      )
+    },
+    remove: (id: string) => {
+      editRack((rack) => {
+        const next = removeNote(rack.patch, id)
+        return next === rack.patch ? rack : { ...rack, patch: next }
+      })
+    },
+  })
+  const notesByModule = useNotesByModule(patch.notes)
 
   /**
    * Scroll a unit into view and pick it, so it is lit when it arrives.
@@ -1465,7 +1674,8 @@ export default function App() {
           underneath it or the last unit in a long patch cannot be scrolled to. */}
       <div
         className="app"
-        style={{ '--dock-h': `${dock.open ? dockHeight + 76 : 44}px` } as React.CSSProperties}
+        ref={appRef}
+        style={{ '--dock-h': `${dockAllowance(dock.open, dockHeight)}px` } as React.CSSProperties}
       >
 
         {/* A card in the bottom corner, just above the dock, not a line in
@@ -1585,6 +1795,35 @@ export default function App() {
           <HistoryPanel {...steps(history)} onJump={goToStep} onClose={() => setHistoryOpen(false)} />
         )}
 
+        {utilities.open.map((id, layer) => {
+          const Panel = utilities.loaded[id]
+          return (
+            Panel && (
+              <UtilityPanel
+                key={id}
+                id={id}
+                title={utilityById(id)!.name}
+                layer={layer}
+                onClose={() => utilities.close(id)}
+                onRaise={() => utilities.raise(id)}
+              >
+                <Panel
+                  song={song}
+                  sampleRate={engine.sampleRate}
+                  editSong={editSong}
+                  playhead={playheadTick}
+                  audio={audioContext}
+                  tracks={utilityTracks}
+                  bench={trackId}
+                  patternId={activePattern}
+                  preview={previewRow}
+                  release={releaseRow}
+                />
+              </UtilityPanel>
+            )
+          )
+        })}
+
         {search && (
           <ModuleSearch
             exclude={padInfo ? NOT_IN_A_PAD : undefined}
@@ -1638,13 +1877,15 @@ export default function App() {
 
         <KnobHelpCard />
         <KnobHelpOn.Provider value={knobHelp}>
+        <NoteActionsContext.Provider value={noteActions}>
+        <NotesShown.Provider value={showNotes}>
         <ThemeContext.Provider value={appearance}>
           <EngineContext.Provider value={engine}>
           <EnginePrefix.Provider value={enginePrefix}>
           <SampleContext.Provider value={samples}>
             <div
-              className={`rack${flipped ? ' rack-flipped' : ''}${compact ? ' compact' : ''}${
-                hoveredCable ? ' grabbing-cable' : ''
+              className={`rack${flipped ? ' rack-flipped' : ''}${turning ? ' turning' : ''}${
+                compact ? ' compact' : ''
               }${rack.id ? ' reordering' : ''}`}
               ref={rackRef}
               onPointerDown={onRackPointerDown}
@@ -1652,24 +1893,27 @@ export default function App() {
               onPointerLeave={() => setHoveredCable(undefined)}
             >
               {rack.order.flatMap((id) => byId.get(id) ?? []).map((m) => (
-                <UnitBoundary key={m.id} moduleId={m.id} onRemove={() => rackActions.remove(m.id)}>
-                  <RackUnit
-                    def={defOf(m.type)}
-                    module={m}
-                    values={values}
-                    flipped={flipped}
-                    share={shares.get(m.id)}
-                    dragging={rack.group.includes(m.id)}
-                    selected={picked.has(m.id)}
-                    latched={triggers.latched.has(m.id)}
-                    listening={triggers.listening === m.id}
-                    recorder={m.id === recorderHost ? recorder : undefined}
-                    isOccupied={isOccupied}
-                    isCandidate={cables.isCandidate}
-                    actions={rackActions}
-                    tuning={defOf(m.type).playable ? tuning?.base : undefined}
-                  />
-                </UnitBoundary>
+                // Each in its own error boundary, inside the unit's memo (see
+                // RackUnit), so a knob turned on one unit re-renders that unit
+                // and not the boundary around every other one.
+                <RackUnit
+                  key={m.id}
+                  def={defOf(m.type)}
+                  module={m}
+                  values={values}
+                  flipped={flipped}
+                  share={shares.get(m.id)}
+                  dragging={rack.group.includes(m.id)}
+                  selected={picked.has(m.id)}
+                  latched={triggers.latched.has(m.id)}
+                  listening={triggers.listening === m.id}
+                  recorder={m.id === recorderHost ? recorder : undefined}
+                  isOccupied={isOccupied}
+                  isCandidate={cables.isCandidate}
+                  actions={rackActions}
+                  tuning={defOf(m.type).playable ? tuning?.base : undefined}
+                  notes={notesByModule.get(m.id)}
+                />
               ))}
 
               {flipped && !turning && (
@@ -1687,12 +1931,14 @@ export default function App() {
           </EnginePrefix.Provider>
           </EngineContext.Provider>
         </ThemeContext.Provider>
+        </NotesShown.Provider>
+        </NoteActionsContext.Provider>
         </KnobHelpOn.Provider>
 
         {/* The roll. Outside the rack for the same reason the ghost below is:
-            the rack sets a perspective, and a perspective is a containing block,
-            so a fixed element inside one is positioned against the rack rather
-            than against the window. */}
+            the rack sets a perspective while it turns, and a perspective is a
+            containing block, so a fixed element inside one is positioned
+            against the rack rather than against the window. */}
         <ThemeContext.Provider value={appearance}>
           <SongDock
             transport={transport}
@@ -1726,14 +1972,16 @@ export default function App() {
             onOpenChange={setDockOpen}
             height={dockHeight}
             onHeight={setDockHeight}
+            onHeightDrag={onDockDrag}
             showSwing={showSwing}
           />
         </ThemeContext.Provider>
 
         {/* The panel in hand. It rides outside the rack because the rack sets a
-            perspective, and a perspective is a containing block -- a fixed
-            element inside one is positioned against it rather than the
-            viewport, which is not what "follows the pointer" means. */}
+            perspective while it turns, and a perspective is a containing
+            block -- a fixed element inside one is positioned against it
+            rather than the viewport, which is not what "follows the pointer"
+            means. */}
         {rack.id && rack.ghost && (
           <div
             className="rack-ghost"
@@ -1767,6 +2015,60 @@ export default function App() {
 function freshModule(patch: Patch, type: string): PatchModule {
   const key = defOf(type).keyed ? 'Space' : undefined
   return { id: nextModuleId(patch, type), type, params: {}, ...(key ? { key } : {}) }
+}
+
+/**
+ * The room the rack leaves under itself for the dock: the body and its bar
+ * when it is open, the bar alone when it is folded.
+ */
+const dockAllowance = (open: boolean, height: number) => (open ? height + 76 : 44)
+
+/** Whether two measurements put every jack in the same place. */
+function sameGeometry(a: JackGeometry, b: JackGeometry) {
+  const keys = Object.keys(a)
+  if (keys.length !== Object.keys(b).length) return false
+  for (const key of keys) {
+    const p = a[key]
+    const q = b[key]
+    if (!q || p.x !== q.x || p.y !== q.y) return false
+  }
+  return true
+}
+
+/**
+ * Which module a patch's notes are played on, worked out once per patch.
+ *
+ * A patch is never changed in place -- an edit makes a new one -- so the
+ * answer for a patch object stands for as long as that object does. A knob
+ * turn replaces the rack but keeps its patch, and so finds its answer here
+ * rather than walking the patch again for every track.
+ */
+const targetsByPatch = new WeakMap<Patch, NoteTarget | null>()
+function targetOf(patch: Patch): NoteTarget | null {
+  let target = targetsByPatch.get(patch)
+  if (target === undefined) {
+    target = noteTarget(patch)
+    targetsByPatch.set(patch, target)
+  }
+  return target
+}
+
+/**
+ * What a target says, as a string to tell whether it changed. A kit's pads
+ * are part of it: a pad loaded, emptied or moved to another note changes
+ * where the roll's notes go. Kept by target, which `targetOf` keeps by patch.
+ */
+const targetKeys = new WeakMap<NoteTarget, string>()
+function keyOfTarget(t: NoteTarget): string {
+  let key = targetKeys.get(t)
+  if (key === undefined) {
+    const pads = t.pads
+      ? `:${[...t.pads].map(([row, hits]) => `${row}=${hits.map((h) => h.module).join('+')}`).join(',')}`
+      : ''
+    key = `${t.kind}:${t.module}${pads}`
+    targetKeys.set(t, key)
+  }
+  return key
 }
 
 /**

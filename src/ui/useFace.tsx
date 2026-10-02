@@ -32,7 +32,7 @@ export function useFace(
   const spec = specsOf(def)
   const read = (id: string) => valueOf(id) ?? spec[id].default
   const control = (id: string) => (
-    <Control key={id} spec={spec[id]} value={valueOf(id)} onChange={(v) => onChange(id, v)} />
+    <Control key={id} spec={spec[id]} value={valueOf(id)} onChange={onChange} />
   )
   return { spec, read, control }
 }

@@ -57,54 +57,64 @@ export class DrunkModule extends DspModule {
     this.period = sr / Math.max(1e-3, this.params[P_RATE])
   }
 
-  process(slots: Float32Array) {
+  processBlock(start: number, end: number) {
     const sr = this.ctx.sampleRate
-
-    let step = false
     // A patched Clock takes over completely. An unpatched input reads the
     // ground slot, which is how a module can tell nothing is there.
-    if (this.ins[IN_CLOCK] !== 0) {
-      if (this.clock.rose(slots[this.ins[IN_CLOCK]])) {
-        step = true
-        this.period = Math.max(1, this.since)
-      }
-    } else {
-      const rate = expCv(this.params[P_RATE], slots[this.ins[IN_RATE]], this.params[P_RATE_AMOUNT])
-      this.phase += rate / sr
-      if (this.phase >= 1) {
-        this.phase -= Math.floor(this.phase)
-        step = true
-        this.period = rate > 0 ? sr / rate : this.period
-      }
-    }
+    const clocked = this.ins[IN_CLOCK] !== 0
+    const clock = this.inputs[IN_CLOCK]
+    const rateCv = this.inputs[IN_RATE]
+    const base = this.params[P_RATE]
+    const amount = this.params[P_RATE_AMOUNT]
+    const outBi = this.outputs[OUT_BI]
+    const outUni = this.outputs[OUT_UNI]
+    const outTrig = this.outputs[OUT_TRIG]
 
-    // One draw a step, whatever Step and Pull are set to, so turning either
-    // reshapes the walk a seed gives rather than swapping it for another.
-    if (step) {
-      const current = this.glide()
-      let next = this.to * (1 - this.params[P_PULL]) + (this.random() * 2 - 1) * this.params[P_STEP]
-      // Reflect off the walls, then clamp for the case where a stride is
-      // longer than the room is wide.
-      if (next > 1) next = 2 - next
-      else if (next < -1) next = -2 - next
-      if (next > 1) next = 1
-      else if (next < -1) next = -1
-      this.from = current
-      this.to = next
-      this.since = 0
-      // A step landing while the last trigger is still high goes low for
-      // this one sample first, or nothing downstream would see a new edge.
-      this.trigGap = this.trigLeft > 0
-      this.trigLeft = this.trigLength
-    }
+    for (let i = start; i < end; i++) {
+      let step = false
+      if (clocked) {
+        if (this.clock.rose(clock[i])) {
+          step = true
+          this.period = Math.max(1, this.since)
+        }
+      } else {
+        const rate = expCv(base, rateCv[i], amount)
+        this.phase += rate / sr
+        if (this.phase >= 1) {
+          this.phase -= Math.floor(this.phase)
+          step = true
+          this.period = rate > 0 ? sr / rate : this.period
+        }
+      }
 
-    const y = this.glide()
-    slots[this.outs[OUT_BI]] = y
-    slots[this.outs[OUT_UNI]] = 0.5 + 0.5 * y
-    slots[this.outs[OUT_TRIG]] = this.trigGap ? 0 : this.trigLeft > 0 ? 1 : 0
-    this.trigGap = false
-    if (this.trigLeft > 0) this.trigLeft--
-    this.since++
+      // One draw a step, whatever Step and Pull are set to, so turning either
+      // reshapes the walk a seed gives rather than swapping it for another.
+      if (step) {
+        const current = this.glide()
+        let next = this.to * (1 - this.params[P_PULL]) + (this.random() * 2 - 1) * this.params[P_STEP]
+        // Reflect off the walls, then clamp for the case where a stride is
+        // longer than the room is wide.
+        if (next > 1) next = 2 - next
+        else if (next < -1) next = -2 - next
+        if (next > 1) next = 1
+        else if (next < -1) next = -1
+        this.from = current
+        this.to = next
+        this.since = 0
+        // A step landing while the last trigger is still high goes low for
+        // this one sample first, or nothing downstream would see a new edge.
+        this.trigGap = this.trigLeft > 0
+        this.trigLeft = this.trigLength
+      }
+
+      const y = this.glide()
+      outBi[i] = y
+      outUni[i] = 0.5 + 0.5 * y
+      outTrig[i] = this.trigGap ? 0 : this.trigLeft > 0 ? 1 : 0
+      this.trigGap = false
+      if (this.trigLeft > 0) this.trigLeft--
+      this.since++
+    }
   }
 
   /** Where the glide from the last step has got to. */

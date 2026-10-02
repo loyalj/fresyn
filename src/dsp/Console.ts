@@ -2,7 +2,7 @@ import { bell, Section, shelf } from './Biquad'
 import { LiveLoudness } from './Loudness'
 import { DelayModule } from './modules/Delay'
 import { ReverbModule } from './modules/Reverb'
-import type { DspModule } from './modules/types'
+import { BLOCK, type DspModule } from './modules/types'
 import { tauStep } from './util'
 import type { Console, Eq3 } from '../song/types'
 
@@ -269,13 +269,35 @@ export class Limiter {
   }
 }
 
+/** Below this a return is silence: -120 dB, far under anything a speaker makes of it. */
+const QUIET = 1e-6
+
 /**
- * A rack module run on its own, outside any patch: its inputs and outputs are
- * slots in a small array of its own. How the console borrows the rack's
- * Space and Delay rather than having a second reverb and a second echo.
+ * How long a return must have been fed nothing and said nothing before it
+ * stops running: long enough that the tail really has gone, not a gap
+ * between two notes of a sparse send.
+ */
+const QUIET_FOR_S = 0.25
+
+/**
+ * A rack module run on its own, outside any patch, with blocks of its own for
+ * its jacks. How the console borrows the rack's Space and Delay rather than
+ * having a second reverb and a second echo.
+ *
+ * It rests when there is nothing for it to do. A return fed nothing whose
+ * tail has died away is a reverb working out silence at 48,000 samples a
+ * second, on every song that leaves a send turned down -- so once it has been
+ * quiet for a moment it is skipped, and put out silence, until something is
+ * sent to it again. What it held when it stopped is under -120 dB, and it
+ * carries on from there.
  */
 class Hosted {
-  readonly slots: Float32Array
+  readonly inputs: Float32Array[]
+  readonly outputs: Float32Array[]
+  /** Samples it has been fed nothing and said nothing for. */
+  private quiet = 0
+  private readonly quietFor: number
+
   constructor(
     readonly mod: DspModule,
     inputs: number,
@@ -283,13 +305,52 @@ class Hosted {
     params: number[],
     seed: number,
     id: string,
+    sampleRate: number,
   ) {
-    this.slots = new Float32Array(1 + inputs + outputs)
+    this.inputs = Array.from({ length: inputs }, () => new Float32Array(BLOCK))
+    this.outputs = Array.from({ length: outputs }, () => new Float32Array(BLOCK))
     mod.ins = Int32Array.from({ length: inputs }, (_, i) => 1 + i)
     mod.outs = Int32Array.from({ length: outputs }, (_, i) => 1 + inputs + i)
+    mod.inputs = this.inputs
+    mod.outputs = this.outputs
     mod.params = Float32Array.from(params)
     mod.seedFrom(seed, id)
     mod.prepare()
+    // Longer for the Delay: silent between two echoes is not empty.
+    this.quietFor = Math.round((QUIET_FOR_S + mod.memory) * sampleRate)
+  }
+
+  /**
+   * The first `n` samples of the block, from `bus` at `offset` into its
+   * first jack. Its outputs hold the answer; silence while it rests.
+   */
+  run(bus: Float32Array, offset: number, n: number) {
+    const input = this.inputs[0]
+    let fed = false
+    for (let i = 0; i < n; i++) {
+      const x = bus[offset + i]
+      input[i] = x
+      if (x !== 0) fed = true
+    }
+    if (!fed && this.quiet >= this.quietFor) {
+      for (const out of this.outputs) out.fill(0, 0, n)
+      return
+    }
+    this.mod.processBlock(0, n)
+    let loud = fed
+    if (!loud) {
+      for (const out of this.outputs) {
+        for (let i = 0; i < n; i++) {
+          const y = out[i]
+          if (y > QUIET || y < -QUIET) {
+            loud = true
+            break
+          }
+        }
+        if (loud) break
+      }
+    }
+    this.quiet = loud ? 0 : this.quiet + n
   }
 }
 
@@ -366,8 +427,8 @@ export class Desk {
     const d = { ...DEFAULT }
     // The rack's own Space and Delay, wet only: a return is all effect, and
     // how much of it is heard is the return's level.
-    this.space = new Hosted(new ReverbModule(ctx), 1, 2, [d.space.size, d.space.decay, d.space.damping, 1], seed, 'console.space')
-    this.delay = new Hosted(new DelayModule(ctx), 2, 2, [d.delay.time, 0, d.delay.feedback, d.delay.damping, 1], seed, 'console.delay')
+    this.space = new Hosted(new ReverbModule(ctx), 1, 2, [d.space.size, d.space.decay, d.space.damping, 1], seed, 'console.space', sampleRate)
+    this.delay = new Hosted(new DelayModule(ctx), 2, 2, [d.delay.time, 0, d.delay.feedback, d.delay.damping, 1], seed, 'console.delay', sampleRate)
     const k = glideK(sampleRate)
     this.spaceLevel = new Glide(d.space.level, k)
     this.delayLevel = new Glide(d.delay.level, k)
@@ -426,17 +487,21 @@ export class Desk {
     if (routing.sends) {
       const s = this.space
       const d = this.delay
-      for (let i = 0; i < n; i++) {
-        s.slots[1] = this.spaceBus[i]
-        s.mod.process(s.slots)
-        d.slots[1] = this.delayBus[i]
-        d.mod.process(d.slots)
-        const sl = this.spaceLevel.next()
-        const dl = this.delayLevel.next()
-        // Delay's second output is its wet signal alone.
-        const echo = d.slots[4] * dl
-        left[i] += s.slots[2] * sl + echo
-        right[i] += s.slots[3] * sl + echo
+      const spaceL = s.outputs[0]
+      const spaceR = s.outputs[1]
+      // Delay's second output is its wet signal alone.
+      const echoes = d.outputs[1]
+      for (let at = 0; at < n; at += BLOCK) {
+        const m = n - at < BLOCK ? n - at : BLOCK
+        s.run(this.spaceBus, at, m)
+        d.run(this.delayBus, at, m)
+        for (let i = 0; i < m; i++) {
+          const sl = this.spaceLevel.next()
+          const dl = this.delayLevel.next()
+          const echo = echoes[i] * dl
+          left[at + i] += spaceL[i] * sl + echo
+          right[at + i] += spaceR[i] * sl + echo
+        }
       }
     }
     if (!routing.master) {

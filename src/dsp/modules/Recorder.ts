@@ -11,5 +11,5 @@ import { DspModule } from './types'
  * change what the rack sounds like, any more than a scope can.
  */
 export class RecorderModule extends DspModule {
-  process() {}
+  processBlock() {}
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 export type MenuItem =
@@ -51,14 +51,21 @@ interface Props {
  * less to get wrong: the browser scrolls the focused item into view, reports
  * it to a screen reader, and takes it away again when something else is
  * clicked.
+ *
+ * Memoized. The app builds `menus` again only when something on them
+ * changes, so the bar is not redrawn for every knob turned in the rack.
  */
-export function MenuBar({ menus, onOpenChange, collapsed }: Props) {
+export const MenuBar = memo(function MenuBar({ menus, onOpenChange, collapsed }: Props) {
   /** Index of the open top-level menu, or null when the bar is idle. */
   const [open, setOpen] = useState<number | null>(null)
   const bar = useRef<HTMLDivElement>(null)
   const triggers = useRef<(HTMLButtonElement | null)[]>([])
 
-  useEffect(() => onOpenChange?.(open !== null), [open, onOpenChange])
+  // In a layout effect, so the rack has its keys back in the same commit that
+  // closes the menu: a key pressed the moment a row is chosen -- Ctrl+Z on
+  // the module just added -- must not land while the rack is still standing
+  // down for a menu that is already gone.
+  useLayoutEffect(() => onOpenChange?.(open !== null), [open, onOpenChange])
 
   const close = useCallback((focusTrigger = true) => {
     setOpen((was) => {
@@ -170,7 +177,7 @@ export function MenuBar({ menus, onOpenChange, collapsed }: Props) {
       ))}
     </div>
   )
-}
+})
 
 interface ListProps {
   items: MenuItem[]

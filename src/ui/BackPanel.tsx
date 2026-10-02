@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { PortRef } from '../patch/edit'
 import type { ModuleDef, PortDef } from '../patch/types'
 import { Jack, type JackKind } from './Jack'
@@ -78,8 +79,11 @@ function blocksOf(def: ModuleDef): Block[] {
  * edges. Blocks that hold a channel carry both sides anyway, so the old rule
  * could not have survived them, and a heading says which a jack is at least
  * as plainly as which end of the panel it sits on.
+ *
+ * Memoized: nothing it is handed changes when a knob on the front turns, so
+ * the back of a unit is not redrawn for it.
  */
-export function BackPanel({
+export const BackPanel = memo(function BackPanel({
   def,
   moduleId,
   isOccupied,
@@ -123,4 +127,4 @@ export function BackPanel({
       </div>
     </div>
   )
-}
+})

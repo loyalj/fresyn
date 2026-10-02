@@ -47,6 +47,20 @@ export interface SongPlayerOptions {
    * song as mixed; a stem takes less.
    */
   routing?: Routing
+  /**
+   * Leave out every track that is not heard -- muted, soloed past, or not in
+   * `only` -- rather than running it silently.
+   *
+   * For a render whose mix never changes, which is a bounce and nothing
+   * else. Live, a muted track keeps running so that unmuting it comes back
+   * in phase (see `SongEngine.render`); a bounce never unmutes anything, so
+   * that is arithmetic spent on audio nobody hears. It is what keeps stems
+   * from costing the square of the track count: without it every stem ran
+   * every rack. The output is the same to the sample, because racks never
+   * reach each other and an unheard track adds nothing to the mix or to a
+   * send. A track left out cannot be brought back, so a game must not set it.
+   */
+  onlyHeard?: boolean
 }
 
 const DEFAULT_LOOKAHEAD_S = 0.25
@@ -111,6 +125,7 @@ export class SongPlayer {
     this.songLoop = this.loop
     this.lookaheadFrames = (options.lookahead ?? DEFAULT_LOOKAHEAD_S) * options.sampleRate
 
+    const mix = trackMix(song, options.only)
     const tracks = []
     for (const track of song.tracks) {
       const rack = racks[track.id]
@@ -121,7 +136,9 @@ export class SongPlayer {
         const index = compiled.paramIndex[key]
         if (index !== undefined) params[index] = value
       }
-      tracks.push({ id: track.id, patch: compiled, params })
+      // Its knobs and note target are still built below, so events for it
+      // are made as ever; with no rack in the engine they land nowhere.
+      if (!options.onlyHeard || mix[track.id]?.audible) tracks.push({ id: track.id, patch: compiled, params })
 
       const knobs = new Map<string, Reachable>()
       for (const m of rack.patch.modules) {
@@ -138,7 +155,7 @@ export class SongPlayer {
     }
 
     this.engine = new SongEngine(options.sampleRate, tracks, options.seed, options.samples)
-    this.engine.setMix(trackMix(song, options.only))
+    this.engine.setMix(mix)
     this.engine.setConsole(consoleOf(song))
     if (options.routing) this.engine.setRouting(options.routing)
   }

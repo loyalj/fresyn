@@ -119,6 +119,12 @@ export class SongEngine {
   }
 
   /**
+   * Counts every change to which tracks there are and which is watched: what
+   * a report laid out in shared memory has to be laid out again for.
+   */
+  revision = 0
+
+  /**
    * Add a track, or rewire one that is already running.
    *
    * A track that already exists is rebuilt in place, which keeps its DSP
@@ -132,6 +138,7 @@ export class SongEngine {
       return
     }
 
+    this.revision++
     const engine = new GraphEngine(patch, this.sampleRate, params, this.seed, this.samples)
     // Caught up to the others before it renders a sample.
     engine.seek(this.frame)
@@ -142,6 +149,7 @@ export class SongEngine {
   }
 
   removeTrack(id: string) {
+    this.revision++
     this.tracks = this.tracks.filter((t) => t.id !== id)
     this.byId.delete(id)
     if (this.watched === id) this.watched = this.tracks[0]?.id ?? ''
@@ -198,7 +206,27 @@ export class SongEngine {
 
   /** Which track's scopes and meters are worth reporting. */
   watch(id: string) {
+    if (id !== this.watched) this.revision++
     this.watched = id
+  }
+
+  /**
+   * `mixLevels` into a block of floats rather than an object: each track's
+   * peak in the order of `trackIds`, then the master's peak, momentary and
+   * short-term loudness. Nothing allocated, for a report written to shared
+   * memory thirty times a second. Hands back how many were written.
+   */
+  writeMixLevels(out: Float32Array, at: number): number {
+    let k = at
+    for (const t of this.tracks) {
+      out[k++] = t.strip.peak
+      t.strip.peak = 0
+    }
+    out[k++] = this.desk.peak
+    this.desk.peak = 0
+    out[k++] = Math.max(-99, this.desk.loudness.momentary)
+    out[k++] = Math.max(-99, this.desk.loudness.shortTerm)
+    return k - at
   }
 
   setSamples(samples: SampleBank) {
@@ -286,14 +314,14 @@ export class SongEngine {
     left.fill(0)
     right.fill(0)
 
-    if (this.scratchL.length < n) {
+    // Exactly this long, because a track's engine fills whatever it is given.
+    // Remade only when the length changes, which live is never.
+    if (this.scratchL.length !== n) {
       this.scratchL = new Float32Array(n)
       this.scratchR = new Float32Array(n)
     }
-    // Exact-length views, because a track's engine fills whatever it is given
-    // and the scratch may be longer than this block.
-    const sl = this.scratchL.subarray(0, n)
-    const sr = this.scratchR.subarray(0, n)
+    const sl = this.scratchL
+    const sr = this.scratchR
 
     const routing = this.routing
     this.desk.begin(n)

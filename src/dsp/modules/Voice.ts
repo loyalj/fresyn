@@ -102,6 +102,9 @@ export class VoiceModule extends DspModule implements Metering {
   private odd = false
   private vibPhase = 0
   private tilt = 0
+  /** The tilt's coefficient, and the Tone it was worked out for. */
+  private tiltFor = NaN
+  private tiltCoeff = 0
   private noiseLow = 0
 
   private peak = 0
@@ -124,98 +127,120 @@ export class VoiceModule extends DspModule implements Metering {
     return this.report
   }
 
-  process(slots: Float32Array) {
+  processBlock(from: number, to: number) {
     const sr = this.ctx.sampleRate
-
-    this.env.attack = this.params[P_ATTACK]
-    this.env.release = this.params[P_RELEASE]
-    const open = this.gateOpen || slots[this.ins[IN_GATE]] > 0.5
-    if (open !== this.envOpen) {
-      this.envOpen = open
-      if (open) this.env.gateOn()
-      else this.env.gateOff()
-    }
-    const e = this.env.next()
-    slots[this.outs[OUT_ENV]] = e
-
+    const env = this.env
+    env.attack = this.params[P_ATTACK]
+    env.release = this.params[P_RELEASE]
     this.level.set(this.params[P_LEVEL])
+    this.pitch.set(this.params[P_PITCH])
+    this.tone.set(this.params[P_TONE])
+    const pitchKnob = this.params[P_PITCH]
+    const toneKnob = this.params[P_TONE]
+    const breathKnob = this.params[P_BREATH]
     // Drone sounds whether or not anything is holding it open, as the
     // oscillator does with Env Amt at zero: a module that is silent until it
     // is patched is a poor thing to find in a menu.
-    const gain = (this.params[P_MODE] >= 0.5 ? e : 1) * this.level.next()
-
-    this.pitch.set(this.params[P_PITCH])
-    this.tone.set(this.params[P_TONE])
-    const breathTarget = clamp(this.params[P_BREATH] + slots[this.ins[IN_BREATH]], 0, 1)
-    this.breath.set(breathTarget)
-
-    if (gain === 0) {
-      // Jumped for the same reason the oscillator jumps them: a knob moved
-      // between notes has to be where it was put when the next one starts.
-      this.pitch.reset(this.params[P_PITCH])
-      this.tone.reset(this.params[P_TONE])
-      this.breath.reset(breathTarget)
-      slots[this.outs[OUT_AUDIO]] = 0
-      return
-    }
-
-    const tone = this.tone.next()
-    const breath = this.breath.next()
-
-    this.vibPhase += this.params[P_VIB_RATE] / sr
-    if (this.vibPhase >= 1) this.vibPhase -= 1
-    const vib = (Math.sin(2 * Math.PI * this.vibPhase) * this.params[P_VIB_DEPTH] * VIB_SEMITONES) / 12
-
-    let freq = this.pitch.next() * Math.pow(2, slots[this.ins[IN_PITCH]] + vib) * this.periodScale
+    const enveloped = this.params[P_MODE] >= 0.5
+    const vibStep = this.params[P_VIB_RATE] / sr
+    const vibDepth = this.params[P_VIB_DEPTH]
     // The folds cannot be driven past a few samples a cycle and still have an
     // open and a closed phase to tell apart.
     const top = sr * 0.2
-    if (!(freq >= MIN_FREQ)) freq = MIN_FREQ
-    else if (freq > top) freq = top
-    const dt = freq / sr
-
-    const oq = OQ_SOFT + (OQ_PRESSED - OQ_SOFT) * tone
-
-    this.phase += dt
-    if (this.phase >= 1) {
-      this.phase -= 1
-      this.newCycle()
-    }
-    const p = this.phase
-
-    // The flow derivative, 2t - 3t^2 across the open phase: zero on average,
-    // so it carries no offset, rising to a third and then falling to -1 at the
-    // instant of closure, where it steps straight back to zero.
-    let pulse = 0
-    if (p < oq) {
-      const t = p / oq
-      pulse = 2 * t - 3 * t * t
-    }
-    // PolyBLEP on the closure, the one step in the wave: an upward step of 1
-    // gets half a residual either side of where it fell.
-    const before = (p - oq) / dt
-    if (before > -1 && before < 0) pulse += 0.5 * (before * before + 2 * before + 1)
-    else if (before >= 0 && before < 1) pulse += 0.5 * (2 * before - before * before - 1)
-
-    // A softer voice is a duller one as well as a smoother one.
-    const corner = TILT_SOFT * Math.pow(TILT_PRESSED / TILT_SOFT, tone)
-    const a = Math.exp((-2 * Math.PI * corner) / sr)
-    this.tilt = pulse + (this.tilt - pulse) * a
-    // No level correction for the tilt: the lowpass takes the spike's peak
-    // but the spike carries little of the power, and across the whole of
-    // Tone the loudness moves by about a quarter, which reads as the voice
-    // pushing harder rather than as a volume knob.
-    const voiced = this.tilt * this.cycleAmp
-
-    const white = this.random() * 2 - 1
+    // The breath's highpass corner is fixed, so its coefficient is too.
     const b = Math.exp((-2 * Math.PI * BREATH_CORNER) / sr)
-    this.noiseLow = white + (this.noiseLow - white) * b
-    const aspiration = (white - this.noiseLow) * (p < oq ? 1 : BREATH_CLOSED)
 
-    const out = (voiced * (1 - breath) + aspiration * breath * BREATH_GAIN) * gain
-    const size = out < 0 ? -out : out
-    if (size > this.peak) this.peak = size
-    slots[this.outs[OUT_AUDIO]] = out
+    const gateIn = this.inputs[IN_GATE]
+    const breathIn = this.inputs[IN_BREATH]
+    const pitchIn = this.inputs[IN_PITCH]
+    const outAudio = this.outputs[OUT_AUDIO]
+    const outEnv = this.outputs[OUT_ENV]
+    const held = this.gateOpen
+
+    for (let i = from; i < to; i++) {
+      const open = held || gateIn[i] > 0.5
+      if (open !== this.envOpen) {
+        this.envOpen = open
+        if (open) env.gateOn()
+        else env.gateOff()
+      }
+      const e = env.next()
+      outEnv[i] = e
+
+      const gain = (enveloped ? e : 1) * this.level.next()
+
+      const breathTarget = clamp(breathKnob + breathIn[i], 0, 1)
+      this.breath.set(breathTarget)
+
+      if (gain === 0) {
+        // Jumped for the same reason the oscillator jumps them: a knob moved
+        // between notes has to be where it was put when the next one starts.
+        this.pitch.reset(pitchKnob)
+        this.tone.reset(toneKnob)
+        this.breath.reset(breathTarget)
+        outAudio[i] = 0
+        continue
+      }
+
+      const tone = this.tone.next()
+      const breath = this.breath.next()
+
+      this.vibPhase += vibStep
+      if (this.vibPhase >= 1) this.vibPhase -= 1
+      const vib = (Math.sin(2 * Math.PI * this.vibPhase) * vibDepth * VIB_SEMITONES) / 12
+
+      let freq = this.pitch.next() * Math.pow(2, pitchIn[i] + vib) * this.periodScale
+      if (!(freq >= MIN_FREQ)) freq = MIN_FREQ
+      else if (freq > top) freq = top
+      const dt = freq / sr
+
+      const oq = OQ_SOFT + (OQ_PRESSED - OQ_SOFT) * tone
+
+      this.phase += dt
+      if (this.phase >= 1) {
+        this.phase -= 1
+        this.newCycle()
+      }
+      const p = this.phase
+
+      // The flow derivative, 2t - 3t^2 across the open phase: zero on
+      // average, so it carries no offset, rising to a third and then falling
+      // to -1 at the instant of closure, where it steps straight back to zero.
+      let pulse = 0
+      if (p < oq) {
+        const t = p / oq
+        pulse = 2 * t - 3 * t * t
+      }
+      // PolyBLEP on the closure, the one step in the wave: an upward step of
+      // 1 gets half a residual either side of where it fell.
+      const before = (p - oq) / dt
+      if (before > -1 && before < 0) pulse += 0.5 * (before * before + 2 * before + 1)
+      else if (before >= 0 && before < 1) pulse += 0.5 * (2 * before - before * before - 1)
+
+      // A softer voice is a duller one as well as a smoother one. Worked out
+      // only when Tone has moved: two transcendentals a sample, otherwise,
+      // for the same number every time.
+      if (tone !== this.tiltFor) {
+        this.tiltFor = tone
+        const corner = TILT_SOFT * Math.pow(TILT_PRESSED / TILT_SOFT, tone)
+        this.tiltCoeff = Math.exp((-2 * Math.PI * corner) / sr)
+      }
+      this.tilt = pulse + (this.tilt - pulse) * this.tiltCoeff
+      // No level correction for the tilt: the lowpass takes the spike's peak
+      // but the spike carries little of the power, and across the whole of
+      // Tone the loudness moves by about a quarter, which reads as the voice
+      // pushing harder rather than as a volume knob.
+      const voiced = this.tilt * this.cycleAmp
+
+      const white = this.random() * 2 - 1
+      this.noiseLow = white + (this.noiseLow - white) * b
+      const aspiration = (white - this.noiseLow) * (p < oq ? 1 : BREATH_CLOSED)
+
+      const out = (voiced * (1 - breath) + aspiration * breath * BREATH_GAIN) * gain
+      const size = out < 0 ? -out : out
+      if (size > this.peak) this.peak = size
+      outAudio[i] = out
+    }
   }
 
   /**

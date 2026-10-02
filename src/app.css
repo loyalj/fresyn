@@ -18,6 +18,8 @@
   --z-notices: 25;
   /* Above the dock it floats beside, under the menus that may open over it. */
   --z-history: 26;
+  /* The utilities' panels, piled from here up, one step each, under the menus. */
+  --z-utility: 27;
   --z-menu: 30;
   --z-context-menu: 40;
   /* Sheets take the whole window; a preset sheet opens from inside one. */
@@ -45,6 +47,29 @@ body {
   -webkit-font-smoothing: antialiased;
   user-select: none;
 }
+
+/* The dock's allowance: how much of the bottom of the window the dock takes,
+   near enough for padding. Set on .app by the app, and live while the dock's
+   edge is dragged.
+
+   Registered as not inherited, which is the whole point of the rule. An
+   ordinary custom property inherits, so changing it on .app restyled every
+   element on the page on every frame of that drag -- twenty milliseconds a
+   frame on a long rack, for four elements that read it. Now only .app
+   changes, and the three fixed panels below that use it take it from .app
+   by name. Each has to be a child of .app for `inherit` to reach it. A
+   browser that does not know @property inherits it as before, which draws
+   the same. */
+@property --dock-h {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 44px;
+}
+
+.app > .notices,
+.app > .history-panel,
+.app > .utility-panel,
+.app > .rack-index-card { --dock-h: inherit; }
 
 .app {
   max-width: 1040px;
@@ -1590,16 +1615,44 @@ body {
 
 /* --- rack flip ------------------------------------------------------ */
 
-.rack { position: relative; perspective: 2400px; }
+/* The rack is only three-dimensional while it turns (`.turning`, set by the
+   app for the length of the turn). At rest it is flat: the face turned away
+   is simply hidden, and nothing is rotated.
+
+   Left in 3D all the time, every face of every unit was a compositing layer
+   of its own, for as long as the page was open -- two hundred of them on a
+   long rack, each with its GPU memory, each to be walked on every frame,
+   for an effect that is on screen for less than half a second.
+
+   Keyframes rather than a transition, because a transition needs a style to
+   start from, and at rest a unit facing the wall has no rotation to start
+   from. Each keyframe ends where the flat rest state draws the same, so the
+   moment the rack goes flat again cannot be seen. */
+.rack { position: relative; }
+
+.rack.turning { perspective: 2400px; }
 
 .unit-flip {
   display: grid;
   min-width: 0;
-  transform-style: preserve-3d;
-  transition: transform 420ms cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
-.unit-flip.flipped { transform: rotateY(180deg); }
+.rack.turning .unit-flip:not(.unit-error) {
+  transform-style: preserve-3d;
+  animation: unit-to-front 420ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.rack.turning .unit-flip.flipped { animation-name: unit-to-back; }
+
+@keyframes unit-to-back {
+  from { transform: rotateY(0deg); }
+  to { transform: rotateY(180deg); }
+}
+
+@keyframes unit-to-front {
+  from { transform: rotateY(180deg); }
+  to { transform: rotateY(0deg); }
+}
 
 /* The unit stays in the rack while it is being dragged, as the gap it will
    drop into. What follows the pointer is the panel below. */
@@ -1673,14 +1726,21 @@ body {
    and they wrap. */
 .unit-flip > * {
   grid-area: 1 / 1;
-  backface-visibility: hidden;
   display: flex;
   min-width: 0;
 }
 
 .unit-flip > * > .unit { flex: 1; min-width: 0; }
 
-.unit-face-back { transform: rotateY(180deg); }
+/* Mid-turn, each face shows only from its own side. */
+.rack.turning .unit-flip > * { backface-visibility: hidden; }
+
+.rack.turning .unit-face-back { transform: rotateY(180deg); }
+
+/* At rest, the face turned away is not drawn at all. Hidden rather than
+   removed, so it still holds its half of the cell's height. */
+.rack:not(.turning) .unit-flip.flipped > .unit-face-front,
+.rack:not(.turning) .unit-flip:not(.flipped) > .unit-face-back { visibility: hidden; }
 
 /* The face turned away carries `inert`, which is what keeps it out of
    elementFromPoint during a cable drag -- and out of the tab order, which
@@ -1848,8 +1908,6 @@ body {
 
 /* The cable under the pointer, ready to be pulled out. */
 .cable.hovered .cable-line { stroke-width: 5; filter: var(--cable-hover); }
-
-.rack.grabbing-cable { cursor: pointer; }
 
 .cable-dragging { pointer-events: none; }
 /* The cable in the air reads a shade apart from the ones already patched. */
@@ -4400,3 +4458,1015 @@ button.playlist-bar:hover { border-color: var(--rule); color: var(--ink); }
   color: var(--ink-faint);
   border-top: 1px solid var(--hairline);
 }
+
+/* --- utilities ----------------------------------------------------- */
+
+/* For a label a screen reader needs and the eye does not. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* A panel that floats over the app and leaves it working: see UtilityPanel.
+   Placed by its own left and top, which dragging moves. */
+.utility-panel {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - var(--dock-h, 44px) - 24px);
+  background: var(--unit-top);
+  border: 1px solid var(--panel-edge);
+  border-radius: 5px;
+  box-shadow: 0 16px 40px var(--unit-shadow), 0 0 0 1px var(--sunken) inset;
+  user-select: text;
+}
+
+.utility-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 6px 6px 12px;
+  border-bottom: 1px solid var(--hairline);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.utility-head:active { cursor: grabbing; }
+
+.utility-head h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.utility-body {
+  overflow-y: auto;
+  padding: 12px;
+}
+
+/* --- the Timing utility --- */
+
+.timing {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(380px, calc(100vw - 42px));
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.timing-tabs,
+.timing-units {
+  display: flex;
+  gap: 4px;
+}
+
+.timing-tabs button,
+.timing-units button,
+.timing-sections-head button,
+.timing-song {
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 5px 8px;
+  color: var(--ink-dim);
+  background: var(--control);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.timing-tabs button:hover,
+.timing-units button:hover,
+.timing-sections-head button:hover:not(:disabled),
+.timing-song:hover:not(:disabled) { color: var(--ink); }
+
+.timing-tabs button.on,
+.timing-units button.on {
+  color: var(--ink);
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 1px rgb(var(--accent-rgb) / 0.3) inset;
+}
+
+.timing-sections-head button:disabled,
+.timing-song:disabled {
+  color: var(--ink-faint);
+  opacity: 0.5;
+  cursor: default;
+}
+
+.timing-units button { text-transform: none; letter-spacing: normal; font-size: 11px; }
+
+.timing-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.timing-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.timing-sig {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink-dim);
+}
+
+.timing input,
+.timing select {
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: normal;
+  text-transform: none;
+  padding: 3px 5px;
+  color: var(--ink);
+  background: var(--field);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+}
+
+.timing input[type='number'] { width: 64px; }
+.timing-sig input[type='number'] { width: 46px; }
+.timing-duration { width: 80px; }
+.timing-duration.invalid { border-color: var(--danger); }
+
+.timing-song { margin-left: auto; }
+
+.timing-answer {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--well);
+  border-radius: 3px;
+  line-height: 1.5;
+}
+
+.timing-answer strong { font-size: 15px; }
+
+.timing-dim { color: var(--ink-dim); }
+
+.timing-round { display: block; }
+
+.timing-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.timing-sections-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.timing-sections-head h3 {
+  flex: 1;
+  margin: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.timing-empty { margin: 0; }
+
+.timing-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.timing-table th,
+.timing-table td {
+  padding: 3px 6px;
+  text-align: left;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.timing-table thead th {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.timing-table tbody th { font-weight: 500; white-space: nowrap; }
+.timing-table tfoot th,
+.timing-table tfoot td { border-bottom: 0; font-weight: 600; }
+
+.timing-table .timing-num { text-align: right; }
+.timing-table thead th:not(:first-child) { text-align: right; }
+/* The plan's bars are fields, which line up by their own right edge. */
+.timing-plan td:nth-child(2) { text-align: right; }
+
+.timing-plan input[type='text'] { width: 100%; min-width: 80px; }
+.timing-plan input[type='number'] { width: 56px; }
+
+.timing-remove {
+  font: inherit;
+  padding: 0 4px;
+  color: var(--ink-faint);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.timing-remove:hover { color: var(--danger); }
+
+.timing-bar-row th,
+.timing-bar-row td { border-bottom-color: var(--rule); }
+
+/* A value to copy: a number that is also a button. */
+.timing-copy {
+  font: inherit;
+  padding: 1px 4px;
+  color: var(--ink);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  cursor: copy;
+}
+
+.timing-copy:hover { border-color: var(--accent-line); background: var(--control-hover); }
+
+/* Past what the Delay's Time can reach. */
+.timing-copy.long { color: var(--ink-faint); }
+
+.timing-budget {
+  margin: 0;
+  color: var(--ink-dim);
+}
+
+.timing-budget.over { color: var(--danger); }
+
+.timing-status { margin: 0; min-height: 1.4em; }
+
+/* The panel holding the focus -- where Space taps, on the Tap tab -- says so. */
+.utility-panel:focus { outline: none; }
+.utility-panel:focus-within { border-color: var(--accent-line); }
+
+.timing-tap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.timing-pad {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  height: 72px;
+  color: var(--ink);
+  background: var(--control);
+  border: 1px solid var(--panel-edge);
+  border-radius: 4px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.timing-pad:hover { border-color: var(--accent-line); }
+
+/* A flash on every tap. Two names for the one animation, alternated, so each
+   tap starts it again rather than finding it already running. */
+.timing-pad[data-beat='0'] { animation: timing-tap-a 180ms ease-out; }
+.timing-pad[data-beat='1'] { animation: timing-tap-b 180ms ease-out; }
+
+@keyframes timing-tap-a {
+  from { background: rgb(var(--accent-rgb) / 0.35); }
+}
+
+@keyframes timing-tap-b {
+  from { background: rgb(var(--accent-rgb) / 0.35); }
+}
+
+.timing-tapped { min-height: 2.6em; }
+
+.timing-apply {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--hairline);
+}
+
+.timing-apply h3 {
+  margin: 0 0 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.timing-apply-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.timing-apply-row > button:not(.timing-link) {
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 5px 8px;
+  min-width: 104px;
+  color: var(--ink);
+  background: var(--control);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.timing-apply-row > button:not(.timing-link):hover:not(:disabled) { border-color: var(--accent-line); }
+
+.timing-apply-row > button:disabled {
+  color: var(--ink-faint);
+  opacity: 0.5;
+  cursor: default;
+}
+
+.timing-apply-row input[type='number'] { width: 56px; }
+
+.timing-link {
+  font: inherit;
+  font-size: 11px;
+  padding: 0;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.timing-link:hover { text-decoration: underline; }
+
+/* --- notes on the rack --------------------------------------------- */
+
+/* The layer a face's notes sit in: the whole face, catching nothing itself,
+   so the knobs under the empty part of it are still the knobs. */
+.rack-notes {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* Paper, whatever the theme: a sticky note reads as one because it is the
+   same yellow everywhere, and dark ink on it is legible on every palette. */
+.rack-note {
+  --paper: #f3e07a;
+  --paper-edge: #d9c45a;
+  --paper-ink: #2b2614;
+  position: absolute;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  width: 180px;
+  color: var(--paper-ink);
+  background: var(--paper);
+  border: 1px solid var(--paper-edge);
+  border-radius: 2px;
+  box-shadow: 0 6px 14px rgb(0 0 0 / 0.35), 0 1px 0 rgb(255 255 255 / 0.35) inset;
+  pointer-events: auto;
+  user-select: text;
+}
+
+.rack-note-green { --paper: #bfe3a2; --paper-edge: #9fc983; --paper-ink: #17280f; }
+.rack-note-blue { --paper: #acd4f2; --paper-edge: #86b6db; --paper-ink: #0f2233; }
+.rack-note-pink { --paper: #f4b9cf; --paper-edge: #dc95b0; --paper-ink: #34121f; }
+.rack-note-violet { --paper: #cdbcf0; --paper-edge: #ac98d9; --paper-ink: #1f1636; }
+
+.rack-note.moving {
+  z-index: 8;
+  opacity: 0.85;
+  box-shadow: 0 14px 28px rgb(0 0 0 / 0.45);
+}
+
+.rack-note-grip {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 18px;
+  padding: 1px 2px;
+  background: rgb(0 0 0 / 0.07);
+  border-bottom: 1px solid rgb(0 0 0 / 0.08);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.rack-note.moving .rack-note-grip { cursor: grabbing; }
+
+.rack-note-grip button {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 4px;
+  color: inherit;
+  background: none;
+  border: 0;
+  border-radius: 2px;
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.rack-note-grip button:hover,
+.rack-note-grip button:focus-visible { opacity: 1; background: rgb(0 0 0 / 0.08); }
+
+.rack-note-spacer { flex: 1; }
+
+.rack-note-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.rack-note.collapsed .rack-note-spacer { display: none; }
+
+/* The colour it will change to, as a dot. */
+.rack-note-color::before {
+  content: '';
+  display: block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--paper);
+  border: 1px solid rgb(0 0 0 / 0.35);
+}
+
+.rack-note-text {
+  display: block;
+  width: 100%;
+  min-height: 54px;
+  max-height: 220px;
+  padding: 5px 7px 7px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  color: inherit;
+  background: none;
+  border: 0;
+  outline: none;
+  resize: none;
+  field-sizing: content;
+}
+
+.rack-note-text::placeholder { color: inherit; opacity: 0.45; }
+
+.rack-note:focus-within { border-color: rgb(0 0 0 / 0.45); }
+
+/* --- the Metronome --- */
+
+.metronome,
+.pitch {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(380px, calc(100vw - 42px));
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.metronome input[type='number'],
+.metronome select,
+.pitch input,
+.pitch select {
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: normal;
+  text-transform: none;
+  padding: 3px 5px;
+  color: var(--ink);
+  background: var(--field);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+}
+
+.metronome .timing-sig input[type='number'] { width: 46px; }
+
+.metronome-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.metronome-go {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  width: 84px;
+  height: 52px;
+  color: var(--ink);
+  background: var(--control);
+  border: 1px solid var(--panel-edge);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.metronome-go:hover { border-color: var(--accent-line); }
+
+.metronome-go.on {
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.metronome-tempo {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.metronome-tempo button {
+  font: inherit;
+  font-size: 11px;
+  padding: 4px 6px;
+  color: var(--ink-dim);
+  background: var(--control);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.metronome-tempo button:hover { color: var(--ink); }
+
+.metronome .metronome-bpm {
+  width: 70px;
+  font-size: 18px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.metronome-tap { margin-left: 4px; }
+
+.metronome-lamps {
+  display: flex;
+  gap: 6px;
+  padding: 10px;
+  background: var(--well);
+  border-radius: 3px;
+}
+
+.metronome-lamp {
+  flex: 1;
+  height: 14px;
+  background: var(--sunken);
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+}
+
+.metronome-lamp.first { border-color: var(--accent-line); }
+.metronome-lamp.on { background: var(--accent); border-color: var(--accent); }
+.metronome-lamp.first.on { box-shadow: 0 0 10px rgb(var(--accent-rgb) / 0.6); }
+.metronome-lamp.sub { background: rgb(var(--accent-rgb) / 0.35); }
+
+.metronome-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-dim);
+}
+
+.metronome-volume {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.metronome-volume input { width: 90px; accent-color: var(--accent); }
+
+.metronome-note { margin: 0; color: var(--danger); }
+
+/* --- Notes & frequencies --- */
+
+.pitch-input { flex: 1; }
+.pitch-input input { width: 100%; }
+.pitch .invalid { border-color: var(--danger); }
+.pitch input[type='number'] { width: 70px; }
+
+.pitch-answer {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 10px 12px;
+  background: var(--well);
+  border-radius: 3px;
+}
+
+.pitch-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pitch-main strong { font-size: 24px; white-space: nowrap; }
+.pitch-cents { font-size: 13px; font-weight: 500; color: var(--ink-dim); }
+
+.pitch-play {
+  font: inherit;
+  width: 28px;
+  height: 28px;
+  color: var(--ink);
+  background: var(--control);
+  border: 1px solid var(--panel-edge);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.pitch-play:hover { border-color: var(--accent-line); }
+
+.pitch-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1px 8px;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.pitch-facts dt {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  align-self: center;
+}
+
+.pitch-facts dd { margin: 0; }
+
+.pitch-section h3 {
+  margin: 0 0 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.pitch-octave {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 3px;
+}
+
+.pitch-key {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 2px;
+  color: var(--ink);
+  background: var(--control);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.pitch-key.black { background: var(--sunken); }
+.pitch-key.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.pitch-key:hover { border-color: var(--accent-line); }
+.pitch-key .timing-dim { font-size: 10px; }
+
+.pitch-transpose {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- the Scales & chords, Progressions and Rhythm utilities --- */
+
+.scales,
+.progression,
+.rhythm {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(440px, calc(100vw - 42px));
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.rhythm { width: min(540px, calc(100vw - 42px)); }
+
+.scales-song {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.scales-song .timing-song { margin-left: 0; }
+
+.scales-keyboard {
+  display: block;
+  width: 100%;
+  height: auto;
+  user-select: none;
+}
+
+.scales-key { cursor: pointer; }
+.scales-key rect { stroke: var(--panel-edge); stroke-width: 1; }
+.scales-key.white rect { fill: var(--key-white); }
+.scales-key.black rect { fill: var(--key-black); }
+.scales-key.white.in rect { fill: rgb(var(--accent-rgb) / 0.42); }
+.scales-key.black.in rect { fill: rgb(var(--accent-rgb) / 0.7); }
+.scales-key.root rect { fill: var(--accent); }
+.scales-key:hover rect { stroke: var(--accent-line); stroke-width: 1.5; }
+.scales-key text {
+  font-size: 7px;
+  font-weight: 600;
+  text-anchor: middle;
+  fill: var(--key-black);
+  pointer-events: none;
+}
+.scales-key circle { fill: var(--key-black); pointer-events: none; }
+.scales-key.black circle { fill: var(--key-white); }
+
+.scales-middle {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.scales-circle {
+  flex: 0 0 auto;
+  width: 196px;
+  height: 196px;
+  user-select: none;
+}
+
+.scales-circle-ring { fill: none; stroke: var(--hairline); stroke-width: 1; }
+.scales-node { cursor: pointer; }
+.scales-node circle { fill: var(--control); stroke: var(--panel-edge); stroke-width: 1; }
+.scales-node text {
+  font-size: 9px;
+  text-anchor: middle;
+  dominant-baseline: central;
+  fill: var(--ink-faint);
+  pointer-events: none;
+}
+.scales-node .scales-minor { font-size: 8px; fill: var(--ink-faint); }
+.scales-node.in circle { fill: rgb(var(--accent-rgb) / 0.22); stroke: var(--accent-line); }
+.scales-node.in text { fill: var(--ink); }
+.scales-node.root circle { fill: var(--accent); }
+.scales-node.root text:not(.scales-minor) { fill: var(--on-accent); font-weight: 700; }
+.scales-node.chord circle { stroke: var(--ink); stroke-width: 2; }
+.scales-node:hover circle { stroke: var(--accent-line); stroke-width: 2; }
+
+.scales-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  margin: 0;
+  align-self: center;
+}
+
+.scales-facts dt { color: var(--ink-dim); }
+.scales-facts dd { margin: 0; }
+
+.scales-chords {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.scales-chord {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+  background: var(--control);
+}
+
+.scales-chord.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.scales-chord.outside { opacity: 0.7; border-style: dashed; }
+
+.scales-chord-play,
+.progression-chord {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 2px 4px;
+  font: inherit;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.scales-chord-play:hover,
+.progression-chord:hover { background: var(--control-hover); }
+
+.scales-numeral { font-size: 13px; font-weight: 600; font-family: Georgia, 'Times New Roman', serif; }
+.scales-name { font-size: 11px; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+
+.scales-add {
+  font: inherit;
+  padding: 1px 0;
+  color: var(--ink-faint);
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--hairline);
+  cursor: pointer;
+}
+
+.scales-add:hover:not(:disabled) { color: var(--ink); background: var(--control-hover); }
+.scales-add:disabled { cursor: default; opacity: 0.4; }
+
+.progression-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.progression-preset {
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 7px;
+  color: var(--ink);
+  background: var(--control);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.progression-preset:hover { border-color: var(--accent-line); background: var(--control-hover); }
+
+.progression-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+}
+
+.progression-strip li {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+  background: var(--control);
+}
+
+.progression-strip li.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.progression-strip li.progression-empty { padding: 6px 8px; border-style: dashed; background: none; }
+.progression-chord { padding: 4px 6px; min-width: 44px; }
+
+.progression-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.progression-add button {
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 6px;
+  color: var(--ink-dim);
+  background: none;
+  border: 1px dashed var(--rule);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.progression-add button:hover:not(:disabled) { color: var(--ink); border-color: var(--accent-line); }
+.progression-add button.outside { opacity: 0.7; }
+.progression-add button:disabled { cursor: default; opacity: 0.4; }
+
+.progression-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+
+.progression-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.progression-actions .timing-song { margin-left: 0; }
+.progression-actions .progression-write { margin-left: auto; color: var(--ink); border-color: var(--accent-line); }
+.progression-actions .timing-song:disabled { cursor: default; opacity: 0.5; }
+
+.rhythm-lanes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rhythm-lane {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(5, 50px) 26px 42px;
+  align-items: center;
+  gap: 4px;
+}
+
+.rhythm-lane input[type='number'] { width: 100%; }
+.rhythm-lane input[type='checkbox'] { justify-self: center; margin: 0; }
+
+.rhythm-head {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.rhythm-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.rhythm-row.muted .rhythm-steps,
+.rhythm-row.lost .rhythm-steps { opacity: 0.35; }
+
+.rhythm-pad {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.rhythm-pad select { min-width: 0; flex: 1; }
+.rhythm-pad-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.rhythm-hit,
+.rhythm-mute {
+  font: inherit;
+  font-size: 10px;
+  padding: 2px 5px;
+  color: var(--ink-dim);
+  background: var(--control);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.rhythm-hit:hover:not(:disabled),
+.rhythm-mute:hover { color: var(--ink); }
+.rhythm-hit:disabled { cursor: default; opacity: 0.4; }
+.rhythm-mute.on { color: var(--on-accent); background: var(--accent); border-color: var(--accent); }
+
+.rhythm-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.rhythm-steps {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 2px;
+  height: 10px;
+}
+
+.rhythm-steps span {
+  border-radius: 1px;
+  background: var(--well);
+  box-shadow: 0 0 0 1px var(--hairline) inset;
+}
+
+.rhythm-steps span.hit { background: rgb(var(--accent-rgb) / 0.55); box-shadow: none; }
+.rhythm-steps span.hit.chance { background: rgb(var(--accent-rgb) / 0.3); }
+.rhythm-steps span.accent { background: var(--accent); box-shadow: none; }
+

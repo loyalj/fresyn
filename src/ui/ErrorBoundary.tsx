@@ -80,8 +80,12 @@ export class AppBoundary extends Component<{ children: ReactNode }, State> {
 
 interface UnitProps {
   moduleId: string
-  /** Take the broken unit out of the rack, which is undoable as ever. */
-  onRemove: () => void
+  /**
+   * Take the broken unit out of the rack, which is undoable as ever. Handed
+   * the id rather than closed over it, so the rack's one stable handler can
+   * be passed straight in.
+   */
+  onRemove: (moduleId: string) => void
   children: ReactNode
 }
 
@@ -118,7 +122,7 @@ export class UnitBoundary extends Component<UnitProps, State> {
           <button className="panel-cancel" type="button" onClick={() => this.setState({ error: null })}>
             Try again
           </button>
-          <button className="panel-cancel" type="button" onClick={onRemove}>
+          <button className="panel-cancel" type="button" onClick={() => onRemove(moduleId)}>
             Remove
           </button>
         </div>

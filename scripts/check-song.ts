@@ -59,7 +59,7 @@ import {
   slideSection,
   splitSection,
 } from '../src/song/section'
-import { renderSong, renderStems } from '../src/audio/renderSong'
+import { renderSong, renderStems, STEM_ROUTING } from '../src/audio/renderSong'
 import { Transport } from '../src/audio/Transport'
 import type { AudioEngine } from '../src/audio/AudioEngine'
 import { playlistBars, setPatternNotes, trackMix, updateConsole, updateStrip, updateTrack } from '../src/song/edit'
@@ -1250,6 +1250,27 @@ console.log('\nstems add back up to the mix')
   let off = 0
   for (let i = 0; i < span; i++) off = Math.max(off, Math.abs(alone.left[i] - stems[0].audio.left[i]))
   check('a stem is that track on its own', off < 1e-6, `worst ${off}`)
+
+  // A bounce leaves the unheard racks out rather than running them silent,
+  // which is what stops stems costing the mix once per track. It must not be
+  // heard: the same samples as running every rack, with the other track
+  // sending to the reverb and echo so that a leak through a send would show.
+  const wet = updateStrip(s, 'drum', { space: 1, delay: 1 })
+  const player = (onlyHeard: boolean) =>
+    new SongPlayer(wet, band(), { sampleRate: SR, only: ['lead'], routing: STEM_ROUTING.sends, onlyHeard })
+  const every = player(false)
+  const heard = player(true)
+  const a = new Float32Array(128)
+  const b = new Float32Array(128)
+  const c = new Float32Array(128)
+  const d = new Float32Array(128)
+  let same = true
+  for (let i = 0; i < span && same; i += 128) {
+    every.render(a, b)
+    heard.render(c, d)
+    for (let j = 0; j < 128; j++) if (a[j] !== c[j] || b[j] !== d[j]) same = false
+  }
+  check('leaving unheard racks out changes no sample', same)
 }
 
 console.log('\nmute and solo reach the bounce')

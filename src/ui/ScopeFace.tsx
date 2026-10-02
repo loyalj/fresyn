@@ -68,7 +68,9 @@ export function ScopeFace({ def, moduleId, valueOf, onChange }: Props) {
       const next = frames[engineId]
       // B arrives as its own entry, and only while something is patched to
       // it, so a frame without one means the jack is empty rather than quiet.
-      const nextB = frames[`${moduleId}.b`] ?? null
+      // Under the engine's id, like A: inside a Drum Kit's pad the two differ,
+      // and B looked up by the module's own id never arrived there.
+      const nextB = frames[`${engineId}.b`] ?? null
       if (!next && !nextB) return
       if (next) frame.current = next
       frameB.current = nextB

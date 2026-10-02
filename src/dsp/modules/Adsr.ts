@@ -38,33 +38,39 @@ export class AdsrModule extends DspModule {
   private ending = 0
   private readonly endPulse = pulseSamples(this.ctx.sampleRate)
 
-  process(slots: Float32Array) {
+  processBlock(from: number, to: number) {
     // Parameters first: gateOn() branches on the stage lengths, so setting
     // them afterwards would act on the previous sample's values. This module
     // has no delay stage today, so nothing depends on it yet -- but the
     // oscillator's envelope did, and it is the same class.
-    this.env.attack = this.params[P_ATTACK]
-    this.env.decay = this.params[P_DECAY]
-    this.env.sustain = this.params[P_SUSTAIN]
-    this.env.release = this.params[P_RELEASE]
+    const env = this.env
+    env.attack = this.params[P_ATTACK]
+    env.decay = this.params[P_DECAY]
+    env.sustain = this.params[P_SUSTAIN]
+    env.release = this.params[P_RELEASE]
 
-    const g = slots[this.ins[IN_GATE]]
-    const rose = this.gate.rose(g)
-    if (rose) this.env.gateOn()
-    else if (!this.gate.isHigh && this.env.isActive) this.env.gateOff()
+    const gate = this.inputs[IN_GATE]
+    const outLevel = this.outputs[OUT_LEVEL]
+    const outEnd = this.outputs[OUT_END]
+    const outInv = this.outputs[OUT_INV]
+    for (let i = from; i < to; i++) {
+      const rose = this.gate.rose(gate[i])
+      if (rose) env.gateOn()
+      else if (!this.gate.isHigh && env.isActive) env.gateOff()
 
-    const level = this.env.next()
+      const level = env.next()
 
-    // The edge, not the state: an envelope that has been idle for a second is
-    // not ending, it has ended. Read after next(), so the sample the envelope
-    // goes quiet on is the sample End goes high.
-    const active = this.env.isActive
-    if (this.wasActive && !active) this.ending = this.endPulse
-    this.wasActive = active
-    if (this.ending > 0) this.ending--
+      // The edge, not the state: an envelope that has been idle for a second
+      // is not ending, it has ended. Read after next(), so the sample the
+      // envelope goes quiet on is the sample End goes high.
+      const active = env.isActive
+      if (this.wasActive && !active) this.ending = this.endPulse
+      this.wasActive = active
+      if (this.ending > 0) this.ending--
 
-    slots[this.outs[OUT_LEVEL]] = level
-    slots[this.outs[OUT_END]] = this.ending > 0 ? 1 : 0
-    slots[this.outs[OUT_INV]] = 1 - level
+      outLevel[i] = level
+      outEnd[i] = this.ending > 0 ? 1 : 0
+      outInv[i] = 1 - level
+    }
   }
 }

@@ -45,6 +45,10 @@ import {
 import { isZip, makeBundle, readBundle } from '../src/patch/bundle'
 import { fromStored, toStored, PATCH_FORMAT } from '../src/patch/serialize'
 import type { Patch } from '../src/patch/types'
+import { addNote, copyNotes, editNote, keepNotes, NOTE_MAX_TEXT, removeNote, sameSound } from '../src/patch/notes'
+import { padPatch, padView, setKitSlot, withPadView } from '../src/patch/kit'
+import { fromStoredProject, toStoredProject } from '../src/song/project'
+import { benchSong } from '../src/song/types'
 
 let failures = 0
 
@@ -584,6 +588,88 @@ console.log('\nwhat a cable carries')
   check('a clock is gates', signalOf('clock', 'd4') === 'gate' && signalOf('sh', 'clk3') === 'gate')
   check('a keyboard sends a pitch and a gate', signalOf('keys', 'pitch') === 'cv' && signalOf('keys', 'gate') === 'gate')
   check('a stereo effect sends sound', signalOf('reverb', 'l') === 'audio')
+}
+
+// --- notes on the rack -------------------------------------------------
+console.log('\nnotes on the rack')
+{
+  const rack: Patch = {
+    modules: [
+      { id: 'osc1', type: 'osc', params: {} },
+      { id: 'lpf1', type: 'ladder', params: {} },
+      { id: 'mix1', type: 'mixer', params: {} },
+    ],
+    cables: [],
+  }
+  let p = wireUp(wireUp(rack, { module: 'osc1', port: 'out' }, { module: 'lpf1', port: 'in' }), { module: 'lpf1', port: 'out' }, { module: 'mix1', port: 'in1' })
+  const a = addNote(p, 'lpf1', 'front', 30, 40)
+  p = editNote(a.patch, a.id, { text: 'Cutoff tracks the keys', color: 'blue' })
+  const b = addNote(p, 'osc1', 'back', 5, 6)
+  p = editNote(b.patch, b.id, { text: 'FM from the LFO', collapsed: true })
+  check('notes get their own ids', a.id === 'n1' && b.id === 'n2')
+  check('an edit that changes nothing is the same patch', editNote(p, 'n1', { text: 'Cutoff tracks the keys' }) === p)
+  check('a note is not something the audio hears', JSON.stringify(compile(p)) === JSON.stringify(compile({ modules: p.modules, cables: p.cables })))
+  check('and an edit to one leaves the sound alone', sameSound(p, editNote(p, 'n1', { x: 99 })) && !sameSound(p, removeModule(p, 'mix1')))
+
+  const back = fromStored(JSON.parse(JSON.stringify(toStored('Notes', p, {}))))
+  const notes = 'error' in back ? [] : (back.patch.notes ?? [])
+  check('they are saved and read back', JSON.stringify(notes) === JSON.stringify(p.notes), JSON.stringify(notes))
+  const none = toStored('Plain', rack, {})
+  check('a patch without notes is written without the field', !('notes' in none.patch))
+
+  const gone = removeModule(p, 'lpf1')
+  check('a note goes with its module', gone.notes?.length === 1 && gone.notes[0].module === 'osc1')
+  check('and the last one leaves no empty list', !('notes' in removeModule(gone, 'osc1')))
+  check('keepNotes drops notes on nothing', keepNotes({ ...p, modules: p.modules.slice(0, 1) }).notes?.length === 1)
+  check('removing a note', removeNote(p, 'n1').notes?.length === 1 && removeNote(p, 'nope') === p)
+  check('a note cannot be moved to a module that is not there', editNote(p, 'n1', { module: 'nowhere' }) === p)
+  check('a note holds a few paragraphs, not a book', editNote(p, 'n1', { text: 'x'.repeat(NOTE_MAX_TEXT + 50) }).notes![0].text.length === NOTE_MAX_TEXT)
+
+  // Copied and pasted: onto the new modules, under new ids.
+  const clip = copyModules(p, {}, ['lpf1'])
+  check('copying a module takes its notes', clip.notes?.length === 1 && clip.notes[0].module === 'lpf1')
+  const pasted = pasteModules(p, {}, clip)
+  const fresh = pasted.ids[0]
+  const onCopy = pasted.patch.notes?.filter((n) => n.module === fresh) ?? []
+  check('pasted notes are on the pasted module', onCopy.length === 1 && onCopy[0].text === 'Cutoff tracks the keys' && onCopy[0].color === 'blue', JSON.stringify(onCopy))
+  check('under ids of their own', new Set(pasted.patch.notes?.map((n) => n.id)).size === pasted.patch.notes?.length)
+  const dup = copyNotes(p, 'osc1', 'mix1')
+  check('a duplicate takes its notes, folded or not', !!dup.notes?.some((n) => n.module === 'mix1' && n.collapsed && n.face === 'back'))
+
+  // Read defensively.
+  const mangled = toStored('Mangled', p, {}) as unknown as { patch: Record<string, unknown> }
+  mangled.patch.notes = [
+    { id: 'n1', module: 'lpf1', face: 'front', x: 10, y: 10, text: 'kept' },
+    { id: 'n1', module: 'osc1', face: 'sideways', x: 'far', y: 1e9, text: 7, color: 'plaid', collapsed: 'yes' },
+    { id: 'n3', module: 'ghost', face: 'front', x: 0, y: 0, text: 'on nothing' },
+    'not a note',
+  ]
+  const read = fromStored(JSON.parse(JSON.stringify(mangled)))
+  const got = 'error' in read ? [] : (read.patch.notes ?? [])
+  check('a note on a module that is not there is dropped, with a warning', got.length === 2 && 'warnings' in read && read.warnings.some((w) => w.includes('note')))
+  const odd = got[1]
+  check('and nonsense in one is made sensible', !!odd && odd.id !== 'n1' && odd.face === 'front' && odd.x === 0 && odd.y === 2000 && odd.text === '' && !odd.color && !odd.collapsed, JSON.stringify(odd))
+
+  // In a Drum Kit's pad: loaded with the rack, kept as the pad is edited
+  // from the bench, and saved and read back inside the kit.
+  const kit: Patch = { modules: [{ id: 'kit1', type: 'kit', params: {} }], cables: [] }
+  const withPad = setKitSlot(kit, 'kit1', 0, { name: 'Lead', note: 36, patch: p })
+  const pad = withPad.modules[0].slots?.[0]
+  check('a rack loaded into a pad brings its notes', pad?.patch.notes?.length === 2)
+  const view = padView({ patch: withPad, values: {} }, 'kit1', 0)!
+  const edited = withPadView({ patch: withPad, values: {} }, 'kit1', 0, { ...view, patch: editNote(view.patch, 'n1', { text: 'in the pad' }) })
+  check('a note in a pad is edited from the bench', edited.patch.modules[0].slots?.[0]?.patch.notes?.[0].text === 'in the pad')
+  const kitBack = fromStored(JSON.parse(JSON.stringify(toStored('Kit', edited.patch, {}))))
+  const padNotes = 'error' in kitBack ? [] : (kitBack.patch.modules[0].slots?.[0]?.patch.notes ?? [])
+  check('and saved inside the kit', padNotes.length === 2 && padNotes[0].text === 'in the pad')
+  check('padPatch keeps notes on what it keeps', padPatch({ ...p, modules: [...p.modules, { id: 'rec1', type: 'rec', params: {} }] }).notes?.length === 2)
+
+  // In a project, as every track's rack.
+  const song = benchSong()
+  const project = toStoredProject('With notes', song, { [song.tracks[0].id]: { patch: p, values: {} } })
+  const reopened = fromStoredProject(JSON.parse(JSON.stringify(project)))
+  const racks = 'error' in reopened ? {} : reopened.racks
+  check('and in a project', Object.values(racks)[0]?.patch.notes?.length === 2)
 }
 
 console.log(failures === 0 ? '\nall clear' : `\n${failures} check(s) failed`)

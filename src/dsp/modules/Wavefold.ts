@@ -30,6 +30,8 @@ const IN_CV = 1
  * for.
  */
 export class WavefoldModule extends DspModule {
+  /** Works only on what reaches it, so it may rest; see `DspModule.rests`. */
+  readonly rests = true
   /** Folding an off-centre wave leaves DC behind, as asymmetric clipping does. */
   private dc = new DcBlocker(this.ctx.sampleRate)
   private fold!: Smoothed
@@ -45,32 +47,38 @@ export class WavefoldModule extends DspModule {
     this.symmetry = new Smoothed(this.params[P_SYMMETRY], this.ctx.sampleRate)
   }
 
-  process(slots: Float32Array) {
+  processBlock(from: number, to: number) {
     this.fold.set(this.params[P_FOLD])
     this.symmetry.set(this.params[P_SYMMETRY])
-    // Symmetry is added after the gain, not before it. Folding repeats every
-    // four units of its input, so an offset applied first is multiplied by
-    // Fold as well -- and at a Fold of 2 the two ends of the Symmetry knob
-    // land exactly one period apart and sound identical. After the gain, the
-    // knob shifts the wave by the same amount wherever Fold is set.
-    // The manual used to tell the reader to put a VCA in front of this module
-    // and sweep its level, which is folding by proxy: it changes how far into
-    // the folds the signal reaches, at the cost of the level going with it.
-    // This moves the folding itself and leaves the level alone.
-    const fold =
-      expCv(this.fold.next(), slots[this.ins[IN_CV]], this.params[P_CV_AMOUNT])
-    const x = saneInput(slots[this.ins[IN_SIGNAL]] * fold + this.symmetry.next())
+    const cv = this.inputs[IN_CV]
+    const signal = this.inputs[IN_SIGNAL]
+    const out = this.outputs[0]
+    const amount = this.params[P_CV_AMOUNT]
+    for (let i = from; i < to; i++) {
+      // Symmetry is added after the gain, not before it. Folding repeats
+      // every four units of its input, so an offset applied first is
+      // multiplied by Fold as well -- and at a Fold of 2 the two ends of the
+      // Symmetry knob land exactly one period apart and sound identical.
+      // After the gain, the knob shifts the wave by the same amount wherever
+      // Fold is set.
+      // The manual used to tell the reader to put a VCA in front of this
+      // module and sweep its level, which is folding by proxy: it changes how
+      // far into the folds the signal reaches, at the cost of the level going
+      // with it. This moves the folding itself and leaves the level alone.
+      const fold = expCv(this.fold.next(), cv[i], amount)
+      const x = saneInput(signal[i] * fold + this.symmetry.next())
 
-    // Averaged over the step from the last input rather than taken at this
-    // one (see `Adaa.ts`). A folder is the worst aliaser in the rack: every
-    // crease is a corner, and at Fold 16 a high note has dozens of them a
-    // cycle, most of whose harmonics have nowhere to go but back down.
-    const f = foldIntegral(x)
-    const dx = x - this.x1
-    const y = dx > ADAA_EPS || dx < -ADAA_EPS ? (f - this.f1) / dx : triangleFold(0.5 * (x + this.x1))
-    this.x1 = x
-    this.f1 = f
-    slots[this.outs[0]] = this.dc.process(y)
+      // Averaged over the step from the last input rather than taken at this
+      // one (see `Adaa.ts`). A folder is the worst aliaser in the rack: every
+      // crease is a corner, and at Fold 16 a high note has dozens of them a
+      // cycle, most of whose harmonics have nowhere to go but back down.
+      const f = foldIntegral(x)
+      const dx = x - this.x1
+      const y = dx > ADAA_EPS || dx < -ADAA_EPS ? (f - this.f1) / dx : triangleFold(0.5 * (x + this.x1))
+      this.x1 = x
+      this.f1 = f
+      out[i] = this.dc.process(y)
+    }
   }
 }
 
