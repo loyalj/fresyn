@@ -96,6 +96,19 @@ const CEILING: Record<string, number> = {
   macro: 1,
   // It can only chase its input.
   slew: 1.1,
+  // Out is held between 0 and 1, Inv is one minus it, and the rest are gates.
+  follow: 1,
+  // Seven band-limited oscillators brought back by the square root of seven:
+  // at no detune they are one wave, in phase only where their random starts
+  // happen to agree, so the worst case is all seven overshooting at once.
+  unison: 3.5,
+  // Every output is a gate.
+  clkdiv: 1,
+  // The trapezoidal low-pass at its highest Res peaks five times up at its
+  // corner, and the VCA side only attenuates.
+  lpg: 5.5,
+  // A tanh, brought down by the square root of the drive, plus hiss: under one.
+  tape: 1.1,
   // Gain 2 and offset 1 on a full-scale input is 3 a channel, so 6 summed.
   cv: 6.1,
   // Only ever a note of the scale nearest what came in, which from a 1.0

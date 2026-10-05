@@ -119,6 +119,32 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     ],
   },
 
+  unison: {
+    type: 'unison',
+    name: 'Unison Oscillator',
+    group: 'voice',
+    slug: 'uni',
+    inputs: [
+      { id: 'pitch', label: 'Pitch' },
+      { id: 'fm', label: 'FM' },
+      { id: 'spread', label: 'Spread' },
+    ],
+    outputs: [
+      { id: 'l', label: 'L' },
+      { id: 'r', label: 'R' },
+      { id: 'out', label: 'Out' },
+    ],
+    params: [
+      { id: 'pitch', label: 'Pitch', min: 2, max: 12000, default: 110, unit: 'Hz', curve: 'exp', tuned: true },
+      { id: 'wave', label: 'Wave', min: 0, max: 3, default: 0, unit: '', curve: 'lin', steps: WAVES },
+      { id: 'voices', label: 'Voices', min: 1, max: 7, default: 5, unit: '#', curve: 'lin' },
+      { id: 'detune', label: 'Detune', min: 0, max: 1, default: 0.35, unit: '', curve: 'lin' },
+      { id: 'width', label: 'Width', min: 0, max: 1, default: 0.7, unit: '', curve: 'lin' },
+      { id: 'fmAmount', label: 'FM Amt', min: -4, max: 4, default: 0, unit: 'oct', curve: 'lin' },
+      { id: 'level', label: 'Level', min: 0, max: 1, default: 0.8, unit: '', curve: 'lin' },
+    ],
+  },
+
   sampler: {
     type: 'sampler',
     name: 'Sampler',
@@ -472,6 +498,35 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     ],
   },
 
+  clkdiv: {
+    type: 'clkdiv',
+    name: 'Clock Divider',
+    group: 'control',
+    slug: 'div',
+    width: 'half',
+    inputs: [
+      { id: 'clock', label: 'Clock' },
+      { id: 'reset', label: 'Reset' },
+    ],
+    outputs: [
+      { id: 'd2', label: '/2', block: 'divide' },
+      { id: 'd3', label: '/3', block: 'divide' },
+      { id: 'd4', label: '/4', block: 'divide' },
+      { id: 'd8', label: '/8', block: 'divide' },
+      { id: 'x2', label: 'x2', block: 'multiply' },
+      { id: 'x4', label: 'x4', block: 'multiply' },
+      { id: 'out', label: 'Out', block: 'ratio' },
+    ],
+    params: [
+      // In the order of CLKDIV_RATIOS in the module: multiplications first.
+      {
+        id: 'ratio', label: 'Ratio', min: 0, max: 13, default: 12, unit: '', curve: 'lin',
+        steps: ['x4', 'x3', 'x2', 'x1', '/2', '/3', '/4', '/5', '/6', '/7', '/8', '/12', '/16', '/32'],
+      },
+      { id: 'width', label: 'Width', min: 0.02, max: 0.98, default: 0.5, unit: '', curve: 'lin' },
+    ],
+  },
+
   burst: {
     type: 'burst',
     name: 'Burst',
@@ -576,6 +631,28 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     ],
   },
 
+  follow: {
+    type: 'follow',
+    name: 'Envelope Follower',
+    group: 'modulation',
+    slug: 'follow',
+    width: 'half',
+    inputs: [{ id: 'in', label: 'In' }],
+    outputs: [
+      { id: 'out', label: 'Out' },
+      { id: 'inv', label: 'Inv' },
+      { id: 'gate', label: 'Gate' },
+      { id: 'trig', label: 'Trig' },
+    ],
+    params: [
+      { id: 'attack', label: 'Attack', min: 0.0005, max: 1, default: 0.005, unit: 's', curve: 'exp' },
+      { id: 'release', label: 'Release', min: 0.005, max: 4, default: 0.15, unit: 's', curve: 'exp' },
+      { id: 'gain', label: 'Gain', min: 0.1, max: 10, default: 1, unit: '', curve: 'exp' },
+      { id: 'threshold', label: 'Threshold', min: 0, max: 1, default: 0.2, unit: '', curve: 'lin' },
+      { id: 'mode', label: 'Mode', min: 0, max: 1, default: 0, unit: '', curve: 'lin', steps: ['peak', 'rms'] },
+    ],
+  },
+
   quant: {
     type: 'quant',
     name: 'Quantizer',
@@ -675,6 +752,28 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
         id: 'mode', label: 'Mode', min: 0, max: 6, default: 0, unit: '', curve: 'lin',
         steps: ['lp', 'bp', 'hp', 'notch', 'peak', 'comb+', 'comb−'],
       },
+    ],
+  },
+
+  lpg: {
+    type: 'lpg',
+    name: 'Low-Pass Gate',
+    group: 'voice',
+    slug: 'lpg',
+    bypass: true,
+    width: 'half',
+    inputs: [
+      { id: 'in', label: 'In' },
+      { id: 'cv', label: 'CV' },
+      { id: 'strike', label: 'Strike' },
+    ],
+    outputs: [{ id: 'out', label: 'Out' }],
+    params: [
+      { id: 'offset', label: 'Offset', min: 0, max: 1, default: 0, unit: '', curve: 'lin' },
+      { id: 'cvAmount', label: 'CV Amt', min: -1, max: 1, default: 1, unit: '', curve: 'lin' },
+      { id: 'decay', label: 'Decay', min: 0.05, max: 3, default: 0.4, unit: 's', curve: 'exp' },
+      { id: 'mode', label: 'Mode', min: 0, max: 2, default: 0, unit: '', curve: 'lin', steps: ['both', 'lp', 'vca'] },
+      { id: 'res', label: 'Res', min: 0, max: 0.9, default: 0.1, unit: '', curve: 'lin' },
     ],
   },
 
@@ -923,6 +1022,27 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
       { id: 'feedback', label: 'Fdbk', min: 0, max: 0.95, default: 0.35, unit: '', curve: 'lin' },
       { id: 'damping', label: 'Damp', min: 0, max: 1, default: 0.3, unit: '', curve: 'lin' },
       { id: 'mix', label: 'Mix', min: 0, max: 1, default: 0.35, unit: '', curve: 'lin' },
+    ],
+  },
+
+  tape: {
+    type: 'tape',
+    name: 'Tape',
+    group: 'effects',
+    slug: 'tape',
+    bypass: true,
+    // One machine for the whole chord, as a tape records a mix: and one wow,
+    // so the notes drift together rather than apart.
+    shared: true,
+    width: 'half',
+    inputs: [{ id: 'in', label: 'In' }],
+    outputs: [{ id: 'out', label: 'Out' }],
+    params: [
+      { id: 'drive', label: 'Drive', min: 0, max: 1, default: 0.3, unit: '', curve: 'lin' },
+      { id: 'wow', label: 'Wow', min: 0, max: 1, default: 0.3, unit: '', curve: 'lin' },
+      { id: 'flutter', label: 'Flutter', min: 0, max: 1, default: 0.2, unit: '', curve: 'lin' },
+      { id: 'age', label: 'Age', min: 0, max: 1, default: 0.3, unit: '', curve: 'lin' },
+      { id: 'hiss', label: 'Hiss', min: 0, max: 1, default: 0, unit: '', curve: 'lin' },
     ],
   },
 

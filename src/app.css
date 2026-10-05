@@ -1391,9 +1391,21 @@ body {
 
 /* A row, and its star and delete beside it rather than inside it. */
 .library-item { display: flex; align-items: flex-start; gap: 2px; }
+/* A heading within a shelf: each kit's drums under the kit's name. */
+.library-group {
+  margin: 12px 8px 4px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
 .library-item .library-row { flex: 1; min-width: 0; }
 .library-actions { display: flex; flex-direction: column; gap: 2px; padding-top: 6px; }
 
+.library-listen,
 .library-star,
 .library-delete {
   font: inherit;
@@ -1407,6 +1419,7 @@ body {
   border-radius: 3px;
   cursor: pointer;
 }
+.library-listen:hover,
 .library-star:hover,
 .library-delete:hover { color: var(--ink); border-color: var(--rule); }
 .library-star.on { color: var(--accent-line); }
@@ -5470,3 +5483,369 @@ button.playlist-bar:hover { border-color: var(--rule); color: var(--ink); }
 .rhythm-steps span.hit.chance { background: rgb(var(--accent-rgb) / 0.3); }
 .rhythm-steps span.accent { background: var(--accent); box-shadow: none; }
 
+
+/* --- MIDI controllers ------------------------------------------------- */
+
+.midi-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(520px, calc(100vw - 42px));
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.midi-status { display: flex; align-items: center; gap: 8px; color: var(--ink-dim); }
+.midi-status strong { color: var(--ink); font-weight: 600; }
+
+.midi-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.midi-check { display: flex; align-items: center; gap: 5px; color: var(--ink-dim); cursor: pointer; }
+
+.midi-hint { margin: 0; color: var(--ink-dim); }
+.midi-hint strong { color: var(--ink); }
+
+.midi-maps { width: 100%; border-collapse: collapse; }
+.midi-maps td { padding: 3px 4px; border-top: 1px solid var(--hairline); vertical-align: middle; }
+.midi-maps tr:first-child td { border-top: none; }
+.midi-maps tr.absent .midi-target { color: var(--ink-faint); }
+.midi-control { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.midi-target { color: var(--ink-dim); }
+.midi-maps td:has(select) { white-space: nowrap; }
+
+.midi-panel select {
+  font: inherit;
+  font-size: 11px;
+  max-width: 150px;
+  padding: 2px 4px;
+  color: var(--ink);
+  background: var(--field);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+}
+.midi-panel select + select { margin-left: 4px; }
+.midi-panel select:focus { outline: none; border-color: var(--accent-line); }
+
+.midi-monitor-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.midi-link {
+  font: inherit;
+  padding: 0;
+  color: var(--ink-dim);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.midi-link:disabled { opacity: 0.4; cursor: default; }
+
+.midi-monitor {
+  margin: 0;
+  padding: 6px 8px;
+  list-style: none;
+  min-height: 7em;
+  max-height: 14em;
+  overflow-y: auto;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  background: var(--well);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+}
+.midi-monitor li { display: flex; gap: 12px; }
+.midi-msg { flex: none; min-width: 15em; color: var(--ink); }
+.midi-result { color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.midi-empty { color: var(--ink-faint); }
+
+/* Learning: every control that can be mapped is ringed, the ones already
+   mapped solidly, and the one waiting for a controller in the accent. */
+.midi-learning [data-midi-param] {
+  outline: 1px dashed rgb(var(--accent-rgb) / 0.55);
+  outline-offset: 2px;
+  cursor: crosshair;
+}
+.midi-learning [data-midi-param][data-midi-mapped] {
+  outline: 1px solid rgb(var(--accent-rgb) / 0.8);
+}
+.midi-learning [data-midi-param][data-midi-armed] {
+  outline: 2px solid var(--accent-line);
+  box-shadow: 0 0 0 4px rgb(var(--accent-rgb) / 0.25);
+}
+
+/* --- automation ------------------------------------------------------- */
+
+/* A control some pattern automates: a small dot after its name. */
+.knob.automated .knob-label::after,
+.switch.automated .knob-label::after {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 4px;
+  vertical-align: 1px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.mix-fader-wrap.automated { box-shadow: inset 0 -2px 0 var(--accent); }
+
+/* Following its curve as the song plays: the arc dashed, so a knob moving by
+   itself reads as the song's hand and not a stuck pointer. */
+.knob.following .knob-value { stroke-dasharray: 3 2; }
+
+.roll-lanes { display: inline-flex; align-items: center; gap: 4px; }
+.roll-lane-pick { max-width: 190px; }
+
+.auto-lane {
+  flex: none;
+  margin-top: 4px;
+}
+.auto-lane-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+/* A clip's automation, over its notes: what moves, at a glance. */
+.playlist-clip-notes .auto {
+  fill: none;
+  stroke: var(--accent-line);
+  stroke-width: 1.5;
+  stroke-opacity: 0.9;
+}
+
+/* --- importing a MIDI file --- */
+
+.midi-import { width: min(460px, calc(100vw - 32px)); }
+.midi-import-parts {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 40vh;
+  overflow-y: auto;
+  font-size: 12px;
+}
+.midi-import-parts li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.midi-import-name { color: var(--ink); }
+.midi-import-sound { color: var(--ink-dim); white-space: nowrap; }
+
+.midi-devices { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.midi-devices li { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.midi-device-name { color: var(--ink); font-weight: 600; }
+
+/* --- the transport's other buttons, and where the song is --- */
+
+.dock-transport {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  font-size: 11px;
+  color: var(--ink-dim);
+  background: var(--control);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+  cursor: pointer;
+}
+.dock-transport:hover { color: var(--ink); }
+
+.dock-position {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 124px;
+  height: 24px;
+  padding: 0 8px;
+  font: inherit;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  background: var(--field);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+  cursor: text;
+  text-align: left;
+}
+.dock-position:hover { border-color: var(--rule); }
+.dock-position-time { color: var(--ink-dim); font-size: 11px; }
+.dock-position-entry { width: 124px; outline: none; border-color: var(--accent-line); }
+.dock-position-entry.bad { border-color: var(--danger); }
+
+/* The loop drawn on the playlist's ruler: the bars Play goes round. */
+.playlist-loop {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+  background: rgb(var(--accent-rgb) / 0.22);
+  border-top: 2px solid var(--accent-line);
+}
+.playlist-loop.idle { opacity: 0.4; }
+.playlist-loop-end {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  pointer-events: auto;
+  cursor: ew-resize;
+  background: var(--accent);
+}
+.playlist-loop-end.from { left: -1px; border-radius: 0 3px 3px 0; }
+.playlist-loop-end.to { right: -1px; border-radius: 3px 0 0 3px; }
+.playlist-loop-clear {
+  position: absolute;
+  top: 1px;
+  right: 10px;
+  pointer-events: auto;
+  padding: 0 4px;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--on-accent);
+  background: var(--accent);
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+/* A clip's menu, on its name strip; and a clip muted on its own. */
+.playlist-clip-menu {
+  margin-right: 3px;
+  padding: 0 2px;
+  font: inherit;
+  font-size: 9px;
+  line-height: 1;
+  color: inherit;
+  background: none;
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  pointer-events: auto;
+  opacity: 0.6;
+}
+.playlist-clip-menu:hover { opacity: 1; background: rgb(0 0 0 / 0.25); }
+.playlist-clip.muted { opacity: 0.38; }
+.playlist-clip.muted .playlist-clip-name { text-decoration: line-through; }
+
+/* A control a connected controller is mapped to, with which of its controls. */
+[data-midi-badge] { position: relative; }
+[data-midi-badge]::after {
+  content: attr(data-midi-badge);
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  z-index: 2;
+  padding: 0 3px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 8px;
+  font-weight: 600;
+  line-height: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--on-accent);
+  background: var(--accent);
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+/* The tracks under a Mackie Control surface's eight strips. */
+.track[data-mcu-strip] { position: relative; box-shadow: inset 3px 0 0 var(--accent); }
+.track[data-mcu-strip]::after {
+  content: attr(data-mcu-strip);
+  position: absolute;
+  right: 2px;
+  bottom: 1px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 8px;
+  color: var(--accent);
+  pointer-events: none;
+}
+
+/* The roll's folded-away settings: Write (key, snap, chord) and the help. */
+.roll-write,
+.roll-help { position: relative; }
+.roll-write-open { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: none; letter-spacing: normal; font-size: 11px; }
+.roll-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 260px;
+  padding: 10px 12px;
+  background: var(--unit-top);
+  border: 1px solid var(--panel-edge);
+  border-radius: 4px;
+  box-shadow: 0 10px 28px var(--unit-shadow);
+}
+.roll-help .roll-popover { left: auto; right: 0; width: min(360px, 80vw); }
+.roll-popover .roll-tools-key { margin-left: 0; }
+.roll-popover .roll-tools-hint,
+.roll-popover .roll-tools-tuning { font-size: 12px; line-height: 1.5; color: var(--ink-dim); }
+.roll-help { margin-left: auto; }
+
+/* The automation lanes open under the roll, stacked, each with its own height. */
+.auto-lanes {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 55%;
+  overflow-y: auto;
+  margin-top: 4px;
+}
+.auto-lane { margin-top: 0; }
+.auto-lane-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 18px;
+  padding: 0 4px;
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+.auto-lane-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.auto-lane-btn {
+  font: inherit;
+  font-size: 10px;
+  padding: 0 5px;
+  color: var(--ink-faint);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.auto-lane-btn:hover,
+.auto-lane-btn:focus-visible { color: var(--ink); border-color: var(--panel-edge); }
+.auto-lane-body { position: relative; }
+.auto-lane-grip {
+  height: 6px;
+  cursor: ns-resize;
+  touch-action: none;
+  background: linear-gradient(var(--hairline), var(--hairline)) center / 32px 2px no-repeat;
+}
+.auto-lane-grip:hover { background-color: var(--control-hover); }
+/* `hidden` must win over the display the popover sets for itself. */
+.roll-popover[hidden] { display: none; }
+.library-listen { font-size: 11px; }
+.library-listen.on { color: var(--accent-line); border-color: var(--accent-line); }

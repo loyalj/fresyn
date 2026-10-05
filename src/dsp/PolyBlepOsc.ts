@@ -59,6 +59,14 @@ export class PolyBlepOsc {
     this.syncPending = clamp(crossing, 0, 1)
   }
 
+  /**
+   * Where in its cycle it starts, 0 to 1. For a stack of oscillators on one
+   * note, which started together would sum to one loud click and a comb.
+   */
+  setPhase(phase: number) {
+    this.phase = phase - Math.floor(phase)
+  }
+
   process(freq: number, wave: Waveform, pulseWidth: number): number {
     // Clamped, because the wrap below moves the phase by one period at most.
     // Above the sample rate a phase step exceeds a whole cycle, one wrap

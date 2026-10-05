@@ -1,3 +1,4 @@
+import { cleanLanes } from './automation'
 import { normalizeSong } from './normalize'
 import { sectionsFromMarkers } from './section'
 import { SCALES } from './scale'
@@ -107,6 +108,7 @@ export function parseSong(input: unknown): Song | null {
       notes,
       ...hue(p.color),
       ...swingOf(p.swing),
+      ...lanesOf(p.automation, known),
     })
   }
 
@@ -119,6 +121,7 @@ export function parseSong(input: unknown): Song | null {
     if (typeof item.lane === 'number') place.lane = num(item.lane, 0, 0, 255)
     if (typeof item.offset === 'number') place.offset = num(item.offset, 0, 0, Number.MAX_SAFE_INTEGER)
     if (typeof item.length === 'number') place.length = num(item.length, PPQ * 4, 1, Number.MAX_SAFE_INTEGER)
+    if (item.mute === true) place.mute = true
     playlist.push(place)
   }
 
@@ -283,6 +286,12 @@ function consoleFrom(v: unknown): Console | null {
 /** A colour, as the field to spread in: nothing at all when there is none. */
 const hue = (v: unknown): { color?: number } =>
   typeof v === 'number' && Number.isFinite(v) ? { color: ((Math.round(v) % 360) + 360) % 360 } : {}
+
+/** A pattern's automation, as far as it can be read: lanes for tracks the file has, or none. */
+const lanesOf = (v: unknown, tracks: ReadonlySet<string>): { automation?: Pattern['automation'] } => {
+  const lanes = cleanLanes(v, tracks)
+  return lanes.length ? { automation: lanes } : {}
+}
 
 const swingOf = (v: unknown): { swing?: Swing } => {
   if (typeof v !== 'object' || v === null) return {}

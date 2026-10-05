@@ -112,15 +112,26 @@ to write music with, and the last two are for everything around the music:
   banjo, sitar, muted guitar
 - **Bells & mallets** — tubular bell, glockenspiel, marimba, vibraphone, steel drum, xylophone,
   celesta, handbell, gamelan, singing bowl
-- **Strings & pads** — string ensemble, warm pad, glass pad, slow-evolving pad, string machine,
-  adaptive drone, solo cello, choir, sweep pad, shimmer pad
+- **Strings & pads** — solo violin, viola, solo cello, contrabass, fiddle, erhu; string ensemble,
+  low, high, tremolo, staccato, swell, octave and tape strings, sul ponticello, string harmonics; warm pad, glass pad, slow-evolving pad, string machine,
+  adaptive drone, solo cello, choir, sweep pad, shimmer pad; OB brass, Juno, PWM strings,
+  hollow, sync and supersaw pads; air, bell, crystal and frozen pads; dark matter, tension,
+  underwater, cathedral and rust pads; pulsing, breathing, wandering, phaser and echo pads;
+  ooh choir, whisper pad, vinyl pad and granular cloud
 - **Brass & winds** — brass section, trumpet, French horn, flute, clarinet, pan flute, tuba,
   saxophone, oboe, harmonica
-- **Bass** — synth, sub, acid, plucked, FM, Reese, upright, wobble, chiptune and growl basses
+- **Bass** — synth, sub, acid, plucked, FM, Reese, upright, wobble, chiptune and growl basses;
+  Moog, Juno sub, hoover, sequencer, octave, unison saw and 808 basses; neuro, donk, fizz,
+  garage and dub basses; fretless, slap, picked, tuba and synth-koto basses; rubber,
+  distorted, bitcrushed and formant basses, pluck sub, drone bass and Liquid Reese
 - **Leads** — square, glide, sync, chiptune, supersaw, PWM, screaming and vowel leads, theremin
-  and whistle
-- **Drums** — kick, snare, closed and open hats, clap, tom, woodblock, cowbell, shaker, crash,
-  808 kick, rimshot, ride, conga, bongo, tambourine, finger snap, claves, triangle, timpani
+  and whistle; Mini, saw, brass, hollow square, arp and detuned leads; talkbox, robot voice,
+  siren and bendy leads; ocarina, recorder, shakuhachi, bagpipe, lead guitar and harmonica
+  lead; Gameboy, SID, laser, chime, glass, trance pluck, dirty and formant leads
+- **Drums** — the Drum Kit and the 808, 909, lo-fi, chiptune, world, industrial, cinematic and
+  glitch kits; kick, snare, closed and open hats, clap, tom, woodblock, cowbell, shaker, crash,
+  808 kick, rimshot, ride, conga, bongo, tambourine, finger snap, claves, triangle, timpani; and
+  every kit's own drums, under the kit's name
 - **Sound FX** — UI confirm, UI error, menu tick, game over, jump, hurt, heal,
   teleport, sword swish, punch, glass break, door creak, spell cast, alarm
   klaxon, force field
@@ -170,13 +181,16 @@ and read the tutorial when you want to know why it works.
 | Go back (or on) several steps at once | **Ctrl+H** or **Edit → History**, then click a step |
 | Save the project | **Ctrl+S**; **Ctrl+Shift+S** to save as a new file |
 | Open a project | **Ctrl+O** |
-| Patch a cable | Drag from one jack to another (back panel) |
+| Patch a cable | Drag from one jack to another (back panel). Cables are cut away over the jacks' names, so a label is never lost under the cable leaving it |
 | Patch from the keyboard | **Tab** to a jack, **Enter** to pick the cable up, **Enter** on the other jack to plug it in; **Esc** puts it down |
 | Unplug a cable | Drag out of a jack and let go anywhere |
 | Unplug a cable | Click the middle of the cable |
 | Clear a jack | Right-click it |
+| Hear what a jack carries | Hold **Alt** and press the jack (back panel); let go to hear the rack again |
+| Fade the cables, to work behind them | **View → Cables**: Solid, Faded or Faint |
+| Find any command, track, pattern or module | **Ctrl+K**, type, **Enter** |
 | Add a module | **Modules** in the menu bar; it arrives in front of the first picked unit, or at the top of the rack when nothing is picked |
-| Start from a finished rack | **Patch → Library...** |
+| Start from a finished rack | **Patch → Library...**; **▶** beside a sound, or **Space**, hears it first without loading it |
 | Render to WAV | **Render**, on the Recorder panel |
 | Turn a knob | Drag it up and down |
 | Turn a knob finely | Hold **Shift** while dragging |
@@ -496,6 +510,42 @@ you can see which of them is loud when a patch comes out muddy.
 
 ---
 
+### Unison Oscillator
+
+One note played by up to seven oscillators at once, a little apart in pitch
+and spread across the stereo field: the supersaw of trance, the hoover of
+rave, the wide wall of a modern pad — in one module instead of a stack of
+Oscillators and mixers.
+
+- **Inputs:** Pitch (1 V an octave, from a Keyboard), FM (exponential), Spread
+  (adds to Detune)
+- **Outputs:** L and R (the stereo stack), Out (the same summed to mono)
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Pitch | 2.00 Hz – 12.00 kHz | 110 Hz | The note the stack is centred on. **Alt** while dragging snaps it to a note |
+| Wave | saw / pulse / tri / sine | saw | The wave every copy plays |
+| Voices | 1 – 7 | 5 | How many copies. One is a plain oscillator |
+| Detune | 0.00 – 1.00 | 0.35 | How far apart they are. At 1.00 the outermost are a quarter-tone either side |
+| Width | 0.00 – 1.00 | 0.70 | How far they spread across the stereo field, from the middle out |
+| FM Amt | −4.00 – +4.00 | 0.00 | How far the FM input moves the pitch, in octaves |
+| Level | 0.00 – 1.00 | 0.80 | How loud it leaves the module |
+
+**The copies sit evenly either side of the note**, one on it when there is an
+odd number, so the stack stays in tune however wide Detune goes: what it
+widens is the beating between them. Each starts at its own point in its
+cycle, as free-running hardware does.
+
+**There is no envelope of its own.** In a playable rack, put it through a VCA
+opened by an Envelope, as a Keyboard voice would: Pitch from the Keyboard,
+L and R into a stereo pair of VCAs or straight into a Ladder Filter's input
+from Out.
+
+**Spread is Detune by CV.** An LFO into it breathes the stack wider and
+narrower; an Envelope into it starts each note tight and lets it bloom.
+
+---
+
 ### Sampler
 
 Plays a sound file. Drop a WAV onto its panel, or click the panel to choose
@@ -591,6 +641,32 @@ General MIDI puts them on: kick on C2 (36), snare on D2 (38), closed hat on
 F#2 (42), open hat on A#2 (46), and so on. **Drum Kit** on the Drums shelf of **Patch → Library...** is
 a rack with that kit already in it and **Space** on the kick.
 
+**Eight more kits sit beside it on the Drums shelf**, each with drums of its
+own and the kit's own sound after it. Every one keeps General MIDI's kick,
+snare, hats, toms, crash and ride on their notes, so a drum part written for
+one plays on all of them.
+
+| Kit | What it is | After the kit |
+| --- | --- | --- |
+| **808 Kit** | A long tuned 808 kick, snappy snares, a 4-slap clap, choked hats and a **hat roll** on G#1 (44) | Nothing |
+| **909 Kit** | A kick with a click on top, noisy snares, metallic hats and ride, a 3-slap clap | Glue: two compressors keyed from both sides |
+| **Lo-fi Kit** | A dusty kick, a fat snare and a ghost one, soft hats, and **vinyl crackle** held on A#0 (34) | A Tape, the kit summed to mono into it: saturated, wobbling and dull |
+| **Chiptune Kit** | Triangle kicks, crushed-noise snares and hats, square toms, a zap and a bloop | Nothing; every pad is already 4-bit |
+| **World Kit** | Djembe, tabla (its "ge" bends up), talking drum, cajón, darbuka, udu, shekere, guiro, cuica, conga, bongo | A hall |
+| **Industrial Kit** | A driven kick, sheet-metal and clang snares, anvil, pipes, chains, steam, sparks, and a **grinder** held on F#2 (54) | Drive |
+| **Cinematic Kit** | Taiko, orchestral bass drum, timpani, gong, tam-tam, sub boom, braam, and **snare and timpani rolls, a cymbal swell and a riser** to hold | A hall |
+| **Glitch Kit** | Clicks, stutters, a comb snare, ring-mod buzz, a granular smear, and blips at a new random pitch every hit | Glue |
+
+A pad marked to hold sounds for as long as its note is: draw a long note in
+the roll for a long roll or a slow swell.
+
+**Every kit's drums are on the Drums shelf on their own**, under the kit's
+name -- "808 snappy snare", "World udu", "Glitch stutter" -- and in a pad's
+**Load…** list, each kit in its own group. So a new kit can be made from any
+of them: an 808 kick, a World djembe slap and an Industrial anvil in one. The pads are ordinary pads, so
+**Edit** opens any of them as a rack, and what follows the kit is ordinary
+modules in the rack.
+
 **Each pad answers to one note.** The **Note** field moves it, and names the
 note both ways: as the roll names it, and as General MIDI's drum map does. Two
 pads on the same note both play, which is how to layer a clap on a snare. A
@@ -608,7 +684,9 @@ at all.
 
 **A pad that is not sounding costs nothing.** Its rack sleeps from the moment
 it has been let go of and gone quiet, and wakes on the next note, so a kit of
-sixteen racks costs about what the two or three it is playing do.
+sixteen racks costs about what the two or three it is playing do. A pad with
+a Delay or a Granular in it is given as long as they can hold sound for
+before it counts as quiet, so a hit that comes out late is never lost.
 
 **Edit pad opens the pad's rack on the bench**, while the song goes on
 playing the whole kit around it: turn the snare's decay and you hear it in
@@ -956,6 +1034,33 @@ which is a music box winding down or a machine losing power.
 
 ---
 
+### Clock Divider
+
+Takes any clock and puts out the same clock slower and faster, all in step
+with it. The Clock divides its own tempo; this divides and multiplies
+whatever reaches it — a Sequencer's gate, a Dust's random triggers, a beat
+from the song.
+
+- **Inputs:** Clock, Reset (the next tick fires every output together)
+- **Outputs:** /2, /3, /4, /8 (a pulse every so many ticks), x2, x4 (so many
+  pulses a tick), Out (at whatever Ratio is set to)
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Ratio | x4 / x3 / x2 / x1 / /2 / /3 / /4 / /5 / /6 / /7 / /8 / /12 / /16 / /32 | /16 | What Out does to the clock: multiplies it, passes it, or divides it |
+| Width | 0.02 – 0.98 | 0.50 | How long each pulse stays open, as a fraction of its own period |
+
+**Dividing counts ticks; multiplying measures them.** A division fires on
+every so many ticks and can follow a clock that speeds up or stutters. A
+multiplication fires evenly inside the gap between two ticks, so it needs two
+before it knows the tempo, and stops one gap after the clock does.
+
+**Polyrhythm is two outputs at once.** /3 and /4 from the same clock are
+three against four; /5 or /7 from Out against /4 drift in and out of step
+over a long cycle and come back together on the downbeat.
+
+---
+
 ### Burst
 
 One trigger in, a run of triggers out. Press it once and get five.
@@ -1113,6 +1218,46 @@ Three jobs in one module:
 
 ---
 
+### Envelope Follower
+
+How loud something is, as a CV. Patch any sound into it and Out rises and
+falls with its loudness: a kick becomes a CV that jumps on every hit, a voice
+one that moves while it speaks.
+
+- **Inputs:** In
+- **Outputs:** Out (0 to 1), Inv (1 minus Out), Gate (high while Out is above
+  Threshold), Trig (a pulse each time Gate opens)
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Attack | 1 ms – 1.00 s | 5 ms | How fast it rises when the sound gets louder |
+| Release | 5 ms – 4.00 s | 150 ms | How fast it falls when the sound gets quieter |
+| Gain | 0.10 – 10.00 | 1.00 | How big a CV a given loudness makes. Out stops at 1.00 |
+| Threshold | 0.00 – 1.00 | 0.20 | Where Gate opens. It closes again a little below, so it does not chatter |
+| Mode | peak / rms | peak | **peak** follows the size of the wave, quick to catch a hit; **rms** follows its power, steadier and closer to how loud it sounds |
+
+**Inv is ducking.** A kick into In and Inv into a pad's VCA CV, with the
+VCA's Level at 0 and CV Amt at 1, and the pad dips on every kick and swells
+back between them: the pumping of a sidechained compressor, without a
+compressor. Release is how fast it swells back.
+
+**Out opens things.** Into a filter's CV, a drum loop opens the filter on
+every hit; a voice through it makes a synth brighter only while it talks.
+Turn **Gain** up for a quiet source: a sound peaking at 0.25 needs a Gain of
+4 to reach the whole range.
+
+**Gate and Trig let one sound play another.** Set Threshold just under the
+loudness of the hits you want: each one opens Gate, and fires Trig once, so a
+snare can strike an Envelope, step a Sequencer, or fire a Burst. A long
+Release keeps Gate open through the tail; a short one closes it between hits.
+
+**Attack and Release are time constants**, as on the Slew's exp shape:
+Out covers 63% of a change in that long. At the default Attack each peak of
+a low note is gone before it is fully caught, so a steady tone reads a little
+under its peak in **peak** mode; a 1 ms Attack catches it.
+
+---
+
 ### Quantizer
 
 Snaps a pitch signal to the nearest note of a scale. Whatever it is fed —
@@ -1263,6 +1408,36 @@ down after it.
 
 **The screen under Mode draws the filter's shape**, the same way the Ladder's
 does, and in the comb modes it draws the teeth.
+
+---
+
+### Low-Pass Gate
+
+A filter and a VCA opened together by one control, through a vactrol — a
+little lamp shining on a light-sensitive resistor, as in Buchla's gates.
+Opening it makes a sound louder and brighter at once, the way anything struck
+or plucked is brightest when it is loudest.
+
+- **Inputs:** In, CV (opens it), Strike (a trigger that pings it open)
+- **Outputs:** Out
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Offset | 0.00 – 1.00 | 0.00 | How open it rests with nothing at CV. 0.00 is shut |
+| CV Amt | −1.00 – +1.00 | 1.00 | How far the CV input opens it |
+| Decay | 50 ms – 3.00 s | 400 ms | How long it takes to close again: the ring of a strike |
+| Mode | both / lp / vca | both | What opening it opens: the filter and the level, the filter only, or the level only |
+| Res | 0.00 – 0.90 | 0.10 | How much the filter rings at its corner |
+
+**The vactrol is the sound.** It opens in a couple of milliseconds but closes
+slowly, and slower still as it gets darker, so a strike dies away in a soft,
+natural curve no envelope quite matches. Nothing else is needed for a
+"bonk": an Oscillator into In and a Trigger or a Sequencer's gate into Strike
+is a struck, wooden, marimba-like voice, and **Decay** is how long it rings.
+
+**CV is for shaping it yourself.** An Envelope into CV with Offset at 0 opens
+and closes it on your own curve, still through the lamp's lag; an LFO with a
+little Offset makes it breathe.
 
 ---
 
@@ -1638,6 +1813,36 @@ in the room.
 
 ---
 
+### Tape
+
+What recording something onto tape and playing it back does to it:
+saturation, a pitch that drifts and wobbles, a worn top end, and hiss.
+
+- **Inputs:** In
+- **Outputs:** Out
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Drive | 0.00 – 1.00 | 0.30 | How hard it hits the tape: rounds the peaks off and thickens what is under them |
+| Wow | 0.00 – 1.00 | 0.30 | The slow, lurching drift of an uneven motor: pitch that sags and swells |
+| Flutter | 0.00 – 1.00 | 0.20 | The fast, fine wobble on top of it |
+| Age | 0.00 – 1.00 | 0.30 | How worn the tape is: the higher, the duller |
+| Hiss | 0.00 – 1.00 | 0.00 | The tape's noise floor. It is there even when nothing plays |
+
+**One Tape serves the whole chord**, as a real machine records the mix:
+every note drifts with the same wow. Put it near the end of a rack, after the
+filter and before the Space.
+
+**A little of each is the lo-fi sound**: Drive and Age around 0.40, Wow 0.20,
+Flutter 0.15, Hiss 0.10. Turn Wow up past 0.60 for a warped, seasick tape;
+Age to 1.00 for something heard through a wall.
+
+**Everything through it is 6 ms late**, which is where the playback head
+sits so the wobble can swing either way of it. Nobody hears 6 ms; a part
+that has to land exactly with another can be nudged in the roll.
+
+---
+
 ### Chorus
 
 Chorus, flanger and phaser in one module. Each makes a copy of the sound,
@@ -1981,12 +2186,12 @@ note that starts while another is held takes over from it.
 
 **The tools over the roll work on the selected notes**, or on every note of
 the track when none are selected, and each is one step of undo.
-**Quantize** snaps note starts to the grid, and **Humanize** nudges them a
-little early or late and a little softer or harder. The **Tools** menu beside
-them holds the rest:
+**Quantize** snaps note starts to the grid. The **Tools** menu beside it holds
+the rest:
 
 | Tool | What it does |
 | --- | --- |
+| Humanize | Nudges each note a little early or late, and a little softer or harder |
 | Chop into grid steps | Cuts each note into pieces one grid step long, so a held note becomes a repeated one |
 | Strum up / Strum down | Plays each chord a string at a time, lowest or highest first, about 15 ms apart at 120 BPM. The ends stay where they were |
 | Arpeggiate up / Arpeggiate down | Plays each chord as a run, one note per grid step, round and round for as long as it was held. A single note is left alone |
@@ -1996,6 +2201,12 @@ them holds the rest:
 
 What a tool made is left selected when there was a selection, so two can be
 run on the same notes one after the other: Arpeggiate, then Humanize.
+
+**The toolbar is one row.** How notes are written, which is the key, Snap to
+key and the chord a click lays, is set once and left, so it sits behind the
+**Write** button, which says how they stand ("A minor · snap · Minor 7").
+The roll's mouse shortcuts and what its rows are named by are behind **?** at
+the right.
 
 **The ▾ beside Quantize sets what it moves and how far.** Starts (the
 default) keeps each note's length. **Ends** puts the ends on the grid and
@@ -2019,7 +2230,8 @@ there.
 A key plays the row with that note's name on the track on the bench, so C4 on
 the controller is the C4 you hear whatever the patch is tuned to, and it
 plays at the velocity you hit it. Controllers plugged in later are picked up
-as they arrive.
+as they arrive. A controller's knobs, sliders and buttons are mapped onto the
+app's own: see [Mapping a controller](#mapping-a-controller).
 
 **With no Keyboard, every note fires the Trigger.** The rows mean nothing and
 what you are writing is a rhythm, which is the right way to play a coin, a
@@ -2054,6 +2266,7 @@ the bottom.
 | Drag a clip's left or right edge | Trims it. The left edge moves over the notes rather than moving them |
 | Ctrl + click a clip | Splits it in two at that point |
 | Right-click, or right-drag across | Deletes the clips it touches |
+| **▾** on a clip's name | Its menu: rename the pattern, give it a colour, **Make unique** (a copy of the pattern for this clip alone), **Mute clip** (silences this clip and its automation while the pattern's other clips play), or delete it |
 | Shift + drag | Copies instead of moving |
 | Shift + click | Adds a clip to what is picked, or takes it out |
 | Ctrl + drag on empty space | Picks every clip in the box |
@@ -2078,6 +2291,74 @@ none.
 
 Projects saved before lanes open with each pattern on its own lane, so they
 look the way they did.
+
+### Automation
+
+A knob can move by itself while a pattern plays: a filter opening over four
+bars, a delay's feedback swelling into a drop, a track fading out. Each knob
+that moves has an **automation lane** in a pattern, beside its notes. Because
+it is part of the pattern, it plays wherever the pattern's clips play. A clip
+stretched to loop repeats it, a clip trimmed from the front starts part way
+through it, and a section moved takes it along.
+
+**Making a lane.** Right-click any knob, switch or fader and choose
+**Automate in this pattern**. That works on the rack, the Mix view's strips,
+the master and the two returns. The dock opens on the roll with the lane
+under it. Or choose from the **Automation…** picker on the roll's toolbar,
+which lists every knob in the track's rack, its channel strip, the master
+and the returns.
+
+**Drawing in it.**
+
+- **Click** to add a point, and drag it as you click. Across, it snaps to the
+  grid; hold **Shift** to place it off the grid. Up and down is free.
+- **Drag a point** to move it. Each drag is one step of undo.
+- **Right-click a point** to choose how it moves on to the next one:
+  **Linear**, a straight line; **Hold**, which stays put and jumps at the
+  next point; or **Curve**. Delete the point from the same menu.
+- **Drag the small handle** half way along a stretch, up or down, to bend
+  it. Double-click the handle to straighten it again.
+
+Before a lane's first point the knob is held at that point's value, and
+after the last point at the last value, to the end of the pattern.
+
+**What you hear.**
+
+- **Inside a clip**, the lane has the knob. You can see it: the knob turns by
+  itself while the song plays, with a dashed ring. A knob or fader that some
+  pattern automates has a dot after its name.
+- **Outside every clip that automates it**, the knob is wherever its panel
+  says, so a lane in one pattern doesn't stick for the rest of the song.
+- **Where two clips automate the same knob**, the one that started later has
+  it until it ends.
+
+**Grab it to take over.** Turn an automated knob while the song plays (with
+the mouse or a MIDI controller) and your hand wins. The automation stands
+aside until you stop the song.
+
+**Recording movements.** Press **● Rec** on the roll and the loop starts.
+Every control you move while it plays is written into its lane in the
+pattern on the roll, where you moved it: a knob, a switch, a Mix fader, pan
+or send, or anything on a MIDI controller mapped to one. A control with no
+lane yet gets one. A take writes over only the stretch you moved through and
+leaves the rest of the lane alone, and the movement is thinned to the few
+points that draw it. Let go for a moment and the control goes back to its
+lane, so the next pass plays what you just did. Move it again and you write
+over that part. Notes played during the same take are recorded too, and the
+whole take, notes and movements together, is one Ctrl+Z.
+
+A lane stores the knob's *position* along its travel, not its value. A
+cutoff sweep therefore moves the way turning the knob by hand does, and a
+fader is drawn in dB as it is on the desk. The same lanes play in a bounce,
+in stems, and in a game, from the same arithmetic.
+
+The **Song view** draws each clip's lanes as a line over its notes.
+
+**Several lanes can be open at once**, stacked under the roll. The
+**Automation…** picker opens a lane, or closes it if it is open (✓). Each lane
+has its own **Hide**, which closes it without removing it, and **Remove lane**,
+which takes it out of the pattern (Ctrl+Z brings it back). Drag a lane's
+bottom edge to make it taller or shorter.
 
 ### Sections
 
@@ -2202,6 +2483,7 @@ pick follows the snap.
 | **Duplicate** (Ctrl+D) | Puts a copy straight after them and picks the copy, so pressing it again repeats the bars again |
 | **Copy** / **Cut** (Ctrl+C / Ctrl+X) | Holds the bars for pasting; Cut also takes them out |
 | **Paste** (Ctrl+V) | Puts the held bars in before the picked ones, opening the song up to fit them |
+| **Loop** | Loops these bars: Play starts at them and comes round at their end |
 
 A clip that crosses the edge of a pick is split there first, which you cannot
 hear, so only what is inside the pick changes. Sections go with the bars
@@ -2213,6 +2495,11 @@ signature changes** above. The keys
 work when the playlist has the keyboard and no clips are picked; clicking a
 lane lets go of the picked bars.
 
+**A loop is drawn on the ruler.** Drag either end of it to move that end, and
+click its **×** to loop the whole song again. A section clicked to loop takes
+over while it is picked. The loop is saved with the song, and moves with its
+bars when bars are put in or taken out before it.
+
 **ROLL plays the pattern; SONG plays the arrangement.** Which view is showing
 decides what the transport does, so there is no third button to forget about.
 
@@ -2220,7 +2507,10 @@ decides what the transport does, so there is no third button to forget about.
 
 | Control | What it does |
 | --- | --- |
+| ⏮ | Back to the start: Play starts from the top again, and a song playing jumps there |
 | ▶ / ■ | Starts and stops |
+| ■ | Stops. Pressed again while stopped, goes back to the start |
+| Position | Where the song is, as bar.beat.sixteenth and minutes:seconds. Click it and type a bar (**5**), a bar and beat (**5.3**) or a time (**1:04**) to play from there |
 | Loop | Whether it comes round again at the end, or plays once and stops |
 | Tempo | Beats per minute at the start, 20 to 300. **+1** beside it means the tempo changes along the way: see the BPM lane |
 | Time | The time signature at the start. **+1** beside it means it changes along the way: see the Time lane |
@@ -2234,7 +2524,9 @@ decides what the transport does, so there is no third button to forget about.
 button rather than taking the key the rack is played with.
 
 **Drag the top edge of the Music dock** to make it taller or shorter, and the
-roll shows more rows or fewer. **The mouse wheel** scrolls the rows up and
+roll shows more rows or fewer. Each view, Roll, Song and Mix, keeps its own
+height, as a share of the window, so a bigger window gives it more room. Until
+it is dragged, a view takes four tenths of the window. **The mouse wheel** scrolls the rows up and
 down, three rows a notch, gliding rather than jumping; a trackpad follows
 your fingers exactly. **The scroll bar** down the right of the rows can be
 dragged, to the pixel, and a click on it jumps there. It never lays a note.
@@ -2345,6 +2637,112 @@ something would.
 **A strip nobody has touched changes nothing.** A song mixed before the desk
 existed sounds exactly as it did.
 
+### Mapping a controller
+
+Any controller with knobs, sliders or buttons can move the knobs, faders and
+buttons on screen. Nothing needs to know the controller by name: you show
+Fresyn which control is which.
+
+**Learning.** Choose **Edit → MIDI learn**. It turns on MIDI input if it was
+off, opens the **MIDI controllers** panel, and rings every control that can
+be mapped. Click one — a knob in the rack, a fader or M/S in the Mix view or
+the track list, Play, Loop or ● Rec — and then move a knob, slider or button
+on the controller. That control now moves that one. The click only picks:
+nothing turns, plays or mutes. Learning stays on for the next one, until you
+press **Esc** or choose MIDI learn again. Controls already mapped have a
+solid ring while you learn.
+
+Learning works out what kind of control you moved:
+
+- **Knob or slider**: one with ends, whose position is the value.
+- **Endless knob**: one that turns forever and says only which way. There
+  are three ways a controller can say it, and the one yours uses is worked
+  out too.
+- **Button**: a control that sends on and off, or a pad that sends notes.
+  A press switches what it is mapped to, and letting go does nothing. If your
+  controller latches its own buttons (one press sends on, the next sends
+  off), set the mapping to **On while it says on**.
+
+If it guesses wrong, change it in the panel's list.
+
+**Pick up.** A slider standing at 20% does not drag a filter standing at 80%
+to 20% the moment you touch it. Nothing happens until the slider reaches the
+value on screen or passes it, and then it takes hold. If the value is
+changed some other way (the mouse, undo), the slider has to pick it up
+again. The monitor says when it is waiting. Untick **Pick up** to have every
+move jump straight there.
+
+**What a mapping reaches.**
+
+- A rack knob moves that knob **on whichever track is selected**. Select
+  another track and the same controller knob turns the same module's knob
+  there, if that rack has it. A Trigger's button can be mapped too.
+- A fader, pan, EQ, send, M or S belongs to a track **by its place in the
+  list**: the first track, the second, and so on, as on a hardware desk.
+  Reorder the tracks and the fader follows the place, not the track.
+- The master, the Space and Delay returns, and Play, Loop and ● Rec. Rec is
+  on the roll, so a button mapped to it waits while the Song view is
+  showing.
+
+**Mappings belong to this computer, not the project.** They are about the
+controller on your desk, so they work in every project you open.
+**Export…** saves them to a file and **Import…** loads one, for another
+browser or as a backup. A mapping can listen to **This input** only or to
+**Any input**. The same controller can have a different name over USB and
+over Bluetooth, and Any input covers both. A mapping is one control to one
+thing: learning a control again moves it, and learning a different control
+onto the same thing replaces the old one.
+
+**While a controller is connected,** each control mapped to it wears a small
+badge saying which of the controller's it answers to: **CC21**, **N36**, or
+**F1** for a fader on channel 1. In DAW mode, the tracks under the
+controller's eight strips are marked down the left of the track list.
+
+**The monitor** at the bottom of the panel shows every message arriving,
+newest first: which control (a CC number or a note, and its channel), its
+value, and what it did. Use it to find out what an unfamiliar controller
+sends. Notes that no mapping takes still play the selected track, as a
+keyboard's keys always have.
+
+On Windows, Chrome sees USB controllers directly. A Bluetooth MIDI controller
+may need a bridge program that presents it as an ordinary MIDI input, or the
+maker's own driver.
+
+**DAW mode (Mackie Control).** Many mixer-style controllers have a "DAW
+mode" that their manuals pair with a DAW's "Mackie Control" setting. In that
+mode the controller speaks a fixed protocol, Mackie Control Universal, in
+which every fader, knob and button already has a meaning. Put the controller
+in that mode, then tick **DAW mode (Mackie Control)** beside it in the MIDI
+controllers panel. Nothing needs learning:
+
+- **The eight strips are tracks 1–8.** **«** and **»** move them along eight
+  tracks at a time, and the panel says which tracks the strips are.
+- **A fader** is the track's level. It picks up the level before moving it,
+  as a learnt slider does. Fresyn tells the controller where every track's
+  level is, so on a controller without motorised faders the LED that flashes
+  when a fader doesn't match its track means what it says.
+- **A knob** is the track's pan. Pressing it, on controllers whose knobs
+  press, centres it.
+- **M** and **S** mute and solo the track, and light up to match.
+- **Select** (□) puts the track on the bench, so the rack and the roll are
+  its. Its button is lit on the selected track.
+- **R** selects the track and arms **● Rec**: one press to start recording
+  onto it.
+- **Play**, **Stop** and **Record** are the transport's, lit to match.
+  **Rewind** and **Fast forward** go back or on a bar while the song plays.
+  **△ ▽** step through the tracks, and **◁ ▷** through the patterns in the
+  roll.
+
+Anything you learn yourself comes first, so you can give any one of its
+controls a different job and leave the rest as they are. The monitor shows
+what each message did, such as "DAW mode · Mute, track 3". Which controllers
+are in DAW mode belongs to this computer, like the mappings.
+
+A controller with a **user mode** as well sends whatever its own
+configuration program tells it to. Use **MIDI learn** for that mode, without
+DAW mode ticked. Faders that send pitch bend, as Mackie-style faders do, can
+be learnt too, at their full resolution.
+
 ### Bouncing it out
 
 **Project → Bounce song...** renders the arrangement to a file, faster than
@@ -2371,6 +2769,33 @@ either, and a marker for each section. Each note is written as the note you hear
 MIDI note 60 whatever the patch is tuned to. What goes in is what plays:
 clips repeat and cut notes off, swing is applied, and muted tracks are left
 out.
+
+**Project → Import MIDI...** brings a Standard MIDI File in. A sheet lists
+its parts (each MIDI track's notes on each channel it uses) and offers two
+ways in:
+
+- **Open as new project**: a project of its own, named for the file, at the
+  file's tempo and time signature and every change of either. Its markers
+  become sections.
+- **Add at bar N**: the file's tracks are added to this song, starting at the
+  bar the playhead is in. The song keeps its own tempo and meter, and the
+  notes keep their places in the beat.
+
+Either way, each part becomes a track with a pattern of its own, on its own
+lane of the playlist, so it can be moved, muted or edited by itself. A part
+gets the library voice nearest its General MIDI program: an electric piano,
+a finger bass, a string section. Channel 10 gets the whole **Drum Kit**, its
+notes landing on the matching pads. The library has no acoustic piano, so a
+grand piano becomes the synth piano. Choose a better sound from the library
+afterwards; the notes stay where they are.
+
+Volume (CC7, with CC11 expression folded in) and pan (CC10) come in too.
+Where a part sets them once at the start, that's where its fader and pan
+start. Where they change, the changes become automation lanes on the track's
+strip, as steps, just as the file holds them. Pitch bend and the mod wheel
+are not brought in yet. Notes are placed by the note you hear, so the file's
+middle C plays C4 on every track, whatever the patch is tuned to. The import
+is one step of undo.
 
 **It is the same arithmetic that plays it.** The bounce runs the same
 scheduler the transport does, and notes land on exactly the samples they
@@ -2446,6 +2871,14 @@ setting it every frame does not click. It returns `false` for a track or knob
 that is not there. `getParam` reads one back, and `paramsOf('Lead')` lists
 every knob a track has.
 
+**The game wins over the song's automation.** A knob the song automates is
+the game's from the moment `setParam` touches it: the automation stands
+aside, and its curve carries on underneath. `releaseParam('Lead',
+'lpf1.cutoff')` hands it back, and the automation picks it up wherever its
+curve has got to. A game's `setTrackPan` wins over an automated pan the same
+way. `setTrackGain` multiplies whatever the fader is doing, automated or not,
+which is what a layer coming in wants.
+
 **Swinging from the game** is `setSwing`. Name a pattern, by id or by name,
 or leave it out to swing every pattern at once:
 
@@ -2485,6 +2918,59 @@ before the first has happened replaces it.
 Amount is "intensity" — the filter, the drive, the extra layer and the tempo
 of a wobble all on its lanes — and the game needs to know one name and one
 number, however the patch changes afterwards.
+
+**Playing notes from the game** is how sound effects are done: a project of
+tracks with nothing placed in the playlist, one track per sound, each played
+when something happens. `noteOn` takes a pitch in semitones up from the
+track's bottom key — the roll's rows — and a velocity from 0 to 1:
+
+```js
+sfx.noteOn('Brick', 7, 0.9, { length: 0.2 })   // a note, let go of after 0.2 s
+sfx.trigger('Wall', 0.6)                        // a hit: a Trigger, or a pitch's bottom key
+sfx.noteOn('Hum', 0, 1)                         // no length: held...
+sfx.noteOff('Hum')                              // ...until let go of
+```
+
+A note can land on the music: `frameOf('16th')` — or `'32nd'`, `'8th'`,
+`'beat'`, `'bar'` — is the frame of the next line of the song's grid, to pass
+as `{ at }`. A note the game is holding is kept through a section change or
+a change of tempo, so it is always let go of when asked.
+
+**Mixing from the game**: `setTrackGain(track, gain)` multiplies a track's
+fader, which is how layers come in as a level clears; `setTrackPan` and
+`setTrackMute` do what they say. All three glide, so calling them every frame
+is fine. `setTempoScale(0.8)` plays every tempo in the song a fifth slower
+from the next block, with notes kept in their places in the bar.
+
+**Reading the music back**: `clock` is the bar, the beat, how far into the
+beat and the tempo being heard; `key` is the key set in the roll, as a tonic
+and the scale's steps, for tuning sound effects to the music; `levels()` is
+each track's peak since the last call, by name, for a picture that moves with
+the kick.
+
+**In a browser**, a game does not run `SongPlayer` itself but the runtime
+built by `npm run build:runtime`: the engine in an AudioWorklet, and a client
+that speaks to it. Each project is a player of its own, and they play
+together:
+
+```js
+import { FresynRuntime } from './fresyn-runtime.js'
+
+const rt = await FresynRuntime.create(new AudioContext(), 'fresyn-processor.js')
+const music = await rt.load('music', await (await fetch('world1.fproject.json')).text())
+const sfx = await rt.load('sfx', await (await fetch('sfx.fproject.json')).text(), { loop: null })
+sfx.start()
+music.start({ section: 'Intro', loop: false })
+music.playSection('Loop', { when: 'section' })
+sfx.noteOn('Laser', 7, 1, { length: 0.1, when: '16th', sync: 'music' })   // on the music's grid
+music.setBus({ muffle: 0.8, glide: 0.2 })                                  // paused: as if through a wall
+```
+
+`player.clock()` carries the last report forward to the moment the sound
+reaches the speakers — the clock to judge "was that on the beat" by — and
+`player.clock('rendering')` is where the engine is, ahead of the speakers by
+the device's latency: a note played as that clock crosses a beat is heard on
+it.
 
 ### Utilities
 

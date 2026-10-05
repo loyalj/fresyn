@@ -30,6 +30,8 @@ import {
   type Track,
 } from '../song/types'
 import { MixView } from './MixView'
+import { PositionCounter } from './PositionCounter'
+import type { RollLanes } from './PianoRoll'
 import { TrackList } from './TrackList'
 import { dockHeightWithin, DOCK_MIN_H, useDockMax } from './useDockMax'
 
@@ -135,6 +137,8 @@ interface Props {
   onHeightDrag?: (height: number) => void
   /** Draw a swung pattern where its notes are heard, rather than on its written grid. */
   showSwing: boolean
+  /** The pattern's automation, for the roll: see `RollLanes`. */
+  lanes?: RollLanes
 }
 
 /** The pattern menu's last row, which makes one rather than picking one. */
@@ -187,6 +191,7 @@ export const SongDock = memo(function SongDock({
   onHeight,
   onHeightDrag,
   showSwing,
+  lanes,
 }: Props) {
   const [parts, setParts] = useState(dockParts)
   useEffect(() => {
@@ -197,6 +202,12 @@ export const SongDock = memo(function SongDock({
     }
   }, [])
   const [playing, setPlaying] = useState(transport.state.playing)
+  /**
+   * Where Play starts, when a position has been typed in, or null for where
+   * it always has: the section picked, the pattern's place in the song, or
+   * the top. Stop pressed while stopped, and Back to start, clear it.
+   */
+  const [cursor, setCursor] = useState<number | null>(null)
   // The grid you last wrote in, if it is still one this dock offers.
   /** Whether hidden tracks are listed, and given strips, after all. */
   const [showHidden, setShowHiddenState] = useState(() => loadPrefs().showHiddenTracks ?? false)
@@ -241,6 +252,15 @@ export const SongDock = memo(function SongDock({
   // draw behind it.
   const placedAt = firstPlacement(song, patternId)
   const inContext = view === 'roll' && rollPlays === 'song'
+  /** Where Play starts with no position typed in. */
+  const startTick =
+    inContext && placedAt !== null
+      ? placedAt
+      : view !== 'roll' && section !== null
+        ? section
+        : view !== 'roll' && song.loop && looping
+          ? song.loop.from
+          : 0
   // Its bars are the song's where it first sits: see `patternBars`. Kept, as
   // the roll redraws for new bars: a pattern placed after a change of meter
   // is handed a new object on every call.
@@ -385,12 +405,25 @@ export const SongDock = memo(function SongDock({
 
         <div className="dock-group" role="group" aria-label="Transport">
           <button
+            className="dock-transport dock-home"
+            onClick={() => {
+              setCursor(null)
+              if (transport.state.playing) {
+                transport.stop()
+                void transport.play(startTick)
+              }
+            }}
+            title="Back to the start"
+            aria-label="Back to the start"
+            type="button"
+          >
+            ⏮
+          </button>
+          <button
             className={`dock-play${playing ? ' on' : ''}`}
-            onClick={() =>
-              transport.toggle(
-                inContext && placedAt !== null ? placedAt : view !== 'roll' && section !== null ? section : 0,
-              )
-            }
+            data-midi-scope="transport"
+            data-midi-param="play"
+            onClick={() => transport.toggle(cursor ?? startTick)}
             title={
               playing
                 ? 'Stop'
@@ -404,9 +437,36 @@ export const SongDock = memo(function SongDock({
           >
             {playing ? '■' : '▶'}
           </button>
+          <button
+            className="dock-transport dock-stop"
+            onClick={() => {
+              // Stopped already, it goes back to the start, as on a tape machine.
+              if (transport.state.playing) transport.stop()
+              else setCursor(null)
+            }}
+            title={playing ? 'Stop' : 'Stop (again: back to the start)'}
+            aria-label="Stop"
+            type="button"
+          >
+            ■
+          </button>
+          <PositionCounter
+            transport={transport}
+            song={song}
+            cursor={cursor}
+            onPosition={(tick) => {
+              setCursor(tick)
+              if (transport.state.playing) {
+                transport.stop()
+                void transport.play(tick)
+              }
+            }}
+          />
 
           <button
             className={`dock-toggle${looping ? ' on' : ''}`}
+            data-midi-scope="transport"
+            data-midi-param="loop"
             onClick={() => onLooping(!looping)}
             title="Come round again at the end"
             type="button"
@@ -673,6 +733,7 @@ export const SongDock = memo(function SongDock({
                 }, take)
               }
               swing={showSwing ? pattern.swing : undefined}
+              lanes={lanes}
             />
           ) : (
             <parts.Playlist

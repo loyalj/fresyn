@@ -15,6 +15,7 @@ import {
 } from '../patch/param'
 import { ContextMenu, type MenuItem } from './Menu'
 import { useKnobHelp } from './KnobHelp'
+import { useAutomation } from './AutomationContext'
 
 const SIZE = 52
 const RADIUS = 20
@@ -98,7 +99,11 @@ interface Props {
  * One knob. Memoized, so the knobs beside one being turned are left alone:
  * the unit hands each one a handler that stays the same (see `Control`).
  */
-export const Knob = memo(function Knob({ spec, value, onChange, step, format }: Props) {
+export const Knob = memo(function Knob({ spec, value: own, onChange, step, format }: Props) {
+  // Where the song's automation has it while it plays, which is where it is
+  // drawn -- and where a hand taking hold of it starts from.
+  const automation = useAutomation(spec.id)
+  const value = automation.position !== null ? clampValue(spec, denormalize(spec, automation.position)) : own
   const svgRef = useRef<SVGSVGElement>(null)
   const drag = useRef<{ y: number; t: number } | null>(null)
   const t = normalize(spec, value)
@@ -349,6 +354,12 @@ export const Knob = memo(function Knob({ spec, value, onChange, step, format }: 
         shortcut: 'Double-click',
         onSelect: () => emit(spec.default),
       },
+      ...(automation.automate
+        ? [
+            { kind: 'separator' as const },
+            { kind: 'action' as const, label: 'Automate in this pattern', onSelect: automation.automate },
+          ]
+        : []),
     ]
   }
 
@@ -364,7 +375,10 @@ export const Knob = memo(function Knob({ spec, value, onChange, step, format }: 
 
   return (
     <div
-      className="knob"
+      className={`knob${automation.automated ? ' automated' : ''}${automation.position !== null ? ' following' : ''}`}
+      // What a controller's knob is mapped onto, with the unit or strip it
+      // sits in: see `targetAt`.
+      data-midi-param={spec.id}
       {...help}
       onContextMenu={(e) => {
         // A field being typed into keeps the browser's own menu, which is

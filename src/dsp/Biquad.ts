@@ -76,6 +76,14 @@ export function shelf(s: Section, sr: number, f: number, db: number, high: boole
   }
 }
 
+/** A plain low-pass: the game runtime's muffle, for a paused game or a scene heard through a wall. */
+export function lowpass(s: Section, sr: number, f: number, q: number) {
+  const w = (2 * Math.PI * Math.min(f, sr * 0.49)) / sr
+  const alpha = Math.sin(w) / (2 * q)
+  const cos = Math.cos(w)
+  s.set((1 - cos) / 2, 1 - cos, (1 - cos) / 2, 1 + alpha, -2 * cos, 1 - alpha)
+}
+
 export function bell(s: Section, sr: number, f: number, db: number, q: number) {
   const a = Math.pow(10, db / 40)
   const w = (2 * Math.PI * f) / sr

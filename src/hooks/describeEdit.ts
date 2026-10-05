@@ -2,7 +2,7 @@ import { defOf } from '../patch/defs'
 import { kitSlots } from '../patch/kit'
 import type { Patch, RackNote, PatchModule } from '../patch/types'
 import type { Rack } from '../song/project'
-import type { Note, Placement, Song, Track } from '../song/types'
+import type { AutomationLane, Note, Placement, Song, Track } from '../song/types'
 import type { Doc } from './useDocument'
 
 /**
@@ -255,7 +255,24 @@ function describePatterns(a: Song, b: Song): string | null {
   if (o.length !== p.length) return `Length · ${p.name}`
   if (o.swing !== p.swing) return `Swing · ${p.name}`
   if (o.color !== p.color) return `Colour · ${p.name}`
+  if (o.automation !== p.automation) return describeLanes(o.automation ?? [], p.automation ?? [])
   return `Edit ${p.name}`
+}
+
+/** An automation edit, named by what happened to which lane. */
+function describeLanes(a: readonly AutomationLane[], b: readonly AutomationLane[]): string {
+  const knob = (target: string) => target.slice(target.lastIndexOf('/') + 1)
+  if (b.length > a.length) return `Add lane · ${knob(b[b.length - 1].target)}`
+  if (b.length < a.length) {
+    const gone = a.find((l) => !b.some((x) => x.target === l.target))
+    return `Remove lane${gone ? ` · ${knob(gone.target)}` : ''}`
+  }
+  const changed = b.find((l, i) => a[i] !== l)
+  if (!changed) return 'Edit automation'
+  const before = a.find((l) => l.target === changed.target)?.points.length ?? 0
+  const d = changed.points.length - before
+  const what = d > 0 ? 'Add point' : d < 0 ? 'Delete point' : 'Move point'
+  return `${what} · ${knob(changed.target)}`
 }
 
 function describeNotes(a: Note[], b: Note[]): string {

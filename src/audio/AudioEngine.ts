@@ -4,6 +4,7 @@ import type { SampleRecord } from '../dsp/samples'
 import type { MixLevels, TrackEvent, TrackMix } from '../dsp/SongEngine'
 import type { Console } from '../song/types'
 import { compile, type CompiledPatch } from '../patch/compile'
+import { defOf } from '../patch/defs'
 import { initialValues } from '../patch/edit'
 import { flattenKits } from '../patch/kit'
 import type { Patch } from '../patch/types'
@@ -408,6 +409,39 @@ export class AudioEngine {
   /** Release every note being held, which is what stopping needs. */
   allNotesOff() {
     this.post({ type: 'allNotesOff' })
+  }
+
+  /** Take a knob (or a desk control, on `DESK`) from its automation, or give it back. */
+  hold(track: string, key: string, on: boolean) {
+    this.post({ type: 'hold', track, key, on })
+  }
+
+  /**
+   * Hear what a jack carries, in place of the rack: an output's own signal,
+   * or the cable into an input. `module` is as the engine knows it -- with a
+   * pad's prefix inside a Drum Kit. False when there is nothing there to
+   * hear: an input with no cable, or a jack the rack has not got.
+   */
+  listenAt(trackId: string, module: string, port: string, kind: 'input' | 'output'): boolean {
+    const track = this.tracks.get(trackId)
+    const m = track?.compiled.modules.find((x) => x.id === module)
+    if (!track || !m) return false
+    const def = defOf(m.type)
+    const index = (kind === 'input' ? def.inputs : def.outputs).findIndex((p) => p.id === port)
+    const slot = index < 0 ? 0 : (kind === 'input' ? m.ins : m.outs)[index] ?? 0
+    if (!slot) return false
+    this.post({ type: 'listen', track: trackId, slot })
+    return true
+  }
+
+  /** Back to hearing the racks. */
+  stopListening() {
+    this.post({ type: 'listen', track: '', slot: -1 })
+  }
+
+  /** Every automated knob back to its panel, and nothing held: what stopping needs. */
+  clearAutomation() {
+    this.post({ type: 'clearAutomation' })
   }
 
   setMix(mix: Record<string, TrackMix>) {

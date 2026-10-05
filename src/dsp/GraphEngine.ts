@@ -1,6 +1,7 @@
 import type { CompiledPad, CompiledPatch } from '../patch/compile'
 import { MODULE_FACTORIES, type DspModule } from './modules'
 import { BLOCK, type Capturing, type Metering, type Playable } from './modules/types'
+import { curveAt, mapValue, type Curve, type ValueMap } from './automation'
 import { DEFAULT_SEED } from './Rng'
 import { emptyBank, type SampleBank } from './samples'
 
@@ -18,6 +19,12 @@ export type EngineEvent =
   | { frame: number; kind: 'noteOff'; module: string; pitch?: number }
   | { frame: number; kind: 'gate'; module: string; open: boolean }
   | { frame: number; kind: 'param'; index: number; value: number }
+  // A knob following a curve from here on, or let go of. By key rather than
+  // index, because a patch edited while it plays is laid out afresh.
+  | { frame: number; kind: 'auto'; key: string; curve: AutoCurve | null }
+
+/** A curve in engine frames, and how its positions become the knob's values. */
+export type AutoCurve = Curve & { map: ValueMap }
 
 /** The most notes a rack sounds at once; the top of the Voices knob. */
 export const MAX_VOICES = 8
@@ -64,7 +71,17 @@ const QUIET_FOR = 0.25
  * heard: a song rendered 37 samples at a time is the same song, to the bit.
  */
 export class GraphEngine {
+  /** What every module reads: the knobs, with any automation laid over them. */
   private paramValues: Float32Array
+  /** The knobs as their panels have them, which automation returns to when it lets go. */
+  private baseValues = new Float32Array(0)
+  private paramIndex: Record<string, number> = {}
+  /** 1 where a knob is following automation right now: not let go of, and not held. */
+  private driven = new Uint8Array(0)
+  /** Each automated knob's curve, by key. See `automate`. */
+  private autos = new Map<string, { curve: AutoCurve; index: number }>()
+  /** Knobs a hand or a game has taken from the automation. See `hold`. */
+  private heldKnobs = new Set<string>()
   private modules: DspModule[] = []
   /** Each module's id, in the same order. */
   private ids: string[] = []
@@ -242,6 +259,13 @@ export class GraphEngine {
   private offAt = new Float64Array(MAX_VOICES)
   private silent = new Int32Array(MAX_VOICES)
   /**
+   * The modules in a voice that can hold sound for later -- a delay between
+   * echoes, a granulator reading behind what it recorded -- which a released
+   * voice gone quiet waits on before it sleeps, for as long as they say they
+   * reach as they are set now (see `DspModule.holdsFor`). Usually none.
+   */
+  private voiceHolders: number[] = []
+  /**
    * Where in the block each voice started running -- 0, or the sample a hand
    * on the Gate jack woke it -- and the last sample in the block it was
    * audible at, or -1: what `settleVoices` judges it by.
@@ -276,6 +300,8 @@ export class GraphEngine {
   /** A hand is holding it: its Trigger's own gate, open from the panel or a render. */
   private padGate = new Uint8Array(0)
   private padSilent = new Int32Array(0)
+  /** Per pad, as `voiceHolders` is for a voice. */
+  private padHolders: number[][] = []
   /**
    * Where in the block each pad is running from: 0 when it was already
    * awake, the sample after the one its Trig jack went high on, or `BLOCK`
@@ -374,6 +400,19 @@ export class GraphEngine {
       const n = Math.min(params.length, this.paramValues.length)
       for (let i = 0; i < n; i++) this.paramValues[i] = params[i]
     }
+    // The knobs as their panels have them, and the automation laid back over
+    // the new layout: a module may have moved, or gone.
+    this.baseValues = this.paramValues.slice()
+    this.paramIndex = compiled.paramIndex
+    this.probe = -1
+    this.driven = new Uint8Array(this.paramValues.length)
+    for (const [key, auto] of this.autos) {
+      auto.index = compiled.paramIndex[key] ?? -1
+      if (auto.index >= 0 && !this.heldKnobs.has(key)) {
+        this.driven[auto.index] = 1
+        this.paramValues[auto.index] = mapValue(auto.curve.map, curveAt(auto.curve, this.frame))
+      }
+    }
 
     this.monL = Int32Array.from(compiled.monitors, (m) => m.l)
     this.monR = Int32Array.from(compiled.monitors, (m) => m.r)
@@ -447,6 +486,8 @@ export class GraphEngine {
     const inSlots = this.layOut(compiled.slotCount)
     this.applyPads(compiled.pads ?? [], padOf)
     this.applyVoices(compiled, inSlots)
+    this.voiceHolders = []
+    for (let i = 0; i < this.modules.length; i++) if (this.polyFlag[i] && this.modules[i].memory > 0) this.voiceHolders.push(i)
     for (let i = 0; i < this.modules.length; i++) {
       if (!this.polyFlag[i]) this.bind(this.modules[i], inSlots[i], this.views)
     }
@@ -552,6 +593,11 @@ export class GraphEngine {
     this.padHeld = new Uint8Array(pads.length)
     this.padGate = new Uint8Array(pads.length)
     this.padSilent = new Int32Array(pads.length)
+    this.padHolders = pads.map(() => [])
+    for (let m = 0; m < this.modules.length; m++) {
+      const k = this.padOf[m] - 1
+      if (k >= 0 && this.modules[m].memory > 0) this.padHolders[k].push(m)
+    }
     this.padFrom = new Int32Array(pads.length)
     this.padSpan = new Int32Array(pads.length).fill(-1)
     this.padTrigFirst = new Uint8Array(pads.length)
@@ -654,7 +700,7 @@ export class GraphEngine {
         }
         continue
       }
-      if (this.padSilent[k] >= this.silentFrames) {
+      if (this.padSilent[k] >= this.silentFrames && this.padSilent[k] >= this.quietFor(this.padHolders[k])) {
         this.padAwake[k] = 0
         // What it said last is what the kit will hear while it sleeps.
         if (pad.retL) this.views[pad.retL][to - 1] = 0
@@ -662,6 +708,21 @@ export class GraphEngine {
       }
     }
   }
+
+  /**
+   * Listen at one point in the rack instead of the speakers: a slot, as a
+   * jack's cable carries it, or -1 for the rack's own output again. What is
+   * heard there is made safe for ears -- a CV or a gate is no sound, and a
+   * pitch CV is a steady offset -- by taking out its DC and leaning it into a
+   * soft limit. Dropped on a rebuild, where slots are laid out afresh.
+   */
+  listenAt(slot: number) {
+    this.probe = slot > 0 && slot < this.views.length ? slot : -1
+    this.probeDc = 0
+  }
+  private probe = -1
+  /** The probe's running average, which a one-pole high-pass takes away. */
+  private probeDc = 0
 
   /**
    * Listen at the speakers or at the recorder. Survives a rebuild, so an
@@ -686,7 +747,73 @@ export class GraphEngine {
   }
 
   setParam(index: number, value: number) {
-    if (index >= 0 && index < this.paramValues.length) this.paramValues[index] = value
+    if (!(index >= 0 && index < this.paramValues.length)) return
+    this.baseValues[index] = value
+    // Automation has the knob until it lets go; the panel's value is kept for then.
+    if (!this.driven[index]) this.paramValues[index] = value
+  }
+
+  // --- automation ---------------------------------------------------------
+
+  /**
+   * A knob following a curve from now on, or, with none, back to where its
+   * panel has it. Worked out once a stretch -- at most a block, 128 samples --
+   * and the modules' own smoothing takes it from there, so a sweep is as
+   * smooth as a hand on the knob.
+   */
+  automate(key: string, curve: AutoCurve | null) {
+    const index = this.paramIndex[key] ?? -1
+    if (!curve) {
+      if (!this.autos.delete(key) || index < 0) return
+      this.driven[index] = 0
+      this.paramValues[index] = this.baseValues[index]
+      return
+    }
+    this.autos.set(key, { curve, index })
+    if (index < 0 || this.heldKnobs.has(key)) return
+    this.driven[index] = 1
+    this.paramValues[index] = mapValue(curve.map, curveAt(curve, this.frame))
+  }
+
+  /**
+   * Take a knob from its automation, or give it back. A hand on the knob, or
+   * a game setting it, wins over the song: held, the knob is wherever it is
+   * set, and the curve carries on underneath to be picked up again once it
+   * is let go.
+   */
+  holdKnob(key: string, on: boolean) {
+    const auto = this.autos.get(key)
+    if (on) {
+      this.heldKnobs.add(key)
+      if (auto && auto.index >= 0) {
+        this.driven[auto.index] = 0
+        this.paramValues[auto.index] = this.baseValues[auto.index]
+      }
+      return
+    }
+    if (!this.heldKnobs.delete(key) || !auto || auto.index < 0) return
+    this.driven[auto.index] = 1
+    this.paramValues[auto.index] = mapValue(auto.curve.map, curveAt(auto.curve, this.frame))
+  }
+
+  /** Every knob back to its panel, and nothing held: what stopping the song does. */
+  clearAutomation() {
+    for (const auto of this.autos.values()) {
+      if (auto.index < 0) continue
+      this.driven[auto.index] = 0
+      this.paramValues[auto.index] = this.baseValues[auto.index]
+    }
+    this.autos.clear()
+    this.heldKnobs.clear()
+  }
+
+  /** Every followed knob moved to where its curve is now. */
+  private stepAutomation() {
+    for (const auto of this.autos.values()) {
+      if (auto.index >= 0 && this.driven[auto.index]) {
+        this.paramValues[auto.index] = mapValue(auto.curve.map, curveAt(auto.curve, this.frame))
+      }
+    }
   }
 
   /**
@@ -1016,6 +1143,20 @@ export class GraphEngine {
     this.activeList.push(v)
   }
 
+  /**
+   * How long something released has to have been silent to be finished:
+   * `SILENT_FOR`, and as long again as the furthest any of these modules can
+   * hold sound for, as they are set now. Asked only once the first is past.
+   */
+  private quietFor(holders: number[]) {
+    let reach = 0
+    for (let i = 0; i < holders.length; i++) {
+      const r = this.modules[holders[i]].holdsFor()
+      if (r > reach) reach = r
+    }
+    return this.silentFrames + Math.round(reach * this.ctx.sampleRate)
+  }
+
   /** Voice `v`'s silence counted afresh from sample `at`. */
   private quiet(v: number, at: number) {
     this.silent[v] = 0
@@ -1255,7 +1396,7 @@ export class GraphEngine {
       if (loudAt >= 0) this.silent[v] = to - 1 - loudAt
       else if (quietFrom >= 0) this.silent[v] = to - quietFrom
       else this.silent[v] += to - start
-      if (this.silent[v] >= this.silentFrames) this.active[v] = 0
+      if (this.silent[v] >= this.silentFrames && this.silent[v] >= this.quietFor(this.voiceHolders)) this.active[v] = 0
       else list[kept++] = v
     }
     list.length = kept
@@ -1286,6 +1427,9 @@ export class GraphEngine {
         break
       case 'param':
         this.setParam(event.index, event.value)
+        break
+      case 'auto':
+        this.automate(event.key, event.curve)
         break
     }
   }
@@ -1318,6 +1462,7 @@ export class GraphEngine {
         queue.splice(0, this.queueHead)
         this.queueHead = 0
       }
+      if (this.autos.size) this.stepAutomation()
 
       // To the next event, the end of the buffer or the end of the block on
       // the grid, whichever is soonest.
@@ -1341,6 +1486,20 @@ export class GraphEngine {
       }
       this.renderSpan(index, index + span, settle)
 
+      if (this.probe >= 0) {
+        const src = this.views[this.probe]
+        let dc = this.probeDc
+        for (let i = 0; i < span; i++) {
+          const x = src[index + i]
+          dc += (x - dc) * 0.0015
+          const y = Math.tanh((x - dc) * 0.8)
+          left[at + i] = y
+          right[at + i] = y
+        }
+        this.probeDc = dc
+        at += span
+        continue
+      }
       const outL = this.views[this.outL]
       const outR = this.views[this.outR]
       for (let i = 0; i < span; i++) {

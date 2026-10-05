@@ -1,17 +1,20 @@
 import type { Routing } from '../dsp/Console'
 import type { SampleBank } from '../dsp/samples'
-import { SongEngine } from '../dsp/SongEngine'
+import { DESK, SongEngine, type TrackEvent, type TrackMix } from '../dsp/SongEngine'
 import { compile } from '../patch/compile'
 import { defOf } from '../patch/defs'
 import { clampValue, type ParamSpec } from '../patch/param'
-import { engineEventsByTrack, noteTarget, type NoteTarget } from './bind'
+import { automationBindings, stripTarget, type AutomationBinding } from './automation'
+import { engineEventsByTrack, noteTarget, windowEvents, type NoteTarget } from './bind'
 import { consoleOf, setPatternSwing, trackMix } from './edit'
 import { fromStoredProject, type LoadedProject, type Rack } from './project'
 import { fill, type Cursor, type Loop, type Seam } from './transport'
-import { releasedBySwing, songEnd } from './schedule'
+import { releasedBySwing, songEnd, type SongEvent } from './schedule'
+import type { NoteTiming, SectionInfo, SectionTiming, SongClock, SongKey } from './game'
+import { SCALES } from './scale'
 import { sectionEnd, sectionOver, sectionsOf } from './section'
-import { barsOf, tempoMap } from './timeline'
-import { SWING_MIN, SWING_STEPS, type Song } from './types'
+import { barsOf, tempoAt, tempoMap } from './timeline'
+import { PPQ, SWING_MIN, SWING_STEPS, type Song, type TempoChange } from './types'
 
 /**
  * Playing a song with no browser anywhere.
@@ -65,25 +68,40 @@ export interface SongPlayerOptions {
 
 const DEFAULT_LOOKAHEAD_S = 0.25
 
-/**
- * When a change of section happens: straight away, or on the next beat, bar
- * line, or end of the section playing now. Music that changes on the beat
- * sounds written; music that changes mid-note sounds like a bug.
- */
-export type SectionTiming = 'now' | 'beat' | 'bar' | 'section'
+export type { NoteTiming, SectionInfo, SectionTiming, SongClock, SongKey } from './game'
 
-export interface SectionInfo {
-  name: string
-  /** Where it starts and stops, in ticks. */
-  from: number
-  to: number
+export interface NoteOptions {
+  /**
+   * The frame to play it on, on this player's clock -- what `frameOf` hands
+   * back. Left out, it is the next block. A frame already rendered is the
+   * next block too: a note cannot be played in the past.
+   */
+  at?: number
+  /**
+   * How long to hold it, in seconds. Left out, a pitched note is held until
+   * `noteOff`, which is what a held sound -- a hum, a charge -- wants. A
+   * trigger is let go of on its own.
+   */
+  length?: number
 }
+
+/** How long a trigger's gate stays open when nothing says otherwise: long enough for any Trigger to see. */
+const TRIGGER_SECONDS = 0.02
 
 /** A change of course waiting for its frame: go to `to`, and loop `loop` from there. */
 interface Jump {
   frame: number
+  /** The tick it happens at, on the timeline being heard, for when the tempo moves under it. */
+  at: number
   to: number
   loop: Loop | null
+}
+
+/** What the game has done to a track's channel, on top of what the song says. */
+interface TrackOverride {
+  gain: number
+  pan?: number
+  mute: boolean
 }
 
 /** One knob a game can turn: where it lives in its track's engine, and its range. */
@@ -96,6 +114,14 @@ interface Reachable {
 export class SongPlayer {
   private engine: SongEngine
   private targets = new Map<string, NoteTarget>()
+  /** Where each automation lane's knob is, in its track's engine or on the desk. */
+  private bindings: Map<string, AutomationBinding>
+  /**
+   * Nothing is queued for the automation: the next fill says where every
+   * automated knob stands, not only what changes. True to begin with and
+   * after anything that drops what was queued.
+   */
+  private fresh = true
   /** Every knob in every track, by track id and then by `module.param`. */
   private knobs = new Map<string, Map<string, Reachable>>()
   /** A track's name, for a game that would rather not know its id. */
@@ -115,6 +141,20 @@ export class SongPlayer {
    */
   private seams: (Cursor & { before?: number })[] = [{ tick: 0, frame: 0 }]
   private jump: Jump | null = null
+  /**
+   * Notes the game has played that are still ahead of the speakers. A
+   * change of course drops everything queued past its moment, which would
+   * take a game's note-off with it and leave a sound held for good, so these
+   * are handed back to the engine after every rewind.
+   */
+  private played: TrackEvent[] = []
+  /** The song's own mix, and what the game has done to it. */
+  private songMix: Record<string, TrackMix>
+  private overrides = new Map<string, TrackOverride>()
+  /** The song's tempos as written, which `setTempoScale` multiplies. */
+  private readonly baseTempo: number
+  private readonly baseTempos: TempoChange[] | undefined
+  private scale = 1
 
   constructor(
     private song: Song,
@@ -154,6 +194,10 @@ export class SongPlayer {
       if (target) this.targets.set(track.id, target)
     }
 
+    this.songMix = mix
+    this.bindings = automationBindings(song, racks)
+    this.baseTempo = song.tempo
+    this.baseTempos = song.tempos
     this.engine = new SongEngine(options.sampleRate, tracks, options.seed, options.samples)
     this.engine.setMix(mix)
     this.engine.setConsole(consoleOf(song))
@@ -198,37 +242,65 @@ export class SongPlayer {
    * rendered, and a module's own smoothing glides it there, so calling this
    * once a frame is fine and does not click.
    *
+   * A knob the song automates is the game's from then on: the automation
+   * stands aside until `releaseParam` hands it back.
+   *
    * Returns false, and changes nothing, for a track or knob that is not in
    * the song -- a renamed module is a quiet failure otherwise.
    */
   setParam(track: string, knob: string, value: number): boolean {
-    const id = this.knobs.has(track) ? track : this.trackByName.get(track)
+    const id = this.trackId(track)
     const reachable = id !== undefined ? this.knobs.get(id)?.get(knob) : undefined
     if (id === undefined || !reachable || !Number.isFinite(value)) return false
     reachable.value = clampValue(reachable.spec, value)
     this.engine.setParam(id, reachable.index, reachable.value)
+    this.engine.hold(id, knob, true)
+    return true
+  }
+
+  /**
+   * Hand a knob the game has set back to the song's automation, which picks
+   * it up wherever its curve has got to. A knob nothing automates stays
+   * where the game left it. False for one that is not in the song.
+   */
+  releaseParam(track: string, knob: string): boolean {
+    const id = this.trackId(track)
+    if (id === undefined || !this.knobs.get(id)?.has(knob)) return false
+    this.engine.hold(id, knob, false)
     return true
   }
 
   /** Where a knob stands now, or undefined for one that is not in the song. */
   getParam(track: string, knob: string): number | undefined {
-    const id = this.knobs.has(track) ? track : this.trackByName.get(track)
+    const id = this.trackId(track)
     return id !== undefined ? this.knobs.get(id)?.get(knob)?.value : undefined
   }
 
   /** Every knob `setParam` can reach on a track, as `module.param`. */
   paramsOf(track: string): string[] {
-    const id = this.knobs.has(track) ? track : this.trackByName.get(track)
+    const id = this.trackId(track)
     return id !== undefined ? [...(this.knobs.get(id)?.keys() ?? [])] : []
+  }
+
+  /** A track's id, from its id or its name; undefined for one the song does not have. */
+  private trackId(track: string): string | undefined {
+    return this.knobs.has(track) ? track : this.trackByName.get(track)
+  }
+
+  /** Every track, by name, in the song's order. */
+  get trackNames(): string[] {
+    return this.song.tracks.map((t) => t.name)
   }
 
   /** Start again from a tick. Anything already queued is dropped. */
   seek(tick: number) {
     this.engine.seek(0)
     this.engine.allNotesOff()
+    this.fresh = true
     this.cursor = { tick, frame: 0 }
     this.seams = [{ tick, frame: 0 }]
     this.jump = null
+    this.played = []
     this.done = false
   }
 
@@ -346,16 +418,19 @@ export class SongPlayer {
     const frame = seam.frame + this.time.span(seam.tick, at)
     // Already scheduled past it: take back everything from that moment on.
     if (frame < this.cursor.frame) this.rewindTo(frame, at)
-    this.jump = { frame, to, loop }
+    this.jump = { frame, at, to, loop }
     this.done = false
   }
 
   /** Drop what was queued from a frame on, and schedule again from there at `tick`. */
   private rewindTo(frame: number, tick: number) {
-    this.engine.dropFrom(Math.round(frame))
+    const from = Math.round(frame)
+    this.engine.dropFrom(from)
+    this.engine.scheduleMany(this.played.filter((e) => e.frame >= from))
     this.seams = this.seams.filter((s) => s.frame < frame)
     this.cursor = { tick, frame }
     this.done = false
+    this.fresh = true
   }
 
   /** Take the waiting jump: let go of everything, and carry on from its tick. */
@@ -372,6 +447,8 @@ export class SongPlayer {
     this.loop = jump.loop
     this.jump = null
     this.done = false
+    // Wherever the section's automation has its knobs, from its first sample.
+    this.fresh = true
   }
 
   /**
@@ -413,6 +490,192 @@ export class SongPlayer {
     return p ? (p.swing?.amount ?? SWING_MIN) : undefined
   }
 
+  // --- playing from the game -------------------------------------------
+
+  /**
+   * The frame, on this player's clock, of the next line of the song's grid:
+   * what to hand `noteOn` as `at` for a note that should land on the music.
+   * Measured from what is being heard, like `playSection`, and on the song's
+   * own tempo -- a player with nothing placed in it still keeps time. `'now'`
+   * is the next block.
+   */
+  frameOf(when: NoteTiming): number {
+    const now = this.engine.currentFrame
+    if (when === 'now') return now
+    const from = this.heardTick(now) - 1e-6
+    const bars = barsOf(this.song)
+    let at: number
+    if (when === 'bar') at = bars.snapBar(from, 'ceil')
+    else {
+      const step = when === 'beat' ? bars.at(from).beat : when === '8th' ? PPQ / 2 : when === '16th' ? PPQ / 4 : PPQ / 8
+      at = bars.snapIn(from, step, 'ceil')
+    }
+    let seam = this.seams[0]
+    for (const s of this.seams) if (s.frame <= now) seam = s
+    return Math.max(now, Math.round(seam.frame + this.time.span(seam.tick, at)))
+  }
+
+  /**
+   * Play a note on a track from the game: a brick, a laser, a hum held for
+   * as long as something lasts. `pitch` is in semitones up from the track's
+   * bottom key, as the roll counts, and a track with no Keyboard ignores it.
+   * `velocity` is 0..1.
+   *
+   * Returns false, and plays nothing, for a track with nothing in it a note
+   * can be played on.
+   */
+  noteOn(track: string, pitch: number, velocity = 1, options: NoteOptions = {}): boolean {
+    const id = this.trackId(track)
+    const target = id !== undefined ? this.targets.get(id) : undefined
+    if (id === undefined || !target || !Number.isFinite(pitch)) return false
+    const frame = this.playFrame(options.at)
+    const v = Number.isFinite(velocity) ? Math.min(1, Math.max(0, velocity)) : 1
+    const events: SongEvent[] = [{ frame, track: id, kind: 'on', pitch, velocity: v }]
+    const length = options.length ?? (target.kind === 'note' ? undefined : TRIGGER_SECONDS)
+    if (length !== undefined && Number.isFinite(length)) {
+      const off = frame + Math.max(1, Math.round(length * this.options.sampleRate))
+      events.push({ frame: off, track: id, kind: 'off', pitch, velocity: 0 })
+    }
+    this.play(events)
+    return true
+  }
+
+  /** Fire a track that is a hit: a Trigger, or a pitched track at its bottom key. */
+  trigger(track: string, velocity = 1, options: NoteOptions = {}): boolean {
+    return this.noteOn(track, 0, velocity, { at: options.at, length: options.length ?? TRIGGER_SECONDS })
+  }
+
+  /** Let go of a note the game is holding, or of every note on the track when no pitch is given. */
+  noteOff(track: string, pitch?: number, options: Pick<NoteOptions, 'at'> = {}): boolean {
+    const id = this.trackId(track)
+    if (id === undefined || !this.targets.has(id)) return false
+    const off: SongEvent = { frame: this.playFrame(options.at), track: id, kind: 'off', velocity: 0 }
+    if (pitch !== undefined && Number.isFinite(pitch)) off.pitch = pitch
+    this.play([off])
+    return true
+  }
+
+  private playFrame(at: number | undefined): number {
+    const now = this.engine.currentFrame
+    return at !== undefined && Number.isFinite(at) ? Math.max(now, Math.round(at)) : now
+  }
+
+  private play(events: SongEvent[]) {
+    const out = engineEventsByTrack(events, this.targets)
+    this.engine.scheduleMany(out)
+    for (const e of out) this.played.push(e)
+  }
+
+  /**
+   * A track's level from the game, multiplied into its fader: how a layer
+   * comes in as a level is cleared. It glides there in about 10 ms, so a
+   * fade is this called once a frame. Returns false for a track not in the
+   * song.
+   */
+  setTrackGain(track: string, gain: number): boolean {
+    return this.override(track, (o) => {
+      if (Number.isFinite(gain)) o.gain = Math.min(4, Math.max(0, gain))
+    })
+  }
+
+  /**
+   * A track's pan from the game, -1 left to 1 right, in place of its strip's
+   * own -- and of any automation of it: the game's pan wins.
+   */
+  setTrackPan(track: string, pan: number): boolean {
+    const id = this.trackId(track)
+    if (id !== undefined && Number.isFinite(pan)) this.engine.hold(DESK, stripTarget(id, 'pan'), true)
+    return this.override(track, (o) => {
+      if (Number.isFinite(pan)) o.pan = Math.min(1, Math.max(-1, pan))
+    })
+  }
+
+  /** Take a track out of the mix, or put it back. It keeps running, so it comes back in time. */
+  setTrackMute(track: string, mute: boolean): boolean {
+    return this.override(track, (o) => {
+      o.mute = mute
+    })
+  }
+
+  private override(track: string, change: (o: TrackOverride) => void): boolean {
+    const id = this.trackId(track)
+    if (id === undefined) return false
+    const o = this.overrides.get(id) ?? { gain: 1, mute: false }
+    change(o)
+    this.overrides.set(id, o)
+    const mix: Record<string, TrackMix> = {}
+    for (const [tid, m] of Object.entries(this.songMix)) {
+      const over = this.overrides.get(tid)
+      mix[tid] = over
+        ? { ...m, gain: m.gain * over.gain, scale: (m.scale ?? 1) * over.gain, audible: m.audible && !over.mute, pan: over.pan ?? m.pan }
+        : m
+    }
+    this.engine.setMix(mix)
+    return true
+  }
+
+  /**
+   * Play the song faster or slower than it was written: 1 is as written,
+   * 0.75 a quarter slower. Every tempo in the song moves together, from the
+   * next block on; notes keep their places in the bar, and a section change
+   * that is waiting still lands on its bar line.
+   */
+  setTempoScale(scale: number) {
+    if (!Number.isFinite(scale)) return
+    scale = Math.min(4, Math.max(0.25, scale))
+    if (scale === this.scale) return
+    const now = this.engine.currentFrame
+    const heard = this.heardTick(now)
+    this.scale = scale
+    this.song = {
+      ...this.song,
+      tempo: this.baseTempo * scale,
+      tempos: this.baseTempos?.map((t) => ({ ...t, bpm: t.bpm * scale })),
+    }
+    // Everything queued past now was timed at the old tempo.
+    this.rewindTo(now, heard)
+    this.seams.push({ tick: heard, frame: now })
+    if (this.jump) this.jump.frame = now + this.time.span(heard, this.jump.at)
+  }
+
+  get tempoScale(): number {
+    return this.scale
+  }
+
+  /** Where the song is being heard: the bar, the beat, how far into the beat, and the tempo. */
+  get clock(): SongClock {
+    const tick = this.tick
+    const bar = barsOf(this.song).at(tick)
+    const beats = (tick - bar.tick) / bar.beat
+    return {
+      tick,
+      bar: bar.index,
+      beat: Math.floor(beats),
+      phase: beats - Math.floor(beats),
+      beatsPerBar: Math.max(1, Math.round(bar.length / bar.beat)),
+      bpm: tempoAt(this.song, tick),
+    }
+  }
+
+  /** The key set in the roll, or null for a song with none. What a game tunes its sounds to. */
+  get key(): SongKey | null {
+    const scale = this.song.scale
+    const steps = scale && SCALES.find((s) => s.id === scale.mode)?.steps
+    return scale && steps ? { root: scale.root, mode: scale.mode, steps: [...steps] } : null
+  }
+
+  /**
+   * Each track's peak since the last call, by name, and the master's: for a
+   * game to make the picture move with the music -- a kick that pumps the
+   * light, a bass that shakes the floor.
+   */
+  levels(): { tracks: Record<string, number>; master: number } {
+    const read = this.engine.mixLevels()
+    const tracks: Record<string, number> = {}
+    for (const t of this.song.tracks) tracks[t.name] = read.tracks[t.id] ?? 0
+    return { tracks, master: read.master }
+  }
+
   /**
    * Fill a buffer, queueing whatever the song says should happen in it first.
    *
@@ -428,10 +691,11 @@ export class SongPlayer {
       const jump = this.jump
       const stop = jump && jump.frame < until ? jump.frame : until
       if (this.cursor.frame < stop) {
-        const out = fill(this.song, this.options.sampleRate, this.cursor, stop, this.loop)
+        const out = fill(this.song, this.options.sampleRate, this.cursor, stop, this.loop, this.fresh)
+        this.fresh = false
         this.cursor = out.cursor
         this.seams.push(...out.seams.map((s: Seam) => ({ ...s })))
-        this.engine.scheduleMany(engineEventsByTrack(out.events, this.targets))
+        this.engine.scheduleMany(windowEvents(out, this.targets, this.bindings))
         if (out.ended) {
           if (!jump) {
             this.done = true
@@ -447,6 +711,7 @@ export class SongPlayer {
     this.engine.render(left, right)
     // Only the seam behind the speakers is still needed.
     const now = this.engine.currentFrame
+    if (this.played.length) this.played = this.played.filter((e) => e.frame >= now)
     let keep = 0
     while (keep + 1 < this.seams.length && this.seams[keep + 1].frame <= now) keep++
     if (keep > 0) this.seams = this.seams.slice(keep)

@@ -15,7 +15,8 @@
  *   - fall silent after the last note lets go, and let its voices sleep.
  *
  * Run with: npm run check:instruments
- * Set INSTRUMENT_WAVS to a folder to also write a short demo of each voice.
+ * Set INSTRUMENT_WAVS to a folder to also write a short demo of each voice,
+ * and SHELF to a shelf's id (`strings`, `drums`...) to check only that one.
  */
 // First, before the library, on purpose: the instruments once imported their
 // building blocks back out of the library that lists them, and a program that
@@ -31,10 +32,12 @@ import { encodeWav } from '../src/audio/wav'
 import { compile } from '../src/patch/compile'
 import { defOf } from '../src/patch/defs'
 import { CATEGORIES, LIBRARY, type Template } from '../src/patch/library'
+import { KITS } from '../src/patch/kits'
 import { midiNameCents, rowZero, tuningOf } from '../src/song/tuning'
 
 const SR = 48000
 const WAVS = process.env.INSTRUMENT_WAVS
+const SHELF = process.env.SHELF
 
 let failures = 0
 function check(name: string, ok: boolean, detail = '') {
@@ -59,6 +62,8 @@ interface Note {
   length: number
   pitch: number
   velocity?: number
+  /** On a Drum Kit, the note of the pad it plays. Absent, the kick on 36. */
+  drum?: number
 }
 
 function render(t: Template, notes: Note[], seconds: number, dry = false, over: Record<string, number> = {}) {
@@ -74,14 +79,14 @@ function render(t: Template, notes: Note[], seconds: number, dry = false, over: 
 
   const target = patch.modules.find((m) => defOf(m.type).playable) ?? patch.modules.find((m) => defOf(m.type).keyed)!
   const events: EngineEvent[] = []
-  // A Drum Kit is played the way the roll plays it: each note to a pad, here
-  // always the kick, whatever pitch the check asks for.
+  // A Drum Kit is played the way the roll plays it: each note to a pad, the
+  // kick unless the note names another.
   const kit = noteTarget(patch)?.kind === 'kit' ? noteTarget(patch)! : null
   for (const n of notes) {
     const on = Math.round(n.at * SR)
     const off = Math.round((n.at + n.length) * SR)
     if (kit) {
-      const row = kitRow(36)
+      const row = kitRow(n.drum ?? 36)
       events.push(
         ...engineEvents(
           [
@@ -219,11 +224,17 @@ console.log('\nthe shelf')
   check('and no shelf is empty', empty.length === 0, empty.join(', '))
   const ids = new Set(LIBRARY.map((t) => t.id))
   check('no two templates share an id', ids.size === LIBRARY.length)
+  const named = new Map<string, number>()
+  for (const t of LIBRARY) named.set(t.name, (named.get(t.name) ?? 0) + 1)
+  const twice = [...named].filter(([, n]) => n > 1).map(([name]) => name)
+  check('or a name', twice.length === 0, twice.join(', '))
+  const strays = KITS.filter((k) => LIBRARY.filter((t) => t.group === k.name).length !== k.pads.filter((p) => typeof p.sound === 'function').length).map((k) => k.name)
+  check("every kit's own drums are on the shelf on their own", strays.length === 0, strays.join(', '))
   const bare = instruments.filter((t) => !t.name || !t.description || !t.tip).map((t) => t.id)
   check('every instrument says what it is and what to do with it', bare.length === 0, bare.join(', '))
 }
 
-for (const cat of CATEGORIES.filter((c) => c.id !== 'tutorial')) {
+for (const cat of CATEGORIES.filter((c) => c.id !== 'tutorial' && (!SHELF || c.id === SHELF))) {
   console.log(`\n${cat.name.toLowerCase()}`)
   for (const t of instruments.filter((x) => x.category === cat.id)) {
     const problems: string[] = []
@@ -279,7 +290,8 @@ for (const cat of CATEGORIES.filter((c) => c.id !== 'tutorial')) {
       }
       facts.push(`${voices} voice${voices > 1 ? 's' : ''}`)
     } else {
-      const hit = render(t, [{ at: 0, length: 0.05, pitch: 0, velocity: 1 }], 1)
+      // A held sound -- a swell, a roll, a loop -- is played by holding it.
+      const hit = render(t, [{ at: 0, length: t.held ? 1 : 0.05, pitch: 0, velocity: 1 }], 1.5)
       const p = Math.max(peak(hit.left), peak(hit.right))
       facts.push(`hit ${p.toFixed(2)}`)
       if (p < 0.2) problems.push(`a hit peaks at only ${p.toFixed(2)}`)
@@ -324,7 +336,7 @@ for (const cat of CATEGORIES.filter((c) => c.id !== 'tutorial')) {
  * keeping it. These listen for the one thing each is for.
  */
 console.log('\nsound fx and ambience do what they say')
-{
+if (!SHELF || SHELF === 'sfx' || SHELF === 'ambience') {
   const byId = (id: string) => LIBRARY.find((t) => t.id === id)!
   const at = (s: number) => Math.round(s * SR)
   /** Zero crossings a second: rough, and plenty for "higher or lower". */
@@ -475,6 +487,64 @@ function demoFor(t: Template, pitched: boolean): { notes: Note[]; seconds: numbe
     end += 16 * beat
   }
   return { notes, seconds: end + 3 }
+}
+
+// --- the kits, pad by pad -----------------------------------------------
+/**
+ * The shelf above plays a kit's kick and nothing else, and each of a kit's
+ * drums on its own. What is left is the kit: every pad has to reach the kit
+ * on its own note, a closed hat has to cut the open one off, and what the
+ * kit adds after its pads -- a hall, a drive -- has to die away.
+ */
+console.log('\nthe kits, pad by pad')
+if (!SHELF || SHELF === 'drums') {
+  for (const def of KITS) {
+    const t = LIBRARY.find((x) => x.id === def.id)
+    if (!t) {
+      check(`${def.name} is on the shelf`, false)
+      continue
+    }
+    const problems: string[] = []
+    const notes = new Set(def.pads.map((p) => p.note))
+    if (def.pads.length !== 16) problems.push(`${def.pads.length} pads, not 16`)
+    if (notes.size !== def.pads.length) problems.push('two pads share a note')
+    if (new Set(def.pads.map((p) => p.name)).size !== def.pads.length) problems.push('two pads share a name')
+    for (const [note, want] of [[36, /kick|taiko|bass/i], [38, /snare|slap/i]] as const) {
+      const pad = def.pads.find((p) => p.note === note)
+      if (!pad || !want.test(pad.name)) problems.push(`note ${note} is not a ${note === 36 ? 'kick' : 'snare'}`)
+    }
+    const loud: number[] = []
+    for (const pad of def.pads) {
+      const length = pad.held ? 1 : 0.05
+      const hit = render(t, [{ at: 0, length, pitch: 0, velocity: 1, drum: pad.note }], 1.5)
+      const p = Math.max(peak(hit.left), peak(hit.right))
+      loud.push(p)
+      if (p < 0.08) problems.push(`${pad.name} peaks at only ${p.toFixed(2)}`)
+      if (p > 0.95) problems.push(`${pad.name} peaks at ${p.toFixed(2)}`)
+    }
+    // Every pad at once, and then nothing: the kit's own room or drive too.
+    const all = render(t, def.pads.map((pad) => ({ at: 0, length: pad.held ? 1 : 0.05, pitch: 0, drum: pad.note })), 14)
+    const after = rms(mono(all.left, all.right).subarray(Math.round(12 * SR)))
+    if (after > 1e-4) problems.push(`still sounding at 12 s (rms ${after.toExponential(1)})`)
+    // A closed hat cuts an open one off, as a real pair does.
+    const open = def.pads.find((p) => p.note === 46 && p.choke)
+    const closed = def.pads.find((p) => p.note === 42 && p.choke === open?.choke)
+    if (open && closed) {
+      const ring = render(t, [{ at: 0, length: 0.05, pitch: 0, drum: 46 }], 0.6)
+      const cut = render(t, [{ at: 0, length: 0.05, pitch: 0, drum: 46 }, { at: 0.1, length: 0.05, pitch: 0, drum: 42 }], 0.6)
+      const late = (r: { left: Float32Array; right: Float32Array }) => rms(mono(r.left, r.right).subarray(Math.round(0.3 * SR)))
+      if (!(late(cut) < late(ring) * 0.5)) problems.push('the closed hat does not choke the open one')
+    }
+    const range = `pads ${Math.min(...loud).toFixed(2)}–${Math.max(...loud).toFixed(2)}`
+    check(def.name, problems.length === 0, problems.length ? problems.join('; ') : range)
+
+    if (WAVS) {
+      mkdirSync(WAVS, { recursive: true })
+      const each = def.pads.map((pad, i) => ({ at: i * 0.35, length: pad.held ? 0.3 : 0.05, pitch: 0, velocity: 0.9, drum: pad.note }))
+      const d = render(t, each, each.length * 0.35 + 3)
+      writeFileSync(join(WAVS, `kit-${def.id}-pads.wav`), encodeWav([d.left, d.right], SR))
+    }
+  }
 }
 
 console.log(failures === 0 ? '\nall good\n' : `\n${failures} failed\n`)

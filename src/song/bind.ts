@@ -3,7 +3,9 @@ import type { TrackEvent } from '../dsp/SongEngine'
 import { defOf } from '../patch/defs'
 import { kitSlots, padModuleId, padTarget } from '../patch/kit'
 import type { Patch, PatchModule } from '../patch/types'
+import type { AutomationBinding } from './automation'
 import type { SongEvent } from './schedule'
+import type { AutomationEvent } from './transport'
 
 /**
  * Which module in a patch a track's notes are played on, and how.
@@ -155,6 +157,30 @@ function kitEvents(events: readonly SongEvent[], target: NoteTarget): EngineEven
  * before the press that follows it: the engine applies events in the order it
  * was given them when two land on one sample.
  */
+export function automationEngineEvents(
+  events: readonly AutomationEvent[],
+  bindings: ReadonlyMap<string, AutomationBinding>,
+): TrackEvent[] {
+  const out: TrackEvent[] = []
+  for (const e of events) {
+    // A lane for a knob that is not there -- a module since removed -- plays nothing.
+    const b = bindings.get(e.target)
+    if (!b) continue
+    out.push({ frame: e.frame, kind: 'auto', track: b.track, key: b.key, curve: e.curve && { ...e.curve, map: b.map } })
+  }
+  return out
+}
+
+/** A window's notes and automation together, for one schedule. */
+export function windowEvents(
+  fill: { events: readonly SongEvent[]; automation: readonly AutomationEvent[] },
+  targets: ReadonlyMap<string, NoteTarget>,
+  bindings: ReadonlyMap<string, AutomationBinding>,
+): TrackEvent[] {
+  const notes = engineEventsByTrack(fill.events, targets)
+  return fill.automation.length ? [...automationEngineEvents(fill.automation, bindings), ...notes] : notes
+}
+
 export function engineEventsByTrack(
   events: readonly SongEvent[],
   targets: ReadonlyMap<string, NoteTarget>,

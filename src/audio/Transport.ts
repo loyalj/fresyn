@@ -1,4 +1,5 @@
-import { engineEventsByTrack, type NoteTarget } from '../song/bind'
+import type { AutomationBinding } from '../song/automation'
+import { engineEventsByTrack, windowEvents, type NoteTarget } from '../song/bind'
 import { releasedBySwing } from '../song/schedule'
 import { tempoMap } from '../song/timeline'
 import { fill, playheadTick, type Cursor, type Loop } from '../song/transport'
@@ -40,6 +41,13 @@ export interface TransportState {
 export class Transport {
   private loop: Loop | null = null
   private targets: ReadonlyMap<string, NoteTarget> = new Map()
+  private bindings: ReadonlyMap<string, AutomationBinding> = new Map()
+  /**
+   * The next window has to say where every automated knob stands, not only
+   * what changes: playback has just started, or what was queued no longer
+   * describes the song.
+   */
+  private fresh = true
   private cursor: Cursor = { tick: 0, frame: 0 }
   private playing = false
   /** The song ran off its end; stop once the speakers have caught up. */
@@ -103,6 +111,9 @@ export class Transport {
       this.playing && this.pending === null && !tempoChanged
         ? releasedBySwing(this.song, song, this.cursor.tick)
         : []
+    // Lanes drawn or clips moved while it plays: heard from the end of what
+    // is already queued, as a note added is.
+    if (song.patterns !== this.song.patterns || song.playlist !== this.song.playlist) this.fresh = true
     this.song = song
     if (tempoChanged) this.resync()
     else if (released.length) {
@@ -140,11 +151,19 @@ export class Transport {
     this.targets = targets
   }
 
+  /** Where each automation lane's knob is. See `automationBindings`. */
+  setAutomation(bindings: ReadonlyMap<string, AutomationBinding>) {
+    if (bindings === this.bindings) return
+    this.bindings = bindings
+    this.fresh = true
+  }
+
   async play(fromTick = 0) {
     if (this.playing) return
     await this.engine.start()
     this.playing = true
     this.ended = false
+    this.fresh = true
     this.pending = fromTick
     this.tick = fromTick
     this.unsubscribe = this.engine.onFrame((frame) => this.advance(frame))
@@ -161,6 +180,9 @@ export class Transport {
     // The queue can be emptied, but a note already sounding has nothing left
     // to close it and the rack would drone.
     this.engine.allNotesOff()
+    // And every automated knob goes back to where its panel has it, with
+    // whatever a hand had taken from the automation given back.
+    this.engine.clearAutomation()
     this.tick = this.startTick
     this.emit()
   }
@@ -247,6 +269,7 @@ export class Transport {
     this.startTick = this.tick
     this.cursor = { tick: this.tick, frame: this.lastFrame }
     this.ended = false
+    this.fresh = true
     this.refill(this.lastFrame)
   }
 
@@ -286,9 +309,10 @@ export class Transport {
     const until = frame + LOOKAHEAD_S * this.engine.sampleRate
     if (this.cursor.frame >= until) return
 
-    const out = fill(this.song, this.engine.sampleRate, this.cursor, until, this.loop)
+    const out = fill(this.song, this.engine.sampleRate, this.cursor, until, this.loop, this.fresh)
+    this.fresh = false
     this.cursor = out.cursor
     if (out.ended) this.ended = true
-    this.engine.schedule(engineEventsByTrack(out.events, this.targets))
+    this.engine.schedule(windowEvents(out, this.targets, this.bindings))
   }
 }

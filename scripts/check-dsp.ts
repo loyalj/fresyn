@@ -16,6 +16,7 @@ import { SCOPE_CAPTURE } from '../src/dsp/modules/Scope'
 import { bell, Section } from '../src/dsp/Biquad'
 import { Limiter } from '../src/dsp/Console'
 import { streamFor } from '../src/dsp/Rng'
+import { pulseSamples } from '../src/dsp/util'
 import { Smoothed } from '../src/dsp/Smoothed'
 import { SongEngine } from '../src/dsp/SongEngine'
 import { ChorusModule } from '../src/dsp/modules/Chorus'
@@ -2033,6 +2034,250 @@ console.log('\nslew')
     Math.abs(-down - wantDown) / wantDown < 0.02,
     (-down).toFixed(6),
   )
+}
+
+// --- envelope follower -------------------------------------------------
+console.log('\nenvelope follower')
+{
+  const follow = (source: PatchModule, port: string, params: Record<string, number>, frames = SCOPE_CAPTURE) =>
+    capture(
+      {
+        modules: [
+          source,
+          { id: 'follow1', type: 'follow', params: {} },
+          { id: 'scope1', type: 'scope', params: {} },
+          { id: 'scope2', type: 'scope', params: {} },
+          { id: 'scope3', type: 'scope', params: {} },
+          { id: 'scope4', type: 'scope', params: {} },
+          { id: 'scope5', type: 'scope', params: {} },
+        ],
+        cables: [
+          cable(source.id, port, 'follow1', 'in'),
+          cable('follow1', 'out', 'scope1', 'in'),
+          cable('follow1', 'inv', 'scope2', 'in'),
+          cable('follow1', 'gate', 'scope3', 'in'),
+          cable('follow1', 'trig', 'scope4', 'in'),
+          cable(source.id, port, 'scope5', 'in'),
+        ],
+      },
+      { params, frames },
+    )
+  const mean = (b: Float32Array) => b.reduce((a, v) => a + v, 0) / b.length
+  const sine = { id: 'osc1', type: 'osc', params: { pitch: 300, wave: 3, level: 0.5 } }
+
+  // A steady sine, long enough for the level to have settled, and an attack
+  // fast enough to reach each peak. (At the default 5 ms it reads a little
+  // under: each peak is past before the level has caught it, as it should be.)
+  const peak = follow(sine, 'out', { 'follow1.attack': 0.0005 }, SR / 2)
+  check('peak mode reads a sine at its peak', Math.abs(mean(peak.scope1) - 0.5) < 0.03, mean(peak.scope1).toFixed(3))
+  const rms = follow(sine, 'out', { 'follow1.mode': 1 }, SR / 2)
+  check('RMS mode reads it at its RMS', Math.abs(mean(rms.scope1) - 0.5 / Math.SQRT2) < 0.015, mean(rms.scope1).toFixed(3))
+  const louder = follow(sine, 'out', { 'follow1.attack': 0.0005, 'follow1.gain': 1.5 }, SR / 2)
+  check('Gain scales it', Math.abs(mean(louder.scope1) - 0.75) < 0.04, mean(louder.scope1).toFixed(3))
+  const capped = follow(sine, 'out', { 'follow1.gain': 10 }, SR / 2)
+  check('and Out never passes 1', Math.max(...capped.scope1) <= 1, Math.max(...capped.scope1).toFixed(3))
+  const flipped = peak.scope1.every((v, i) => Math.abs(v + peak.scope2[i] - 1) < 1e-6)
+  check('Inv is one minus Out', flipped)
+
+  // A gate is the one source that steps at once, so the attack is the module's.
+  const ATTACK = 0.01
+  const n = Math.round(ATTACK * SR)
+  const rise = follow({ id: 'gate1', type: 'gate', params: {} }, 'gate', { 'follow1.attack': ATTACK }).scope1
+  check('Attack is a time constant: 63% of the way after it', Math.abs(rise[n - 1] - 0.632) < 0.01, rise[n - 1].toFixed(4))
+
+  // Two cycles of a square across the window, so a fall lands in it.
+  const RELEASE = 0.01
+  const square = { id: 'lfo1', type: 'lfo', params: { rate: (2 * SR) / SCOPE_CAPTURE, shape: 1, width: 0.5 } }
+  const fall = follow(square, 'uni', { 'follow1.attack': 0.0005, 'follow1.release': RELEASE })
+  // A band-limited edge passes through 0.5 exactly, so one side of the test takes it.
+  const edge = fall.scope5.findIndex((v, i) => i > 0 && fall.scope5[i - 1] >= 0.5 && v < 0.5)
+  const m = Math.round(RELEASE * SR)
+  const ratio = fall.scope1[edge + m - 1] / fall.scope1[edge - 1]
+  check('Release is one too: 37% left after it', edge > 0 && Math.abs(ratio - 0.368) < 0.01, `${ratio.toFixed(4)} at ${edge}`)
+
+  // A fast square through it: the gate opens on each burst and Trig fires once.
+  const pulses = follow({ id: 'lfo1', type: 'lfo', params: { rate: 50, shape: 1, width: 0.5 } }, 'uni', {
+    'follow1.attack': 0.0005,
+    'follow1.release': 0.002,
+    'follow1.threshold': 0.5,
+  })
+  const rises = (b: Float32Array) => b.reduce((k, v, i) => k + (v > 0.5 && (i === 0 || b[i - 1] <= 0.5) ? 1 : 0), 0)
+  const bursts = rises(pulses.scope5)
+  check('Gate opens once for each burst', rises(pulses.scope3) === bursts, `${rises(pulses.scope3)} for ${bursts}`)
+  check('and Trig fires once for each', rises(pulses.scope4) === bursts, `${rises(pulses.scope4)} for ${bursts}`)
+  const width = pulses.scope4.reduce((k, v) => k + (v > 0.5 ? 1 : 0), 0) / bursts
+  check('a Trig is the rack\'s pulse, not a gate', Math.abs(width - pulseSamples(SR)) <= 1, `${width} samples`)
+  const open = mean(pulses.scope3)
+  check('and Gate is high for about as long as the bursts', Math.abs(open - 0.5) < 0.1, open.toFixed(2))
+
+}
+
+// --- unison oscillator -------------------------------------------------
+console.log('\nunison oscillator')
+{
+  const uni = (params: Record<string, number>) =>
+    capture({
+      modules: [
+        { id: 'uni1', type: 'unison', params },
+        { id: 'scope1', type: 'scope', params: {} },
+        { id: 'scope2', type: 'scope', params: {} },
+        { id: 'scope3', type: 'scope', params: {} },
+      ],
+      cables: [cable('uni1', 'l', 'scope1', 'in'), cable('uni1', 'r', 'scope2', 'in'), cable('uni1', 'out', 'scope3', 'in')],
+    })
+
+  // Three sines high enough that a quarter-tone either side is several bins
+  // apart: one on the note, one each side of it, evenly.
+  const PITCH = 2000
+  const spread = uni({ pitch: PITCH, wave: 3, voices: 3, detune: 1, width: 0 }).scope1
+  const re = new Float32Array(SCOPE_CAPTURE)
+  const im = new Float32Array(SCOPE_CAPTURE)
+  for (let i = 0; i < SCOPE_CAPTURE; i++) re[i] = spread[i] * (0.5 - 0.5 * Math.cos((2 * Math.PI * i) / SCOPE_CAPTURE))
+  fft(re, im)
+  const mag = Array.from({ length: SCOPE_CAPTURE / 2 }, (_, k) => Math.hypot(re[k], im[k]))
+  const peaks = mag
+    .map((m, k) => ({ m, k }))
+    .filter(({ m, k }) => k > 0 && k < mag.length - 1 && m > mag[k - 1] && m >= mag[k + 1])
+    .sort((a, b) => b.m - a.m)
+    .slice(0, 3)
+    .map(({ k }) => (k * SR) / SCOPE_CAPTURE)
+    .sort((a, b) => a - b)
+  const want = [-0.5, 0, 0.5].map((st) => PITCH * 2 ** (st / 12))
+  const binHz = SR / SCOPE_CAPTURE
+  check(
+    'three copies sit on the note and a quarter-tone either side',
+    peaks.length === 3 && peaks.every((f, i) => Math.abs(f - want[i]) <= binHz),
+    peaks.map((f) => f.toFixed(0)).join(', ') + ' Hz against ' + want.map((f) => f.toFixed(0)).join(', '),
+  )
+
+  const narrow = uni({ voices: 5, width: 0 })
+  check('at no Width the stack is in the middle', narrow.scope1.every((v, i) => v === narrow.scope2[i]))
+  const wide = uni({ voices: 5, width: 1 })
+  const diff = wide.scope1.reduce((a, v, i) => a + Math.abs(v - wide.scope2[i]), 0) / SCOPE_CAPTURE
+  check('and Width spreads it across the sides', diff > 0.05, diff.toFixed(3))
+  const mono = wide.scope3.every((v, i) => Math.abs(v - (wide.scope1[i] + wide.scope2[i]) * Math.SQRT1_2) < 1e-6)
+  check('Out is the two sides summed', mono)
+
+  // One voice is one oscillator, on the note.
+  const one = uni({ pitch: 250, wave: 3, voices: 1 }).scope1
+  let rises = 0
+  for (let i = 1; i < one.length; i++) if (one[i - 1] < 0 && one[i] >= 0) rises++
+  const expected = (250 * SCOPE_CAPTURE) / SR
+  check('one voice plays the note it is tuned to', Math.abs(rises - expected) <= 1, `${rises} cycles for ${expected.toFixed(1)}`)
+}
+
+// --- clock divider ----------------------------------------------------
+console.log('\nclock divider')
+{
+  const RATE = 400
+  const run = (params: Record<string, number>) => {
+    const ports = ['d2', 'd3', 'd4', 'd8', 'x2', 'x4', 'out']
+    const out = capture({
+      modules: [
+        { id: 'lfo1', type: 'lfo', params: { rate: RATE, shape: 1, width: 0.5 } },
+        { id: 'div1', type: 'clkdiv', params },
+        ...ports.map((p) => ({ id: `s_${p}`, type: 'scope', params: {} })),
+      ],
+      cables: [cable('lfo1', 'uni', 'div1', 'clock'), ...ports.map((p) => cable('div1', p, `s_${p}`, 'in'))],
+    }, { frames: SR / 2 })
+    return Object.fromEntries(ports.map((p) => [p, out[`s_${p}`]]))
+  }
+  const rises = (b: Float32Array) => b.reduce((k, v, i) => k + (i > 0 && v > 0.5 && b[i - 1] <= 0.5 ? 1 : 0), 0)
+  const ticks = (RATE * SCOPE_CAPTURE) / SR
+  const o = run({ ratio: 6 })
+  for (const [port, factor] of [['d2', 1 / 2], ['d3', 1 / 3], ['d4', 1 / 4], ['d8', 1 / 8], ['x2', 2], ['x4', 4]] as const) {
+    const got = rises(o[port])
+    const want = ticks * factor
+    check(`${port.startsWith('x') ? port : `/${port.slice(1)}`} fires ${factor < 1 ? `every ${1 / factor} ticks` : `${factor} times a tick`}`, Math.abs(got - want) <= 1.5, `${got} for ${want.toFixed(1)}`)
+  }
+  check('Out follows its Ratio: /4 at step 6', Math.abs(rises(o.out) - ticks / 4) <= 1.5, `${rises(o.out)}`)
+  const x3 = run({ ratio: 1 })
+  check('and x3 at step 1', Math.abs(rises(x3.out) - ticks * 3) <= 2, `${rises(x3.out)} for ${(ticks * 3).toFixed(1)}`)
+  const share = (b: Float32Array) => b.reduce((a, v) => a + v, 0) / b.length
+  const narrow = run({ ratio: 6, width: 0.1 })
+  check('Width is the share of each period a pulse is high', Math.abs(share(narrow.d2) - 0.1) < 0.03 && Math.abs(share(o.d2) - 0.5) < 0.05, `${share(narrow.d2).toFixed(2)} and ${share(o.d2).toFixed(2)}`)
+}
+
+// --- low-pass gate ----------------------------------------------------
+console.log('\nlow-pass gate')
+{
+  const rmsOf = (b: Float32Array, from: number, to: number) => {
+    let sum = 0
+    for (let i = from; i < to; i++) sum += b[i] * b[i]
+    return Math.sqrt(sum / Math.max(1, to - from))
+  }
+  const through = (params: Record<string, number>, pitch: number, strike = false) =>
+    capture({
+      modules: [
+        { id: 'osc1', type: 'osc', params: { pitch, wave: 3 } },
+        ...(strike ? [{ id: 'gate1', type: 'gate', params: {} }] : []),
+        { id: 'lpg1', type: 'lpg', params },
+        { id: 'scope1', type: 'scope', params: {} },
+      ],
+      cables: [cable('osc1', 'out', 'lpg1', 'in'), cable('lpg1', 'out', 'scope1', 'in'), ...(strike ? [cable('gate1', 'gate', 'lpg1', 'strike')] : [])],
+    }).scope1
+
+  // A strike pings it open, and it rings down.
+  const ring = through({ decay: 0.02 }, 300, true)
+  const start = rmsOf(ring, 0, 480)
+  const end = rmsOf(ring, SCOPE_CAPTURE - 960, SCOPE_CAPTURE)
+  check('a strike opens it and it rings down', start > 0.2 && end < start / 4, `${start.toFixed(3)} then ${end.toFixed(3)}`)
+
+  // Opening it opens the filter too: a high tone comes through only when open.
+  const shut = rmsOf(through({ offset: 0.3, cvAmount: 0, mode: 1 }, 5000), 2048, SCOPE_CAPTURE)
+  const open = rmsOf(through({ offset: 1, cvAmount: 0, mode: 1 }, 5000), 2048, SCOPE_CAPTURE)
+  check('opening it lets the top through', open > 0.5 && shut < open / 10, `${shut.toFixed(4)} shut, ${open.toFixed(3)} open`)
+
+  // As a VCA only, it is the level it is opened to.
+  const half = rmsOf(through({ offset: 0.5, cvAmount: 0, mode: 2 }, 300), 2048, SCOPE_CAPTURE)
+  check('as a VCA it passes what it is opened to', Math.abs(half / Math.SQRT1_2 - 0.5) < 0.02, (half / Math.SQRT1_2).toFixed(3))
+}
+
+// --- tape -------------------------------------------------------------
+console.log('\ntape')
+{
+  const tape = (params: Record<string, number>, pitch: number, level = 0.3, frames = SR / 2) =>
+    capture({
+      modules: [
+        { id: 'osc1', type: 'osc', params: { pitch, wave: 3, level } },
+        { id: 'tape1', type: 'tape', params },
+        { id: 'scope1', type: 'scope', params: {} },
+      ],
+      cables: [cable('osc1', 'out', 'tape1', 'in'), cable('tape1', 'out', 'scope1', 'in')],
+    }, { frames }).scope1
+  const peakOf = (b: Float32Array) => b.reduce((m, v) => Math.max(m, Math.abs(v)), 0)
+  const clean = { drive: 0, wow: 0, flutter: 0, age: 0, hiss: 0 }
+
+  const flat = peakOf(tape(clean, 440))
+  check('with everything at zero it is nearly transparent', Math.abs(flat - Math.tanh(0.3)) < 0.02, flat.toFixed(3))
+
+  // Where each cycle starts, to a fraction of a sample: steady unless the
+  // transport is wobbling.
+  const jitter = (b: Float32Array) => {
+    const at: number[] = []
+    for (let i = 1; i < b.length; i++) if (b[i - 1] < 0 && b[i] >= 0) at.push(i - 1 + -b[i - 1] / (b[i] - b[i - 1]))
+    const gaps = at.slice(1).map((t, i) => t - at[i])
+    const mean = gaps.reduce((a, g) => a + g, 0) / gaps.length
+    return Math.sqrt(gaps.reduce((a, g) => a + (g - mean) ** 2, 0) / gaps.length)
+  }
+  const still = jitter(tape(clean, 1000))
+  const fluttered = jitter(tape({ ...clean, flutter: 1 }, 1000))
+  check('Flutter wobbles the pitch', fluttered > 0.05 && fluttered > still * 10, `${still.toFixed(4)} to ${fluttered.toFixed(3)} samples`)
+  const wowed = jitter(tape({ ...clean, wow: 1 }, 1000, 0.3, SR * 2))
+  check('and so does Wow, more slowly', wowed > still * 3, `${wowed.toFixed(4)} samples`)
+
+  const bright = peakOf(tape(clean, 8000))
+  const dull = peakOf(tape({ ...clean, age: 1 }, 8000))
+  check('Age rolls the top off', dull < bright / 4, `${bright.toFixed(3)} to ${dull.toFixed(3)} at 8 kHz`)
+
+  const silentIn = { modules: [{ id: 'tape1', type: 'tape', params: { ...clean, hiss: 1 } }, { id: 'scope1', type: 'scope', params: {} }], cables: [cable('tape1', 'out', 'scope1', 'in')] }
+  const hiss = peakOf(capture(silentIn).scope1)
+  const none = peakOf(capture({ ...silentIn, modules: [{ id: 'tape1', type: 'tape', params: clean }, silentIn.modules[1]] }).scope1)
+  check('Hiss is a noise floor, and none without it', hiss > 0.005 && hiss < 0.05 && none === 0, `${hiss.toFixed(4)} and ${none}`)
+
+  const soft = peakOf(tape({ ...clean, drive: 1 }, 440, 0.05)) / 0.05
+  const loud = peakOf(tape({ ...clean, drive: 1 }, 440, 1))
+  check('Drive lifts the quiet and squashes the loud', soft > 2 && loud < 0.5, `x${soft.toFixed(2)} quiet, ${loud.toFixed(3)} at full scale`)
 }
 
 // --- scope -----------------------------------------------------------

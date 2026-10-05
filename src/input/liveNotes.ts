@@ -37,3 +37,31 @@ export class LiveNotes {
     }
   }
 }
+
+/**
+ * A control moved by hand while the song plays -- a knob, a fader, a
+ * controller's slider -- as the position along its travel it was moved to.
+ * Like `LiveNotes`, only the news: the move has already happened, and this is
+ * for whatever is recording it into a lane.
+ */
+export interface LiveMove {
+  /** The automation target it is: see `song/automation`. */
+  target: string
+  /** 0..1 along its travel. */
+  position: number
+}
+
+export class LiveMoves {
+  private listeners = new Set<(move: LiveMove) => void>()
+
+  emit(move: LiveMove) {
+    for (const fn of this.listeners) fn(move)
+  }
+
+  subscribe(fn: (move: LiveMove) => void): () => void {
+    this.listeners.add(fn)
+    return () => {
+      this.listeners.delete(fn)
+    }
+  }
+}

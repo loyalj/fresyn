@@ -1,3 +1,5 @@
+import { curveAt } from '../dsp/automation'
+import { laneCurves } from '../song/automation'
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Transport } from '../audio/Transport'
 import { loadPrefs, savePrefs } from '../patch/storage'
@@ -14,7 +16,7 @@ import {
   splitClip,
   trimClip,
 } from '../song/clip'
-import { playlistBars } from '../song/edit'
+import { duplicatePattern, nextPatternId, playlistBars } from '../song/edit'
 import {
   clearTime,
   copyTime,
@@ -29,6 +31,7 @@ import { addSection, sectionAt, sectionOver, sectionsOf, splitSection } from '..
 import { clipHits, clipRepeats } from '../song/schedule'
 import { barsIn, barsOf, type Snap } from '../song/timeline'
 import { barTicks, beatTicks, type Pattern, type Placement, type Song } from '../song/types'
+import { ContextMenu, type MenuItem } from './Menu'
 import { NameField } from './NameField'
 import { SectionStrip } from './SectionStrip'
 import { TimingLane } from './TimingLane'
@@ -183,6 +186,15 @@ export function Playlist({
    * range buttons and keys act on. Independent of the clips picked.
    */
   const [range, setRange] = useState<TickRange | null>(null)
+  /** The clip whose menu is open, and where. */
+  const [clipMenu, setClipMenu] = useState<{ index: number; x: number; y: number } | null>(null)
+  /** Which end of the loop is being dragged, if one is. */
+  const loopDrag = useRef<'from' | 'to' | null>(null)
+  /** The loop as a drag of one of its ends has it, until it is let go: one edit, not one per pixel. */
+  const [loopDraft, setLoopDraft] = useState<{ from: number; to: number } | null>(null)
+  const loop = loopDraft ?? song.loop
+  /** A tick's bar, counted from one, for saying where the loop is. */
+  const barNumber = (tick: number) => barsOf(song).at(tick).index + 1
   const [hasTimeClip, setHasTimeClip] = useState(timeClip !== null)
   /** A drag along the ruler, from where it was pressed. */
   const rangeDrag = useRef<{ anchor: number; x0: number; moved: boolean } | null>(null)
@@ -313,6 +325,14 @@ export function Playlist({
     if (e.button !== 0 && e.button !== 2) return
     claimKeyboard(scrollRef.current)
     const target = e.target instanceof Element ? e.target : null
+    // A clip's ▾ opens its menu, and is no drag of the clip.
+    const menuButton = target?.closest<HTMLElement>('.playlist-clip-menu')
+    if (menuButton && e.button === 0) {
+      const index = Number(menuButton.closest<HTMLElement>('.playlist-clip')?.dataset.index)
+      const r = menuButton.getBoundingClientRect()
+      if (Number.isInteger(index)) setClipMenu({ index, x: r.left, y: r.bottom + 2 })
+      return
+    }
     const clipEl = target?.closest<HTMLElement>('.playlist-clip')
     const index = clipEl ? Number(clipEl.dataset.index) : null
     const edge = target?.closest<HTMLElement>('.playlist-clip-edge')?.dataset.edge as 'start' | 'end' | undefined
@@ -507,6 +527,67 @@ export function Playlist({
       swallowClick.current = true
       claimKeyboard(scrollRef.current)
     }
+  }
+
+  /** What a clip's ▾ offers. */
+  const clipMenuItems = (index: number): MenuItem[] => {
+    const place = song.playlist[index]
+    const pattern = song.patterns.find((p) => p.id === place.pattern)
+    if (!pattern) return []
+    const others = song.playlist.filter((p, i) => i !== index && p.pattern === place.pattern).length
+    return [
+      {
+        kind: 'action',
+        label: 'Rename pattern…',
+        onSelect: () => {
+          onSelectPattern(pattern.id)
+          // Its name in the pattern list, opened for typing as F2 opens it.
+          requestAnimationFrame(() => {
+            const field = document.querySelector<HTMLInputElement>('.playlist-pattern.on .playlist-name')
+            field?.focus()
+            field?.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true }))
+          })
+        },
+      },
+      { kind: 'action', label: 'Next colour', onSelect: () => onColorPattern(pattern.id, nextHue(pattern.color) ?? null) },
+      { kind: 'action', label: 'No colour', disabled: pattern.color === undefined, onSelect: () => onColorPattern(pattern.id, null) },
+      { kind: 'separator' },
+      {
+        kind: 'action',
+        label: 'Make unique',
+        shortcut: others ? `${others} other clip${others === 1 ? '' : 's'}` : 'only clip',
+        disabled: others === 0,
+        onSelect: () =>
+          onEdit((s) => {
+            const id = nextPatternId(s)
+            const copy = duplicatePattern(s, pattern.id, id, `${pattern.name} ${s.patterns.length + 1}`)
+            return { ...copy, playlist: copy.playlist.map((p, i) => (i === index ? { ...p, pattern: id } : p)) }
+          }),
+      },
+      {
+        kind: 'toggle',
+        label: 'Mute clip',
+        checked: !!place.mute,
+        onSelect: () =>
+          onEdit((s) => ({
+            ...s,
+            playlist: s.playlist.map((p, i) => {
+              if (i !== index) return p
+              const { mute: _, ...rest } = p
+              return p.mute ? rest : { ...rest, mute: true }
+            }),
+          })),
+      },
+      { kind: 'separator' },
+      {
+        kind: 'action',
+        label: 'Delete clip',
+        onSelect: () => {
+          onEdit((s) => removeClips(s, [index]))
+          setPicked([])
+        },
+      },
+    ]
   }
 
   /** The range buttons' and keys' edits. Each keeps the range on what it made. */
@@ -733,6 +814,18 @@ export function Playlist({
               <button className="dock-toggle" onClick={rangeActions.paste} disabled={!hasTimeClip} title="Put the copied bars in here, before these (Ctrl+V)" type="button">
                 Paste
               </button>
+              <button
+                className="dock-toggle playlist-loop-set"
+                onClick={() => {
+                  // The loop is these bars from now on, in place of any section picked.
+                  onEdit((s) => ({ ...s, loop: { from: range.from, to: range.to } }))
+                  onSection(null)
+                }}
+                title="Loop these bars: Play starts here and comes round at their end"
+                type="button"
+              >
+                Loop
+              </button>
               <button className="track-remove" onClick={() => setRange(null)} title="Let go of these bars (Esc)" aria-label="Let go of the range" type="button">
                 ×
               </button>
@@ -815,6 +908,58 @@ export function Playlist({
                   </button>
                 )
               })}
+              {loop && (
+                <span
+                  className={`playlist-loop${section !== null ? ' idle' : ''}`}
+                  style={{ left: `calc(var(--label-w) + ${loop.from * ppt}px)`, width: (loop.to - loop.from) * ppt }}
+                  title={`Looping bars ${barNumber(loop.from)}–${barNumber(loop.to - 1)}: drag an end to move it`}
+                >
+                  {(['from', 'to'] as const).map((end) => (
+                    <span
+                      key={end}
+                      className={`playlist-loop-end ${end}`}
+                      aria-label={end === 'from' ? 'Loop start' : 'Loop end'}
+                      onPointerDown={(e) => {
+                        if (e.button !== 0) return
+                        e.stopPropagation()
+                        e.currentTarget.setPointerCapture(e.pointerId)
+                        loopDrag.current = end
+                      }}
+                      onPointerMove={(e) => {
+                        const which = loopDrag.current
+                        if (!which || !loop) return
+                        const at = step(pointAt(e).tick, 'round')
+                        const next = which === 'from' ? { from: Math.min(at, loop.to - 1), to: loop.to } : { from: loop.from, to: Math.max(at, loop.from + 1) }
+                        if (next.from !== loop.from || next.to !== loop.to) setLoopDraft(next)
+                      }}
+                      onPointerUp={() => {
+                        loopDrag.current = null
+                        swallowClick.current = true
+                        const done = loopDraft
+                        setLoopDraft(null)
+                        if (done) onEdit((s) => ({ ...s, loop: done }))
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  ))}
+                  <button
+                    className="playlist-loop-clear"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onEdit((s) => {
+                        const { loop: _, ...rest } = s
+                        return rest
+                      })
+                    }}
+                    title="Stop looping these bars: the whole song loops again"
+                    aria-label="Clear the loop"
+                    type="button"
+                  >
+                    ×
+                  </button>
+                </span>
+              )}
               {range && (
                 <span
                   className="playlist-range-mark"
@@ -915,6 +1060,9 @@ export function Playlist({
                   />
                 )}
                 <div className="playlist-head" ref={headRef} aria-hidden="true" />
+                {clipMenu && song.playlist[clipMenu.index] && (
+                  <ContextMenu x={clipMenu.x} y={clipMenu.y} items={clipMenuItems(clipMenu.index)} onClose={() => setClipMenu(null)} />
+                )}
               </div>
             </div>
           </div>
@@ -945,7 +1093,7 @@ const Clip = memo(function Clip({ index, place, pattern, ppt, picked, erasing }:
   const colored = pattern.color !== undefined
   return (
     <div
-      className={`playlist-clip${picked ? ' picked' : ''}${erasing ? ' erasing' : ''}${colored ? ' colored' : ''}`}
+      className={`playlist-clip${picked ? ' picked' : ''}${erasing ? ' erasing' : ''}${colored ? ' colored' : ''}${place.mute ? ' muted' : ''}`}
       data-index={index}
       style={
         {
@@ -965,8 +1113,16 @@ const Clip = memo(function Clip({ index, place, pattern, ppt, picked, erasing }:
         {art.notes.map((n, k) => (
           <rect key={k} x={n.x} y={n.y} width={n.w} height={1} />
         ))}
+        {art.lanes.map((points, k) => (
+          <polyline key={`a${k}`} className="auto" points={points} vectorEffect="non-scaling-stroke" />
+        ))}
       </svg>
-      <span className="playlist-clip-name">{pattern.name}</span>
+      <span className="playlist-clip-name">
+        <button className="playlist-clip-menu" type="button" tabIndex={-1} aria-label={`${pattern.name}: clip menu`} title="Rename, colour, make unique, mute or delete">
+          ▾
+        </button>
+        {pattern.name}
+      </span>
       <span className="playlist-clip-edge" data-edge="start" />
       <span className="playlist-clip-edge" data-edge="end" />
     </div>
@@ -1000,7 +1156,41 @@ function clipArt(place: Placement, pattern: Pattern) {
   const seams = clipRepeats(place, pattern, place.tick, stop)
     .filter((base) => base > place.tick && base < stop)
     .map((base) => base - place.tick)
-  return { rows, notes, seams }
+  const lanes = clipLanes(place, pattern, rows)
+  return { rows, notes, seams, lanes }
+}
+
+/**
+ * A clip's automation lanes, each as the points of a line across it: a
+ * glance at what moves, not an editor, so a curve is a handful of segments
+ * and a hold is a step. Ticks across from the clip's start, and its height
+ * in rows, the top being the top of a knob's travel.
+ */
+function clipLanes(place: Placement, pattern: Pattern, rows: number): string[] {
+  if (!pattern.automation?.length || !(pattern.length > 0)) return []
+  const start = place.tick
+  const stop = clipEnd(place, pattern)
+  const out: string[] = []
+  for (const lane of pattern.automation) {
+    const curves = laneCurves(lane, pattern.length)
+    if (!curves.length) continue
+    const pts: string[] = []
+    const add = (tick: number, value: number) => pts.push(`${(tick - start).toFixed(1)},${((1 - value) * rows).toFixed(2)}`)
+    for (const base of clipRepeats(place, pattern, start, stop)) {
+      for (const c of curves) {
+        const from = Math.max(start, base + c.from)
+        const to = Math.min(stop, base + c.to)
+        if (!(to > from)) continue
+        const steps = c.shape === 'curve' ? 12 : 1
+        for (let i = 0; i <= steps; i++) {
+          const t = from + ((to - from) * i) / steps
+          add(t, c.shape === 'hold' ? c.v0 : curveAt(c, t - base))
+        }
+      }
+    }
+    if (pts.length > 1) out.push(pts.join(' '))
+  }
+  return out
 }
 
 /**

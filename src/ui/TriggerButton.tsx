@@ -108,6 +108,7 @@ export function TriggerButton({
     <div className="trigger-row">
       <button
         className={`trigger${latched ? ' latched' : ''}`}
+        data-midi-param="gate"
         onPointerDown={(e) => {
           if (e.button !== 0 || pressed.current) return
           pressed.current = 'pointer'

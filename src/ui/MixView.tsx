@@ -1,11 +1,13 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { folderOf, heardTracks } from '../song/folder'
 import type { AudioEngine } from '../audio/AudioEngine'
-import type { ParamSpec } from '../patch/param'
 import { consoleOf, stripOf, updateConsole, updateStrip } from '../song/edit'
 import type { Song, Track } from '../song/types'
+import { AutomationScope, useAutomation } from './AutomationContext'
 import { Knob } from './Knob'
+import { ContextMenu } from './Menu'
 import { FALL, fillBar, scale } from './meter'
+import { BALANCE, EQ, FADER_MAX_DB, FADER_MIN_DB, faderGain, PAN, RETURNS, SEND_DELAY, SEND_SPACE, toDb, toGain } from './mixSpecs'
 import { useFallingMeter } from './useFallingMeter'
 
 interface Props {
@@ -19,36 +21,6 @@ interface Props {
   showHidden: boolean
 }
 
-const knob = (id: string, label: string, min: number, max: number, def: number, unit: string, curve: 'lin' | 'exp' = 'lin'): ParamSpec => ({
-  id, label, min, max, default: def, unit, curve,
-})
-
-const EQ = {
-  high: knob('high', 'High', -24, 12, 0, 'dB'),
-  mid: knob('mid', 'Mid', -24, 12, 0, 'dB'),
-  low: knob('low', 'Low', -24, 12, 0, 'dB'),
-}
-const PAN = knob('pan', 'Pan', -1, 1, 0, '')
-const BALANCE = knob('balance', 'Balance', -1, 1, 0, '')
-const SEND_SPACE = knob('space', 'Space', 0, 1, 0, '')
-const SEND_DELAY = knob('delay', 'Delay', 0, 1, 0, '')
-const RETURNS = {
-  size: knob('size', 'Size', 0, 1, 0.6, ''),
-  decay: knob('decay', 'Decay', 0.05, 20, 2.2, 's', 'exp'),
-  spaceDamp: knob('damping', 'Damp', 0, 1, 0.4, ''),
-  spaceLevel: knob('level', 'Return', 0, 2, 1, ''),
-  time: knob('time', 'Time', 0.002, 2, 0.375, 's', 'exp'),
-  feedback: knob('feedback', 'Fdbk', 0, 0.95, 0.35, ''),
-  delayDamp: knob('damping', 'Damp', 0, 1, 0.3, ''),
-  delayLevel: knob('level', 'Return', 0, 2, 1, ''),
-}
-
-/** The fader's travel, in dB: the bottom is off, the top a little past unity. */
-const FADER_MIN_DB = -60
-const FADER_MAX_DB = 6
-
-const toDb = (gain: number) => (gain <= 0 ? FADER_MIN_DB : Math.max(FADER_MIN_DB, 20 * Math.log10(gain)))
-const toGain = (db: number) => (db <= FADER_MIN_DB ? 0 : Math.pow(10, db / 20))
 const dbText = (gain: number) => {
   if (gain <= 0) return '−∞ dB'
   const db = 20 * Math.log10(gain)
@@ -96,21 +68,8 @@ export function MixView({ song, onEdit, onTrack, onSolo, engine, showHidden }: P
     </div>
   )
 
-  const fader = (label: string, gain: number, onChange: (gain: number) => void) => (
-    <div className="mix-fader-wrap">
-      <input
-        className="mix-fader"
-        type="range"
-        min={FADER_MIN_DB}
-        max={FADER_MAX_DB}
-        step={0.1}
-        value={toDb(gain)}
-        aria-label={label}
-        title={`${label}: ${dbText(gain)} (double-click for 0 dB)`}
-        onChange={(e) => onChange(toGain(Number(e.target.value)))}
-        onDoubleClick={() => onChange(1)}
-      />
-    </div>
+  const fader = (label: string, gain: number, onChange: (gain: number) => void, param: string) => (
+    <Fader label={label} gain={gain} onChange={onChange} param={param} />
   )
 
   return (
@@ -125,10 +84,13 @@ export function MixView({ song, onEdit, onTrack, onSolo, engine, showHidden }: P
           const set = (change: Parameters<typeof updateStrip>[2], field: string) =>
             onEdit((s) => updateStrip(s, track.id, change), `strip:${track.id}:${field}`)
           return (
+            // Automated by the track's id, where a controller counts strips by place.
+            <AutomationScope.Provider key={track.id} value={`strip/${track.id}/`}>
             <div
-              key={track.id}
               className={`mix-strip${silent ? ' silent' : ''}${track.color !== undefined ? ' colored' : ''}`}
               style={track.color !== undefined ? ({ '--track-h': track.color } as React.CSSProperties) : undefined}
+              // Counted by its place in the song, as a controller's faders are.
+              data-midi-scope={`track/${song.tracks.indexOf(track) + 1}`}
             >
               <div className="mix-name" title={folder ? `${track.name}, in ${folder.name}` : track.name}>
                 {folder && <span className="mix-folder">{folder.name}</span>}
@@ -144,7 +106,7 @@ export function MixView({ song, onEdit, onTrack, onSolo, engine, showHidden }: P
                   <Knob spec={PAN} value={strip.pan} onChange={(v) => set({ pan: v }, 'pan')} />
                 </div>
                 <div className="mix-level">
-                  {fader(`${track.name} level`, track.gain, (g) => onTrack(track.id, { gain: g }, `gain:${track.id}`))}
+                  {fader(`${track.name} level`, track.gain, (g) => onTrack(track.id, { gain: g }, `gain:${track.id}`), 'gain')}
                   {meter(track.id)}
                 </div>
               </div>
@@ -152,17 +114,25 @@ export function MixView({ song, onEdit, onTrack, onSolo, engine, showHidden }: P
                 <span className="mix-db">{dbText(track.gain)}</span>
                 <button
                   className={`track-flag${track.mute ? ' on' : ''}`}
+                  data-midi-param="mute"
                   onClick={() => onTrack(track.id, { mute: track.mute ? undefined : true })}
                   title="Mute"
                   type="button"
                 >
                   M
                 </button>
-                <button className={`track-flag${track.solo ? ' on' : ''}`} onClick={() => onSolo(track.id)} title="Solo" type="button">
+                <button
+                  className={`track-flag${track.solo ? ' on' : ''}`}
+                  data-midi-param="solo"
+                  onClick={() => onSolo(track.id)}
+                  title="Solo"
+                  type="button"
+                >
                   S
                 </button>
               </div>
             </div>
+            </AutomationScope.Provider>
           )
         })}
       </div>
@@ -170,29 +140,34 @@ export function MixView({ song, onEdit, onTrack, onSolo, engine, showHidden }: P
       {/* The two effects every strip can send to. One of each for the whole
           song: a room the whole band is in, not a reverb per instrument. */}
       <div className="mix-returns">
-        <div className="mix-return">
+        <div className="mix-return" data-midi-scope="space">
           <div className="mix-name">Space</div>
+          <AutomationScope.Provider value="space/">
           <div className="mix-knobs">
             <Knob spec={RETURNS.size} value={desk.space.size} onChange={(v) => onEdit((s) => updateConsole(s, { space: { size: v } }), 'console:space.size')} />
             <Knob spec={RETURNS.decay} value={desk.space.decay} onChange={(v) => onEdit((s) => updateConsole(s, { space: { decay: v } }), 'console:space.decay')} />
             <Knob spec={RETURNS.spaceDamp} value={desk.space.damping} onChange={(v) => onEdit((s) => updateConsole(s, { space: { damping: v } }), 'console:space.damping')} />
             <Knob spec={RETURNS.spaceLevel} value={desk.space.level} onChange={(v) => onEdit((s) => updateConsole(s, { space: { level: v } }), 'console:space.level')} />
           </div>
+          </AutomationScope.Provider>
         </div>
-        <div className="mix-return">
+        <div className="mix-return" data-midi-scope="delay">
           <div className="mix-name">Delay</div>
+          <AutomationScope.Provider value="delay/">
           <div className="mix-knobs">
             <Knob spec={RETURNS.time} value={desk.delay.time} onChange={(v) => onEdit((s) => updateConsole(s, { delay: { time: v } }), 'console:delay.time')} />
             <Knob spec={RETURNS.feedback} value={desk.delay.feedback} onChange={(v) => onEdit((s) => updateConsole(s, { delay: { feedback: v } }), 'console:delay.feedback')} />
             <Knob spec={RETURNS.delayDamp} value={desk.delay.damping} onChange={(v) => onEdit((s) => updateConsole(s, { delay: { damping: v } }), 'console:delay.damping')} />
             <Knob spec={RETURNS.delayLevel} value={desk.delay.level} onChange={(v) => onEdit((s) => updateConsole(s, { delay: { level: v } }), 'console:delay.level')} />
           </div>
+          </AutomationScope.Provider>
         </div>
       </div>
 
       {/* The master bus: the whole mix, on its way out. */}
-      <div className="mix-strip mix-master">
+      <div className="mix-strip mix-master" data-midi-scope="master">
         <div className="mix-name">Master</div>
+        <AutomationScope.Provider value="master/">
         <div className="mix-body">
           <div className="mix-knobs">
             <Knob spec={EQ.high} value={desk.master.eq.high} onChange={(v) => onEdit((s) => updateConsole(s, { master: { eq: { ...desk.master.eq, high: v } } }), 'console:master.high')} />
@@ -200,6 +175,7 @@ export function MixView({ song, onEdit, onTrack, onSolo, engine, showHidden }: P
             <Knob spec={EQ.mid} value={desk.master.eq.mid} onChange={(v) => onEdit((s) => updateConsole(s, { master: { eq: { ...desk.master.eq, mid: v } } }), 'console:master.mid')} />
             <button
               className={`dock-toggle mix-limiter${desk.master.limiter ? ' on' : ''}`}
+              data-midi-param="limiter"
               onClick={() => onEdit((s) => updateConsole(s, { master: { limiter: !desk.master.limiter } }))}
               title="A brickwall at -1 dB: the mix can never clip"
               aria-pressed={desk.master.limiter}
@@ -210,10 +186,11 @@ export function MixView({ song, onEdit, onTrack, onSolo, engine, showHidden }: P
             <Knob spec={EQ.low} value={desk.master.eq.low} onChange={(v) => onEdit((s) => updateConsole(s, { master: { eq: { ...desk.master.eq, low: v } } }), 'console:master.low')} />
           </div>
           <div className="mix-level">
-            {fader('Master level', desk.master.level, (g) => onEdit((s) => updateConsole(s, { master: { level: g } }), 'console:master.level'))}
+            {fader('Master level', desk.master.level, (g) => onEdit((s) => updateConsole(s, { master: { level: g } }), 'console:master.level'), 'level')}
             {meter('master')}
           </div>
         </div>
+        </AutomationScope.Provider>
         <div className="mix-foot">
           <span className="mix-db">{dbText(desk.master.level)}</span>
           <span className="mix-lufs" ref={lufs} title="Loudness of the mix over the last 3 seconds">
@@ -221,6 +198,46 @@ export function MixView({ song, onEdit, onTrack, onSolo, engine, showHidden }: P
           </span>
         </div>
       </div>
+    </div>
+  )
+}
+
+/**
+ * A fader in dB, drawn where the song's automation has it while it plays,
+ * and with Automate in this pattern on its right-click, as a knob has.
+ */
+function Fader({ label, gain, onChange, param }: { label: string; gain: number; onChange: (gain: number) => void; param: string }) {
+  const automation = useAutomation(param)
+  const shown = automation.position !== null ? faderGain(automation.position) : gain
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
+  return (
+    <div className={`mix-fader-wrap${automation.automated ? ' automated' : ''}`}>
+      <input
+        className="mix-fader"
+        data-midi-param={param}
+        type="range"
+        min={FADER_MIN_DB}
+        max={FADER_MAX_DB}
+        step={0.1}
+        value={toDb(shown)}
+        aria-label={label}
+        title={`${label}: ${dbText(shown)} (double-click for 0 dB)`}
+        onChange={(e) => onChange(toGain(Number(e.target.value)))}
+        onDoubleClick={() => onChange(1)}
+        onContextMenu={(e) => {
+          if (!automation.automate) return
+          e.preventDefault()
+          setMenu({ x: e.clientX, y: e.clientY })
+        }}
+      />
+      {menu && automation.automate && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={[{ kind: 'action', label: 'Automate in this pattern', onSelect: automation.automate }]}
+          onClose={() => setMenu(null)}
+        />
+      )}
     </div>
   )
 }

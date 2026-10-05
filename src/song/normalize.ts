@@ -1,5 +1,6 @@
 import { cleanTimings } from './timing'
-import { MIN_VELOCITY, minPatternLength, type Folder, type Placement, type Section, type Song, type Track } from './types'
+import { cleanLanes } from './automation'
+import { MIN_VELOCITY, minPatternLength, type AutomationLane, type Folder, type Placement, type Section, type Song, type Track } from './types'
 
 /**
  * The invariants a song holds however it arrived.
@@ -68,6 +69,7 @@ export function normalizeSong(input: Song): Song {
           pitch: whole(n.pitch),
           velocity: n.velocity < MIN_VELOCITY ? MIN_VELOCITY : n.velocity > 1 ? 1 : n.velocity,
         })),
+      ...lanes(p.automation, trackIds),
     })
   }
 
@@ -91,6 +93,7 @@ export function normalizeSong(input: Song): Song {
     if (lane) clip.lane = lane
     if (offset) clip.offset = offset
     if (length !== undefined) clip.length = length
+    if (x.mute === true) clip.mute = true
     playlist.push(clip)
   }
 
@@ -139,3 +142,10 @@ const UNSAFE_IDS = new Set(['__proto__', 'constructor', 'prototype'])
 
 /** Ticks and rows are whole numbers; anything else is rounded to one. */
 const whole = (n: number) => (Number.isFinite(n) ? Math.round(n) : 0)
+
+/** A pattern's lanes for tracks still in the song, or the field left out when there are none. */
+function lanes(raw: unknown, tracks: ReadonlySet<string>): { automation?: AutomationLane[] } {
+  if (raw === undefined) return {}
+  const out = cleanLanes(raw, tracks)
+  return out.length ? { automation: out } : { automation: undefined }
+}

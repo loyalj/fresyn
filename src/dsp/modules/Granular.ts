@@ -91,6 +91,16 @@ export class GranularModule extends DspModule {
   readonly rests = true
   /** A grain can read anything in its buffer. */
   readonly memory = BUFFER_SECONDS
+
+  /**
+   * As far back as a grain can start -- Position, plus Spray, plus the whole
+   * buffer when the Position jack is patched -- and the length of a grain.
+   */
+  holdsFor() {
+    const back = this.params[P_POSITION] + this.params[P_SPRAY] * BUFFER_SECONDS + (this.ins[IN_POS] !== 0 ? BUFFER_SECONDS : 0)
+    const seconds = back + this.params[P_SIZE]
+    return seconds < BUFFER_SECONDS ? seconds : BUFFER_SECONDS
+  }
   /** The last `BUFFER_SECONDS` of input, written round and round. */
   private buffer = new Float32Array(0)
   private length = 0

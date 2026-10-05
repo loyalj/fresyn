@@ -9,6 +9,7 @@ interface Choice {
   id: string
   name: string
   category: string
+  group?: string
 }
 
 export interface KitHandlers {
@@ -52,7 +53,7 @@ export function KitFace({ def, slots, valueOf, onChange, onLoad, onPad, onStanda
   useEffect(() => {
     let live = true
     void import('../patch/instruments').then(({ INSTRUMENTS }) => {
-      if (live) setChoices(INSTRUMENTS.map(({ id, name, category }) => ({ id, name, category })))
+      if (live) setChoices(INSTRUMENTS.map(({ id, name, category, group }) => ({ id, name, category, group })))
     })
     return () => {
       live = false
@@ -140,17 +141,23 @@ export function KitFace({ def, slots, valueOf, onChange, onLoad, onPad, onStanda
           >
             <option value="">{choices ? (pad ? 'Replace…' : 'Load…') : 'Loading…'}</option>
             {choices &&
-              SHELF_ORDER.map((shelf) => {
+              SHELF_ORDER.flatMap((shelf) => {
+                const label = shelf === 'sfx' ? 'Sound effects' : shelf[0].toUpperCase() + shelf.slice(1)
                 const items = choices.filter((c) => c.category === shelf)
-                return items.length ? (
-                  <optgroup key={shelf} label={shelf === 'sfx' ? 'Sound effects' : shelf[0].toUpperCase() + shelf.slice(1)}>
-                    {items.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
+                // The shelf's own first, then each group of it under its own
+                // heading: the drums, then each kit's.
+                const groups = [...new Set(items.map((c) => c.group))]
+                return groups.map((group) => (
+                  <optgroup key={`${shelf}:${group ?? ''}`} label={group ? `${label} · ${group}` : label}>
+                    {items
+                      .filter((c) => c.group === group)
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
                   </optgroup>
-                ) : null
+                ))
               })}
           </select>
           {pad && (

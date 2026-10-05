@@ -12,6 +12,7 @@ export interface MenuContext {
   bounceSong: () => void
   bounceStems: (mix: StemMix) => void
   exportMidi: () => void
+  importMidi: () => void
   /** A bounce or a save is running, and another would compete with it. */
   busy: boolean
   canUndo: boolean
@@ -22,6 +23,11 @@ export interface MenuContext {
   toggleHistory: () => void
   midiOn: boolean
   toggleMidi: () => void
+  midiPanelOpen: boolean
+  toggleMidiPanel: () => void
+  /** Clicking a control on screen picks it for the next one moved on a controller. */
+  midiLearning: boolean
+  toggleMidiLearn: () => void
   canCopy: boolean
   canPaste: boolean
   copy: () => void
@@ -48,6 +54,8 @@ export interface MenuContext {
   setCompact: (on: boolean) => void
   cableColors: 'signal' | 'module'
   setCableColors: (by: 'signal' | 'module') => void
+  cableOpacity: number
+  setCableOpacity: (opacity: number) => void
   appearance: Appearance
   setAppearance: (next: Appearance) => void
   /** The utilities open now; see `utilities/index.ts`. */
@@ -88,6 +96,8 @@ export function buildMenus(ctx: MenuContext): MenuDef[] {
         },
         // The notes rather than the sound, for another DAW or a game's sequencer.
         { kind: 'action', label: 'Export MIDI...', onSelect: ctx.exportMidi },
+        // A MIDI file in: a project of its own, or tracks added to this one.
+        { kind: 'action', label: 'Import MIDI...', onSelect: ctx.importMidi },
       ],
     },
     {
@@ -117,6 +127,10 @@ export function buildMenus(ctx: MenuContext): MenuDef[] {
         { kind: 'separator' },
         // Beside the sound card, as the other thing plugged into this machine.
         { kind: 'toggle', label: 'MIDI input', checked: ctx.midiOn, onSelect: ctx.toggleMidi },
+        // What a controller's knobs and buttons are mapped onto, and a monitor
+        // of what it sends.
+        { kind: 'toggle', label: 'MIDI controllers', checked: ctx.midiPanelOpen, onSelect: ctx.toggleMidiPanel },
+        { kind: 'toggle', label: 'MIDI learn', checked: ctx.midiLearning, onSelect: ctx.toggleMidiLearn },
         // Where preferences live in most programs. It is this machine's sound
         // card, so it belongs to no project.
         { kind: 'action', label: 'Audio settings...', onSelect: ctx.openAudioSettings },
@@ -196,6 +210,16 @@ export function buildMenus(ctx: MenuContext): MenuDef[] {
             label: by === 'signal' ? 'By signal' : 'By module',
             checked: ctx.cableColors === by,
             onSelect: () => ctx.setCableColors(by),
+          })),
+        },
+        {
+          kind: 'submenu',
+          label: 'Cables',
+          items: ([[1, 'Solid'], [0.5, 'Faded'], [0.22, 'Faint']] as const).map(([o, label]) => ({
+            kind: 'toggle' as const,
+            label,
+            checked: Math.abs(ctx.cableOpacity - o) < 0.01,
+            onSelect: () => ctx.setCableOpacity(o),
           })),
         },
         { kind: 'separator' },

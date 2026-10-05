@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
-import type { ParamSpec } from '../patch/param'
+import { denormalize, type ParamSpec } from '../patch/param'
+import { useAutomation } from './AutomationContext'
 import { useKnobHelp } from './KnobHelp'
 import { ContextMenu } from './Menu'
 
@@ -21,7 +22,8 @@ interface Props {
  */
 export function Switch({ spec, value, onChange }: Props) {
   const steps = spec.steps ?? []
-  const current = Math.round(value)
+  const automation = useAutomation(spec.id)
+  const current = automation.position !== null ? Math.round(denormalize(spec, automation.position)) : Math.round(value)
   const help = useKnobHelp(spec.label)
   const buttons = useRef<(HTMLButtonElement | null)[]>([])
   const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null)
@@ -37,7 +39,8 @@ export function Switch({ spec, value, onChange }: Props) {
 
   return (
     <div
-      className="switch"
+      className={`switch${automation.automated ? ' automated' : ''}`}
+      data-midi-param={spec.id}
       {...help}
       onContextMenu={(e) => {
         e.preventDefault()
@@ -96,6 +99,12 @@ export function Switch({ spec, value, onChange }: Props) {
               disabled: current === fallback,
               onSelect: () => onChange(fallback),
             },
+            ...(automation.automate
+              ? [
+                  { kind: 'separator' as const },
+                  { kind: 'action' as const, label: 'Automate in this pattern', onSelect: automation.automate },
+                ]
+              : []),
           ]}
           onClose={() => setMenuAt(null)}
         />

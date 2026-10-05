@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ConfirmButton } from './ConfirmButton'
 import { CATEGORIES, LIBRARY, type Category, type Template } from '../patch/library'
@@ -15,6 +15,10 @@ import {
 
 interface Props {
   onPick: (template: Template) => void
+  /** Hear a sound before choosing it, and stop hearing it; and which is playing. */
+  onAudition?: (template: Template) => void
+  onStopAudition?: () => void
+  auditioning?: string | null
   onClose: () => void
   /**
    * Put the rack on the bench onto the My patches shelf. Returns the name it
@@ -104,7 +108,7 @@ function itemOfMine(p: MyPatch): Item {
  * the left and right arrows, so the hands never leave the arrow keys; a
  * click on one does the same.
  */
-export function LibraryDialog({ onPick, onClose, onSave }: Props) {
+export function LibraryDialog({ onPick, onClose, onSave, onAudition, onStopAudition, auditioning }: Props) {
   const [shelf, setShelf] = useState<Shelf>(lastShelf)
   const [at, setAt] = useState(0)
   const [mine, setMine] = useState(loadMyPatches)
@@ -166,6 +170,7 @@ export function LibraryDialog({ onPick, onClose, onSave }: Props) {
 
   const pick = (item: Item) => {
     noteRecent(item.template.id)
+    onStopAudition?.()
     onPick(item.template)
   }
 
@@ -208,6 +213,10 @@ export function LibraryDialog({ onPick, onClose, onSave }: Props) {
       if (e.key === 'Escape') {
         e.preventDefault()
         onClose()
+      } else if (e.key === ' ' && shown[at] && onAudition) {
+        // Space hears the row the keyboard is on, as Enter loads it.
+        e.preventDefault()
+        onAudition(shown[at].template)
       } else if (e.key === 'ArrowDown') go(at + 1)
       else if (e.key === 'ArrowUp') go(at - 1)
       else if (e.key === 'ArrowRight') shift(1)
@@ -293,55 +302,77 @@ export function LibraryDialog({ onPick, onClose, onSave }: Props) {
             {shown.map((item, i) => {
               const id = item.template.id
               const starred = favourites.includes(id)
+              // A heading where a group starts: each kit's drums under its name.
+              const group = item.template.group
+              const heading = group && group !== shown[i - 1]?.template.group ? group : null
               return (
-                <li key={id} className="library-item">
-                  <button
-                    className={`library-row${i === at ? ' at' : ''}`}
-                    ref={(el) => {
-                      rows.current[i] = el
-                    }}
-                    onClick={() => pick(item)}
-                    onPointerEnter={() => setAt(i)}
-                    tabIndex={i === at ? 0 : -1}
-                    type="button"
-                  >
-                    <span className="library-name">{item.template.name}</span>
-                    <span className="library-tutorial">{item.badge}</span>
-                    <span className="library-description">{item.template.description}</span>
-                    {item.template.teaches && <span className="library-teaches">{item.template.teaches}</span>}
-                    {item.template.tip && <span className="library-tip">{item.template.tip}</span>}
-                  </button>
-                  {/* Beside the row rather than in it: a button inside a button
-                      is not a thing a browser will let be clicked on its own. */}
-                  <div className="library-actions">
+                <Fragment key={id}>
+                  {heading && (
+                    <li className="library-group" role="presentation">
+                      {heading}
+                    </li>
+                  )}
+                  <li className="library-item">
                     <button
-                      className={`library-star${starred ? ' on' : ''}`}
-                      onClick={() => star(id)}
-                      title={starred ? 'Take off Favourites' : 'Add to Favourites (F)'}
-                      aria-label={starred ? `Take ${item.template.name} off Favourites` : `Add ${item.template.name} to Favourites`}
-                      aria-pressed={starred}
-                      tabIndex={-1}
+                      className={`library-row${i === at ? ' at' : ''}`}
+                      ref={(el) => {
+                        rows.current[i] = el
+                      }}
+                      onClick={() => pick(item)}
+                      onPointerEnter={() => setAt(i)}
+                      tabIndex={i === at ? 0 : -1}
                       type="button"
                     >
-                      {starred ? '★' : '☆'}
+                      <span className="library-name">{item.template.name}</span>
+                      <span className="library-tutorial">{item.badge}</span>
+                      <span className="library-description">{item.template.description}</span>
+                      {item.template.teaches && <span className="library-teaches">{item.template.teaches}</span>}
+                      {item.template.tip && <span className="library-tip">{item.template.tip}</span>}
                     </button>
-                    {item.mine && (
-                      <ConfirmButton
-                        // Keyed by shelf as well, so a delete half-asked on
-                        // one shelf is not still asking on the next.
-                        key={`${shelf}:${id}`}
-                        className="library-delete"
-                        onConfirm={() => remove(id)}
-                        ask="Delete?"
-                        title="Delete from My patches"
-                        aria-label={`Delete ${item.template.name}`}
+                    {/* Beside the row rather than in it: a button inside a button
+                        is not a thing a browser will let be clicked on its own. */}
+                    <div className="library-actions">
+                      {onAudition && (
+                        <button
+                          className={`library-listen${auditioning === id ? ' on' : ''}`}
+                          onClick={() => (auditioning === id ? onStopAudition?.() : onAudition(item.template))}
+                          title={auditioning === id ? 'Stop' : 'Hear it first, without loading it (Space)'}
+                          aria-label={auditioning === id ? `Stop ${item.template.name}` : `Hear ${item.template.name}`}
+                          tabIndex={-1}
+                          type="button"
+                        >
+                          {auditioning === id ? '■' : '▶'}
+                        </button>
+                      )}
+                      <button
+                        className={`library-star${starred ? ' on' : ''}`}
+                        onClick={() => star(id)}
+                        title={starred ? 'Take off Favourites' : 'Add to Favourites (F)'}
+                        aria-label={starred ? `Take ${item.template.name} off Favourites` : `Add ${item.template.name} to Favourites`}
+                        aria-pressed={starred}
                         tabIndex={-1}
+                        type="button"
                       >
-                        ×
-                      </ConfirmButton>
-                    )}
-                  </div>
-                </li>
+                        {starred ? '★' : '☆'}
+                      </button>
+                      {item.mine && (
+                        <ConfirmButton
+                          // Keyed by shelf as well, so a delete half-asked on
+                          // one shelf is not still asking on the next.
+                          key={`${shelf}:${id}`}
+                          className="library-delete"
+                          onConfirm={() => remove(id)}
+                          ask="Delete?"
+                          title="Delete from My patches"
+                          aria-label={`Delete ${item.template.name}`}
+                          tabIndex={-1}
+                        >
+                          ×
+                        </ConfirmButton>
+                      )}
+                    </div>
+                  </li>
+                </Fragment>
               )
             })}
           </ul>

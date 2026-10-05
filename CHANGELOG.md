@@ -4,6 +4,297 @@ What changed, newest first. The README says what Fresyn is now; this is how
 it got there. The older entries are the milestone notes that used to sit at
 the top of the README, moved here as they were written.
 
+## Tape, Clock Divider, Unison Oscillator and Low-Pass Gate
+
+Four new modules:
+
+- **Tape** (Effects): saturation, wow, flutter, a worn top end and hiss. One
+  serves the whole chord, so every note drifts with the same wow.
+- **Clock Divider** (Control): any clock in, /2, /3, /4 and /8, x2 and x4 out,
+  and an Out whose Ratio steps from x4 to /32. Multiplications measure the
+  gap between ticks; divisions count them.
+- **Unison Oscillator** (Voice): up to seven copies of a wave, spaced evenly
+  either side of the note so the stack stays in tune, spread across stereo by
+  Width, each from its own phase. Detune has a CV input, Spread.
+- **Low-Pass Gate** (Voice): a filter and a VCA opened together through a
+  modelled vactrol that opens fast and closes slower the darker it gets.
+  Strike pings it open from a trigger: the Buchla "bonk".
+
+`check-dsp` holds each to what it says: the unison's copies found in the
+spectrum where they should be, every divider output counted against its
+clock, a strike ringing down and the filter opening with the level, tape that
+is transparent at zero and wobbles, dulls, hisses and saturates on cue.
+`check-modules` fuzzes all four.
+
+**Library patches rebuilt on them.** Supersaw pad, Supersaw lead and Unison
+saw bass are each one Unison Oscillator where they were four or five
+Oscillators and a ladder of CV Utilities (the pad now seven saws, not four).
+Vinyl pad, Rust pad and Tape strings pass through a Tape instead of an LFO
+on their pitch, a Bitcrusher and a low-pass; Rust pad keeps its crusher. The
+Lo-fi Kit's after-chain is one Tape on the kit summed to mono, rather than a
+crusher and a filter a side -- two Tapes would wobble out of step. Songs that
+already use these keep their old copies. They cost the same or less: Rust
+pad 355 -> 169 us a block, Vinyl pad 354 -> 205, the Supersaw pad's seven
+saws what its four did. The Unison Oscillator works out its copies' pitch
+ratios and pans only when a knob or the Spread jack moves, not every sample.
+
+## Four kits a hundred times cheaper, and `npm run bench`
+
+A profile of the grown library found the 909, Industrial, Cinematic and
+Glitch kits each costing up to 94% of the audio budget while doing nothing:
+a pad's kick, starting its click from a Noise, could be sorted ahead of the
+Trigger that fires the pad, and the engine then stepped the whole rack a
+sample at a time. The compiler now orders every pad after what reaches its
+Trig jack; idle, those kits cost 12-20 us a block rather than 1.6-1.9 ms, and
+a song of the newest voices runs 2.8 times faster. A pad holding a Delay or
+a Granular also waits only as long as it is set to hold sound for before it
+sleeps, not the two seconds the line could.
+
+`npm run bench` measures songs, every instrument and every module against
+the audio budget; PERFORMANCE.md has the numbers. `check-song` checks that
+every kit renders a block at a time, and that pads with a short and a long
+echo sleep when they should.
+
+## The Envelope Follower
+
+A new module in **Modulation**: how loud whatever reaches it is, as a CV.
+Out (0 to 1) and Inv follow the input's loudness at its own Attack and
+Release, scaled by Gain, in peak or RMS mode; Gate is high while Out is over
+Threshold (closing a little below it, so it does not chatter), and Trig fires
+each time it opens. A kick ducking a pad, a drum loop opening a filter, a
+snare striking an envelope -- sidechaining without a compressor, and one
+sound playing another.
+
+`check-dsp` holds it to its numbers: a sine read at its peak or its RMS, Gain
+and the ceiling at 1, Attack and Release as time constants, and one Gate and
+one Trig per burst. `check-modules` fuzzes it with every other module.
+
+## Twenty-four new basses and twenty-four new leads
+
+The Bass and Leads shelves go from ten each to thirty-four each.
+
+- **Bass:** Moog, Juno sub, hoover, sequencer, octave, unison saw, 808, neuro,
+  donk, fizz, garage, dub, fretless, slap, picked, tuba, synth-koto, rubber,
+  distorted, bitcrushed and formant basses, pluck sub, drone bass and Liquid
+  Reese.
+- **Leads:** Mini, saw, brass, hollow square, arp and detuned leads; talkbox,
+  robot voice, siren and bendy leads; ocarina, recorder, shakuhachi, bagpipe
+  (with its drone on C), lead guitar and harmonica lead; Gameboy, SID, laser,
+  chime, glass, trance pluck, dirty and formant leads.
+
+Most are written with a new `synth` recipe in `instruments.ts`, which takes a
+description -- oscillators, a shaper, a filter with its own envelope or LFO,
+a mouth, the note's envelope and an effect -- and wires the rack. It centres
+any detuned unison on the note, so a voice written as 1 and 1.004 still plays
+in tune.
+
+## Fourteen new strings, and every kit's drums on the shelf
+
+The Strings & pads shelf gains solo strings -- **violin**, **viola**,
+**contrabass**, **fiddle** and **erhu** (sliding up into each note) -- and
+sections: **low**, **high**, **tremolo**, **staccato**, **swell**, **octave**
+and **tape** strings (a Mellotron's, running out after eight seconds), **sul
+ponticello** and **string harmonics**. The solo ones share a `bowed` recipe
+with the cello's body and a vibrato that arrives as the note is held; the
+sections share a `section` recipe with the String ensemble's chorus.
+
+**The kits' own drums, all 117, are on the Drums shelf**, each under its
+kit's name, so new kits can be made from any of them. The library heads each kit's
+group, and a pad's **Load…** list groups them the same way. Library entries
+take an optional `group` for it. The quietest few were given a gain stage to
+stand on their own, and the 808's two kicks are now **808 long kick** and
+**808 short kick**, so neither is mistaken for the shelf's own 808 kick.
+
+`check-instruments` checks each of those drums the way it checks any drum,
+and plays a held sound by holding it. A kit is still checked as a kit:
+every pad heard through it, the hats choking, and its hall or drive dying
+away. No two library entries may share a name.
+
+## Twenty-four new pads
+
+The Strings & pads shelf goes from seven pads to thirty-one:
+
+- **Classic synth:** OB brass pad, Juno pad, PWM strings pad, Hollow pad,
+  Sync pad (a hard-sync sweep that climbs as it is held), Supersaw pad.
+- **Airy and glassy:** Air pad (noise ringing a resonator), Bell pad, Crystal
+  pad, Frozen pad (a granulator holding the chord still).
+- **Dark and cinematic:** Dark matter (a wavefolded sine), Tension pad (a
+  semitone rub and noise that build for six seconds), Underwater pad,
+  Cathedral pad, Rust pad.
+- **Moving:** Pulsing pad, Breathing pad, Wandering pad (a random walk in
+  tune), Phaser pad, Echo pad.
+- **Voices and textures:** Ooh choir, Whisper pad, Vinyl pad, Granular cloud.
+
+Every one passes the shelf's checks: in tune across the roll, room for a
+chord, quiet after the last note. `SHELF=strings npm run check:instruments`
+checks one shelf on its own, in a fraction of the time.
+
+## Eight drum kits
+
+The Drums shelf gains **808**, **909**, **Lo-fi**, **Chiptune**, **World**,
+**Industrial**, **Cinematic** and **Glitch** kits: sixteen pads each, built
+for the kit rather than borrowed, on General MIDI's notes, with choked hats
+and the kit's own sound after it (glue, tape, drive or a hall). Rolls,
+swells, risers, a grinder and vinyl crackle play for as long as their note
+is held.
+
+They are made in `patch/kits.ts` from a handful of drum recipes (kick,
+snare, hat, clap, shaped noise, metal, a struck resonator, a chip blip).
+`check-instruments` now plays every pad of every kit on its own note: it has
+to sound, answer to velocity, fall silent, and the closed hat has to choke the
+open one.
+
+**Fixed: a pad or a voice that sounds late is no longer cut off before it
+does.** A Drum Kit pad, or a released voice, was put to sleep after 50 ms of
+silence, and a granulator reading behind what it records, or a delay between
+echoes, can be silent that long with sound still to come. Each now waits as
+long as anything in it can hold sound for later, as a resting effect already
+did. `check-song` holds a pad that sounds a third of a second late to it.
+
+## Getting around: the counter, a loop on the ruler, and Ctrl+K for everything
+
+From a review of the app's screens:
+
+- **A position counter** beside Play, as bar.beat.sixteenth and time. Click it
+  and type a bar, a bar and beat, or a time to play from there. **■ Stop**,
+  pressed again, goes back to the start, and **⏮** goes there too.
+- **The dock takes a share of the window**, four tenths until it is dragged,
+  and each view keeps its own size.
+- **The roll's toolbar is one row.** Key, Snap to key and the chord are
+  behind **Write**, Humanize is on Tools, and the hints are behind **?**, so
+  the roll gets the room.
+- **Several automation lanes open at once**, stacked, each with its own
+  height, Hide and Remove lane.
+- **A loop on the playlist's ruler**: pick bars and press **Loop**. Drag its
+  ends and clear it with ×. It is the song's own `loop`, which the game
+  runtime already played.
+- **A clip's menu** on its ▾: rename, colour, make unique, and **Mute clip**,
+  a new field on a clip that silences its notes and automation.
+- **Ctrl+K is a command palette**: every menu command, track, pattern and
+  section, and every module, by typing.
+- **Hear a library sound before loading it**: ▶ or Space plays a phrase on a
+  track of its own that is taken away afterwards.
+- **Listen at a jack**: Alt and a press on any jack hears what it carries,
+  made safe for ears, until you let go.
+- **Cables are cut away over jack names**, and **View → Cables** fades them
+  to Faded or Faint.
+- **Controller badges**: a mapped control says which of the controller's it
+  answers to, and DAW mode marks its eight tracks.
+
+`check-ux` is a new browser suite that works every one of them; `check-song`
+covers clip mute, positions and listening at a jack in the engine.
+
+## DAW mode: Mackie Control surfaces
+
+A controller in its "DAW mode" speaks Mackie Control Universal, where every
+control already has a meaning, so Fresyn now understands it without any
+learning. Tick **DAW mode (Mackie Control)** beside the controller in the
+MIDI controllers panel. The eight strips are tracks 1–8, banked by « and ».
+Faders are levels (picked up before they move anything), knobs are pans, M
+and S mute and solo, Select puts the track on the bench, and R selects it
+and arms ● Rec. Play, Stop and Record are the transport's, rewind and fast
+forward move a bar, and the arrows step through tracks and patterns.
+
+Fresyn now sends MIDI back as well. A surface's buttons light for mute,
+solo, the selected track, playing, recording and the loop. Each fader is
+told where its track's level is, so a surface without motors can show which
+faders are out of place, and each knob's ring shows its pan. Learnt mappings
+still come first.
+
+Two things for every controller came with it. Pitch bend is read, so
+Mackie-style faders can be learnt at their full fourteen bits. And an
+endless knob learnt turning one way only, whose encoding could not be told,
+puts itself right the first time it turns the other way. `mcu.ts` is pure
+and checked in `check-song`; `check-midi` drives a pretend surface in DAW
+mode and reads back what it is sent.
+
+## Recording movements, and MIDI files in
+
+**● Rec** now records controls as well as notes. Any knob, switch, fader,
+pan or send moved while it records, by mouse or by a mapped MIDI
+controller, is written into its lane in the roll's pattern at the moment it
+moved. It is written over just the stretch it moved through, and thinned
+from sixty values a second to the points that draw it. A control left still
+for a moment goes back to its lane, so the next pass plays the take. While
+Rec is armed, every edit with an undo key folds into the take, so a take of
+notes and movements together is one Ctrl+Z.
+
+**Project → Import MIDI...** reads a Standard MIDI File (format 0 or 1,
+running status, any resolution), as a new project or as tracks added at the
+playhead's bar. Each MIDI track's channel becomes a track and a pattern on
+its own lane. Its sound is the library voice nearest its General MIDI
+program, and channel 10 gets the Drum Kit. Tempo, meter and their changes
+come in, markers become sections, and volume and pan rides become strip
+lanes. `midiFile.ts` reads the bytes and `midiImport.ts` makes the song;
+both are checked in `check-song`, including a round trip through Export
+MIDI. `check-midi` imports a file both ways in the browser.
+
+## Automation lanes
+
+Knobs can move by themselves now. Any knob or switch in a rack, a strip's
+level, pan, EQ and sends, and the master and returns can have an automation
+lane in a pattern. Right-click it and choose **Automate in this pattern**, or
+pick it from the roll's **Automation…** picker. The lane opens under the roll:
+click to add points, drag them, right-click for **Linear**, **Hold** or
+**Curve**, and drag a stretch's handle to bend it.
+
+Lanes belong to patterns, as the notes do, so they repeat, trim and split
+with their clips and travel with a moved section. Outside the clips that
+automate it a knob is where its panel says, and where two clips overlap the
+later-starting one has it. A lane keeps the knob's *position* along its
+travel, so a cutoff sweep moves like a hand on the knob. Knobs are seen
+turning as the song plays. A hand on one, or a MIDI controller's slider,
+takes it from the automation until the song stops. The Song view draws each
+clip's lanes over its notes.
+
+`fill`, which live playback and `SongPlayer` share, emits the curves beside
+the notes. Live play, bounces, stems and games therefore hear the same
+automation, and the engine works out each knob's value from its curve once a
+block. A game's `setParam` wins over the automation until the new
+`releaseParam` hands the knob back; a game's `setTrackPan` wins too. The
+model is checked in `check-song`, the sound in `check-runtime`, and the
+editor, playback and taking over by hand in `check-automation`.
+
+## Mapping a controller's knobs, sliders and buttons
+
+A MIDI controller used to be a keyboard or nothing: its knobs were thrown
+away. Now **Edit → MIDI learn** maps any of them onto the app's own controls.
+Click a knob, fader, M/S, Play, Loop or ● Rec, then move a control on the
+controller. What kind of control it is gets worked out from what it sends: a
+knob or slider with ends, an endless knob (in any of the three encodings
+makers use), or a button (as a control change or a note). No controller is
+known by name, so any of them works. Sliders **pick up** the value before
+moving it, so touching one never makes the sound jump.
+
+Rack knobs follow the selected track, and the desk's controls belong to a
+track by its place in the list, so one set of mappings works in every
+project. They are kept with this machine's preferences, can be exported and
+imported as a file, and can listen to one input or any. The **MIDI
+controllers** panel lists them, lets each be changed or forgotten, and
+monitors every message arriving and what it did. `midiMap.ts` is free of the
+browser and checked in `check-song`; `check-midi` plays a pretend controller
+through learn, pick-up, a button on Play and a pad on a track's mute.
+
+## A runtime for games
+
+`SongPlayer` can now be played *into* as well as listened to. `noteOn`,
+`trigger` and `noteOff` play a track from the game, straight away or on a
+frame `frameOf` names on the song's grid; `setTrackGain`, `setTrackPan` and
+`setTrackMute` mix it; `setTempoScale` slows or speeds the whole song; and
+`clock`, `key` and `levels()` read where the music is, what key it is in and
+how loud each track is. A game's own notes are handed back to the engine
+after a section change or a change of tempo drops the queue, so a held sound
+is always let go of.
+
+`npm run build:runtime` packages it for a browser: `RuntimeHost` runs several
+projects side by side on one clock -- music, sound effects, jingles -- inside
+an AudioWorklet, each with its own fade and low-pass muffle, and
+`FresynRuntime` is the game's side, reporting each player's bar, beat and
+levels sixty times a second. A sound effect synced to another player's grid
+lands on its beat. The types a game needs moved to `song/game.ts`, which
+imports nothing. `check-runtime` covers notes, the grid, held notes through a
+rewind, tempo, the mix and the host. Arknoise is the first game on it.
+
 ## Scales and chords, progressions, and Euclidean rhythms
 
 Three utilities for getting a song started. **Scales & chords** shows a key

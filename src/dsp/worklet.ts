@@ -98,6 +98,15 @@ class FresynProcessor extends AudioWorkletProcessor {
       case 'allNotesOff':
         this.engine.allNotesOff()
         break
+      case 'hold':
+        this.engine.hold(msg.track, msg.key, msg.on)
+        break
+      case 'clearAutomation':
+        this.engine.clearAutomation()
+        break
+      case 'listen':
+        this.engine.listenAt(msg.track, msg.slot)
+        break
     }
   }
 

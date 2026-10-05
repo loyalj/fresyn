@@ -18,11 +18,16 @@ import { loadInitialDoc, useDocument } from './hooks/useDocument'
 import { useProjectFiles } from './hooks/useProjectFiles'
 import { useStableActions } from './hooks/useStableActions'
 import { useUtilities } from './hooks/useUtilities'
+import { useAudition } from './hooks/useAudition'
 import { useTakes } from './hooks/useTakes'
 import { useTriggers } from './hooks/useTriggers'
 import { useInput } from './input/useInput'
-import { LiveNotes } from './input/liveNotes'
-import { useMidiInput } from './input/midi'
+import { LiveMoves, LiveNotes } from './input/liveNotes'
+import { parseMidi, readMessage, useMidiInput } from './input/midi'
+import type { TargetContext } from './input/midiTargets'
+import { useMidiControl } from './input/useMidiControl'
+import { useMcu, type McuContext } from './input/useMcu'
+import { PPQ } from './song/types'
 import { defOf } from './patch/defs'
 import { defaultPatch } from './patch/defaultPatch'
 import { sampleIdsIn, sampleIdsInLocalStorage } from './patch/sampleRefs'
@@ -54,6 +59,12 @@ import { engineEvents, KIT_ROW_ZERO, kitRow, kitTarget, noteTarget, type NoteTar
 import { DEFAULT_KIT, kitSlots, NOT_IN_A_PAD, padPatch, setKitSlot, updateKitSlot, withPadView } from './patch/kit'
 import { midiName, rowForMidi, rowZero, tuningOf } from './song/tuning'
 import { songEnd } from './song/schedule'
+import { automationBindings, bindingOf, laneOf, movedTargets, recordOver, setLane, type AutomationBinding } from './song/automation'
+import { unmapValue } from './dsp/automation'
+import type { Touch } from './ui/useNoteRecording'
+import { AutomationContext, AutomationScope, AutomationView, type AutomationUi } from './ui/AutomationContext'
+import { laneOptions, targetFormat, targetLabel } from './ui/automationLabels'
+import type { RollLanes } from './ui/PianoRoll'
 import { sectionAt } from './song/section'
 import {
   addPattern,
@@ -72,12 +83,13 @@ import {
 import { toStoredProject, type Rack } from './song/project'
 import { BENCH_TRACK, benchSong } from './song/types'
 import type { Patch, PatchModule } from './patch/types'
-import { Cables, type DragState } from './ui/Cables'
+import { Cables, type DragState, type LabelRect } from './ui/Cables'
 import { nearestCable, type JackGeometry } from './ui/cableGeometry'
 import { EngineContext, EnginePrefix } from './ui/EngineContext'
 import { SampleContext } from './ui/SampleContext'
 import { jackKey } from './ui/Jack'
-import { ModuleSearch, type SearchPick } from './ui/ModuleSearch'
+import { ModuleSearch, type SearchCommand, type SearchPick } from './ui/ModuleSearch'
+import type { MenuItem } from './ui/Menu'
 import { asNotice, NOTICE_FADE_MS, warn, type NoticeInput } from './ui/notice'
 import { KnobHelpCard, KnobHelpOn } from './ui/KnobHelp'
 import { saveMyPatch } from './patch/myLibrary'
@@ -89,13 +101,19 @@ import { RackUnit, type RackActions } from './ui/RackUnit'
 import { AudioSettingsDialog } from './ui/AudioSettingsDialog'
 import { HistoryPanel } from './ui/HistoryPanel'
 import { UtilityPanel } from './ui/UtilityPanel'
+import { MidiPanel } from './ui/MidiPanel'
+import { MidiImportDialog } from './ui/MidiImportDialog'
+import { parseMidiFile } from './song/midiFile'
+import { readImport, songFromImport, type ImportedMidi, type ImportedPart } from './song/midiImport'
+import { GM_DEFAULT_PROGRAM, GM_DRUMS, gmVoice } from './song/gm'
+import { barsOf } from './song/timeline'
 import { utilityById, type UtilityTrack } from './utilities'
 import { BounceDialog } from './ui/BounceDialog'
 import type { StemMix } from './audio/renderSong'
 import { SongDock } from './ui/SongDock'
 import { ThemeContext, useAppearanceState } from './ui/ThemeContext'
 import { UnitSpine } from './ui/UnitSpine'
-import { dockHeightWithin, useDockMax } from './ui/useDockMax'
+import { DOCK_DEFAULT_SHARE, dockHeightWithin, useDockMax, useWindowHeight } from './ui/useDockMax'
 import { useRackDrag } from './ui/useRackDrag'
 import { addNote, copyNotes, editNote, nextNoteId, removeNote, sameSound } from './patch/notes'
 import type { RackNote } from './patch/types'
@@ -142,6 +160,8 @@ const CABLE_HUES = [0, 45, 90, 160, 200, 250, 290, 330]
  */
 let moduleClip: ModuleClip | null = null
 const AUTOSAVE_MS = 400
+/** No inputs, the same array every time. */
+const NO_DEVICES: readonly string[] = []
 
 /** Each patch's sample ids, kept while the patch lives: a knob turn changes no patch. */
 const idsOfPatch = new WeakMap<object, string[]>()
@@ -181,6 +201,7 @@ export default function App() {
     setPatternId,
     commitDoc,
     breakCoalesce,
+    setTake,
     editRack,
     editPatch,
     editSong,
@@ -245,6 +266,8 @@ export default function App() {
    * it between them.
    */
   const samples = useMemo(() => new SampleLibrary(), [])
+  /** A library sound being heard before it is loaded. */
+  const audition = useAudition(engine)
   /**
    * Plays the song through that engine. One for the life of the page, like
    * the engine: it holds the lookahead cursor, and rebuilding it mid-loop
@@ -305,6 +328,8 @@ export default function App() {
   const [flipped, setFlipped] = useState(false)
   const [turning, setTurning] = useState(false)
   const [geometry, setGeometry] = useState<JackGeometry>({})
+  /** Where the jacks' labels are on the back, for cutting the cables away over them. */
+  const [labelRects, setLabelRects] = useState<LabelRect[]>([])
   const [hoveredCable, setHoveredCable] = useState<string | undefined>()
   /**
    * The rack stands down while a menu is open. Without it, arrowing down a
@@ -348,6 +373,8 @@ export default function App() {
   /** Smaller units, to see more of a long rack at once. */
   const [compact, setCompact] = useState(() => loadPrefs().compact ?? false)
   /** How cables without a colour of their own are coloured. */
+  /** How solid the cables are: View, Cables. Faded to work on the knobs on the back. */
+  const [cableOpacity, setCableOpacity] = useState(() => loadPrefs().cableOpacity ?? 1)
   const [cableColors, setCableColors] = useState<'signal' | 'module'>(
     () => loadPrefs().cableColors ?? 'signal',
   )
@@ -356,7 +383,7 @@ export default function App() {
   const [dock, setDock] = useState(() => loadDock() ?? { open: false, height: 300 })
   /** The dock as drawn: its saved height, within what this window allows. */
   const dockMax = useDockMax()
-  const dockHeight = dockHeightWithin(dock.height, dockMax)
+  const windowHeight = useWindowHeight()
   /**
    * Whether the dock is showing the roll or the playlist.
    *
@@ -375,7 +402,14 @@ export default function App() {
   // Remembered, like the dock's height: which view it shows and what the roll
   // plays are how you left the room, not part of the song.
   useEffect(() => savePrefs({ dockView, rollPlays }), [dockView, rollPlays])
+  /**
+   * The dock as drawn: its view's share of the window, within what the
+   * window allows. A view never dragged takes `DOCK_DEFAULT_SHARE`.
+   */
+  const dockHeight = dockHeightWithin(Math.round((dock.shares?.[dockView] ?? DOCK_DEFAULT_SHARE) * windowHeight), dockMax)
   const [looping, setLooping] = useState(true)
+  /** The automation lanes open under the roll, by target. A view, so not saved. */
+  const [rollLanesOpen, setRollLanesOpen] = useState<string[]>([])
 
   const rackRef = useRef<HTMLDivElement>(null)
   const jackEls = useRef(new Map<string, HTMLElement>())
@@ -700,9 +734,14 @@ export default function App() {
       transport.setLoop(looping ? sectionSpan : null)
       return
     }
+    // The loop drawn on the playlist's ruler, wherever the arrangement plays.
+    if (dockView !== 'roll' && playSong.loop) {
+      transport.setLoop(looping ? playSong.loop : null)
+      return
+    }
     const end = songEnd(playSong)
     transport.setLoop(looping && end > 0 ? { from: 0, to: end } : null)
-  }, [transport, playSong, looping, contextSpan, sectionSpan])
+  }, [transport, playSong, looping, contextSpan, sectionSpan, dockView])
 
   // Choosing a section while the song plays jumps there, as clicking a marker
   // on any arrangement does, and loops it from then on.
@@ -757,6 +796,55 @@ export default function App() {
   useEffect(() => {
     transport.setTargets(targets)
   }, [transport, targets])
+
+  // --- automation ------------------------------------------------------
+  /**
+   * Where each lane's knob is in the engine. Kept by what it says, like the
+   * targets: the racks are replaced on every knob turn, and a new map would
+   * have the transport resend every automated knob's position for nothing.
+   */
+  const bindingList = automationBindings(song, racks)
+  const bindingKey = JSON.stringify([...bindingList])
+  const bindings = useMemo(
+    (): ReadonlyMap<string, AutomationBinding> => bindingList,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [bindingKey],
+  )
+  useEffect(() => {
+    transport.setAutomation(bindings)
+  }, [transport, bindings])
+
+  /** Where automated knobs are drawn while the song plays. One for the life of the page. */
+  const automationView = useMemo(() => new AutomationView(transport), [transport])
+  useEffect(() => {
+    automationView.setSongs(playSong, song)
+  }, [automationView, playSong, song])
+
+  /** Controls moved by hand while the song plays, for the roll's Rec to write into lanes. */
+  const liveMoves = useMemo(() => new LiveMoves(), [])
+
+  /**
+   * A hand on a control while the song plays -- a knob turned, a fader
+   * pulled, a controller's slider -- takes it from any automation until the
+   * song stops (or, recording, until the hand lets go), and is news for the
+   * recorder. Seen here as the document changing under the control, whoever
+   * changed it. Held whether or not it has a lane yet: recording is about to
+   * give it one, and the take must not be played back over the hand making it.
+   */
+  const handled = useRef({ song, racks })
+  useEffect(() => {
+    const was = handled.current
+    handled.current = { song, racks }
+    if (!transport.state.playing) return
+    const tracks = new Set(song.tracks.map((t) => t.id))
+    for (const { target, value } of movedTargets(was, { song, racks })) {
+      const b = bindingOf(target, tracks, racks)
+      if (!b) continue
+      engine.hold(b.track, b.key, true)
+      automationView.hold(target)
+      liveMoves.emit({ target, position: unmapValue(b.map, value) })
+    }
+  }, [song, racks, transport, engine, automationView, liveMoves])
 
   /**
    * Every track as the utilities see it -- how it is played, and how a real
@@ -907,6 +995,15 @@ export default function App() {
     // Where nothing moved, the geometry the cables already have stands, and
     // nothing re-renders for it.
     setGeometry((was) => (sameGeometry(was, next) ? was : next))
+    const labels: LabelRect[] = []
+    host.querySelectorAll<HTMLElement>('.unit-face-back .jack-label').forEach((el) => {
+      const r = el.getBoundingClientRect()
+      if (r.width === 0) return
+      labels.push({ x: r.left - base.left, y: r.top - base.top, w: r.width, h: r.height })
+    })
+    setLabelRects((was) =>
+      was.length === labels.length && was.every((r, i) => r.x === labels[i].x && r.y === labels[i].y && r.w === labels[i].w) ? was : labels,
+    )
   }, [])
 
   // Jack positions are read off the DOM, so they are only meaningful once the
@@ -1134,8 +1231,42 @@ export default function App() {
    * controller is the C4 you hear whatever the patch is tuned to.
    */
   const [midiOn, setMidiOn] = useState(() => loadPrefs().midi === true)
+  const turnMidiOn = useCallback((on: boolean) => {
+    setMidiOn(on)
+    savePrefs({ midi: on })
+  }, [])
   const midiHeld = useRef(new Map<number, { track: string; pitch: number }>())
-  const midi = useMidiInput(midiOn, (m) => {
+  /**
+   * What a controller's mapped knobs act on, as of this render: the rack on
+   * the bench and the song. Read through a ref, because messages arrive
+   * between renders and must not act on a rack from two renders ago.
+   */
+  const midiTargets = useRef<TargetContext>(null!)
+  midiTargets.current = {
+    patch,
+    values,
+    setParam,
+    press: triggers.press,
+    release: triggers.release,
+    song,
+    editSong,
+  }
+  const midiControl = useMidiControl({
+    context: useCallback(() => midiTargets.current, []),
+    notice: useCallback((text: string) => setNotice(text), []),
+  })
+  /** The MIDI controllers panel: Edit, MIDI controllers. A view, so not saved. */
+  const [midiPanelOpen, setMidiPanelOpen] = useState(false)
+  const midiIO = useMidiInput(midiOn, (data, device) => {
+    // A control mapped onto something, or being learnt, is taken there and
+    // goes no further; everything else that is a note plays the bench, as a
+    // controller's keys always have.
+    const message = readMessage(data, device)
+    // Anything learnt first; then, for a surface in DAW mode, what Mackie
+    // Control says each control means.
+    if (message && midiControl.handle(message, mcu.handle)) return
+    const m = parseMidi(data)
+    if (!m) return
     if (m.kind === 'on') {
       const pitch = rowForMidi(m.note, tuning)
       midiHeld.current.set(m.note, { track: trackId, pitch })
@@ -1148,6 +1279,58 @@ export default function App() {
     midiHeld.current.delete(m.note)
     transport.release(held.track, held.pitch)
     liveNotes.emit({ kind: 'off', ...held, velocity: 0, source: 'midi' })
+  })
+  const midi = midiIO.status
+
+  /**
+   * What a controller in DAW mode acts on, as of this render. Read through a
+   * ref, as the mappings' is, because its messages arrive between renders.
+   */
+  const mcuTargets = useRef<McuContext>(null!)
+  mcuTargets.current = {
+    song,
+    trackId,
+    select: setSelected,
+    editSong,
+    playing: () => transport.state.playing,
+    // The dock's own Play, which knows where to start from.
+    play: () => document.querySelector<HTMLElement>('.dock-play')?.click(),
+    stop: () => transport.stop(),
+    jumpBars: (n) => {
+      if (!transport.state.playing) return
+      const bars = barsOf(playSong)
+      const now = transport.state.tick
+      const here = bars.snapBar(now, 'floor')
+      // Back from just past a barline goes to the bar before, as a CD player's does.
+      const to = n > 0 ? bars.snapBar(now + 1, 'ceil') : now - here < PPQ / 2 ? bars.snapBar(Math.max(0, here - 1), 'floor') : here
+      transport.stop()
+      void transport.play(Math.max(0, to))
+    },
+    looping,
+    setLooping,
+    recording: () => !!document.querySelector('[data-midi-param="record"][aria-pressed="true"]'),
+    toggleRecord: () => {
+      // Rec is on the roll: shown first if it is not.
+      const rec = () => document.querySelector<HTMLElement>('[data-midi-scope="transport"][data-midi-param="record"]')
+      if (rec()) {
+        rec()!.click()
+        return
+      }
+      setDockView('roll')
+      setDock((d) => (d.open ? d : { ...d, open: true }))
+      window.setTimeout(() => rec()?.click(), 300)
+    },
+    stepPattern: (n) => {
+      const at = song.patterns.findIndex((x) => x.id === activePattern)
+      const next = song.patterns[at + n]
+      if (next) setPatternId(next.id)
+    },
+  }
+  const mcu = useMcu({
+    ready: midi.state === 'ready',
+    devices: midi.state === 'ready' ? midi.devices : NO_DEVICES,
+    send: midiIO.send,
+    context: useCallback(() => mcuTargets.current, []),
   })
   // Said once, when it changes: which controllers were found, or why not.
   useEffect(() => {
@@ -1163,6 +1346,75 @@ export default function App() {
       setNotice(warn(`MIDI was not allowed: ${midi.error}`))
     }
   }, [midi])
+  // Badges on mapped controls while a controller is connected to use them.
+  const { setBadges } = midiControl
+  const midiConnected = midi.state === 'ready' && midi.devices.length > 0
+  useEffect(() => setBadges(midiConnected), [midiConnected, setBadges])
+
+  // Nothing can be learnt with nothing listening. A learn asked for before
+  // MIDI was on starts once it is.
+  const { setLearning } = midiControl
+  const learnWhenReady = useRef(false)
+  useEffect(() => {
+    if (midi.state === 'ready') {
+      if (learnWhenReady.current) setLearning(true)
+    } else if (midi.state !== 'asking') setLearning(false)
+    if (midi.state !== 'asking') learnWhenReady.current = false
+  }, [midi.state, setLearning])
+
+  // --- MIDI files in ---------------------------------------------------
+  const midiFileInput = useRef<HTMLInputElement>(null)
+  /** A MIDI file read and waiting for where it goes. */
+  const [midiImport, setMidiImport] = useState<{ name: string; imp: ImportedMidi } | null>(null)
+  const onMidiFile = useCallback(async (file: File) => {
+    const parsed = parseMidiFile(new Uint8Array(await file.arrayBuffer()))
+    if ('error' in parsed) {
+      setNotice(warn(`${file.name}: ${parsed.error}`))
+      return
+    }
+    const imp = readImport(parsed)
+    if (!imp.parts.length) {
+      setNotice(warn(`${file.name} has no notes in it`))
+      return
+    }
+    setMidiImport({ name: file.name.replace(/\.(mid|midi|kar)$/i, ''), imp })
+  }, [])
+  /** Where added tracks go: the bar the playhead is in, or starts from. */
+  const importBar = barsOf(song).snapBar(transport.state.tick, 'floor')
+  const importMidi = useCallback(
+    async (into: 'new' | 'add') => {
+      const pending = midiImport
+      if (!pending) return
+      setMidiImport(null)
+      // The library is fetched on the way, as it is for a kit's pads.
+      const { INSTRUMENTS } = await import('./patch/instruments')
+      const rackFor = (part: ImportedPart): Rack => {
+        const id = part.drums ? GM_DRUMS : gmVoice(part.program ?? GM_DEFAULT_PROGRAM)
+        const inst = INSTRUMENTS.find((x) => x.id === id) ?? INSTRUMENTS[0]
+        const built = inst.make()
+        return { patch: built.patch, values: { ...initialValues(built.patch), ...built.values } }
+      }
+      breakCoalesce()
+      if (into === 'new') {
+        const made = songFromImport(pending.imp, rackFor, { kind: 'new' })
+        files.forgetHandle()
+        commitDoc(() => ({ name: pending.name, song: made.song, racks: made.racks }), undefined, `Import ${pending.name}`)
+        setSelected(made.tracks[0])
+        setPatternId(made.song.patterns[0].id)
+        setNotice(`Opened ${pending.name}: ${made.tracks.length} tracks -- Ctrl+Z to undo`)
+        return
+      }
+      let added: string[] = []
+      commitDoc((doc) => {
+        const made = songFromImport(pending.imp, rackFor, { kind: 'add', song: doc.song, at: importBar })
+        added = made.tracks
+        return { ...doc, song: made.song, racks: { ...doc.racks, ...made.racks } }
+      }, undefined, `Add ${pending.name}`)
+      setNotice(`Added ${pending.imp.parts.length} tracks from ${pending.name} -- Ctrl+Z to undo`)
+      if (added[0]) setSelected(added[0])
+    },
+    [midiImport, importBar, breakCoalesce, commitDoc, files, setSelected, setPatternId],
+  )
 
   /**
    * No confirmation step any more. It used to be a button on the bar, where a
@@ -1222,7 +1474,13 @@ export default function App() {
   /** Show or hide the music dock, from the View menu or Ctrl+M. */
   const toggleDock = useCallback(() => setDock((d) => ({ ...d, open: !d.open })), [])
   const setDockOpen = useCallback((open: boolean) => setDock((d) => ({ ...d, open })), [])
-  const setDockHeight = useCallback((height: number) => setDock((d) => ({ ...d, height })), [])
+  // Kept as a share of the window, for the view showing, so each view keeps
+  // its own size and a bigger window gives it more room.
+  const setDockHeight = useCallback(
+    (height: number) =>
+      setDock((d) => ({ ...d, height, shares: { ...d.shares, [dockView]: Math.min(0.9, height / Math.max(1, windowHeight)) } })),
+    [dockView, windowHeight],
+  )
   /**
    * The dock's edge mid-drag. Written to the page's style directly and not
    * kept: the dock commits the height once, when the edge is let go. Through
@@ -1425,7 +1683,28 @@ export default function App() {
       window.scrollTo({ top: 0 })
     },
     register: registerJack,
-    jackDown: (ref, kind, e) => cables.onJackDown(ref, kind, e),
+    jackDown: (ref, kind, e) => {
+      // Alt and a press: hear what this jack carries, for as long as it is held.
+      if (e.altKey && e.button === 0) {
+        e.preventDefault()
+        void engine.start().then(() => {
+          if (!engine.listenAt(trackId, `${enginePrefix}${ref.module}`, ref.port, kind)) {
+            setNotice(kind === 'input' ? 'Nothing is patched into that jack to listen to' : 'Nothing to hear there')
+            return
+          }
+          setNotice(`Listening at ${ref.module} ${ref.port} -- let go to hear the rack again`)
+          const stop = () => {
+            engine.stopListening()
+            window.removeEventListener('pointerup', stop)
+            window.removeEventListener('blur', stop)
+          }
+          window.addEventListener('pointerup', stop)
+          window.addEventListener('blur', stop)
+        })
+        return
+      }
+      cables.onJackDown(ref, kind, e)
+    },
     jackKey: (ref, kind, action) => cables.onJackKey(ref, kind, action),
     move: (id, delta) => editPatch((p) => moveModule(p, id, delta)),
     duplicate: onDuplicateModule,
@@ -1459,6 +1738,88 @@ export default function App() {
     [rack.order, byId],
   )
 
+  /**
+   * A knob's right-click, Automate in this pattern: a lane for it in the
+   * pattern being written, opened under the roll, with the roll showing.
+   */
+  const automate = useCallback(
+    (target: string) => {
+      const pattern = song.patterns.find((p) => p.id === activePattern)
+      if (!pattern) return
+      if (!pattern.automation?.some((l) => l.target === target)) {
+        editSong((s) => setLane(s, activePattern, target, { target, points: [] }))
+      }
+      setRollLanesOpen((open) => (open.includes(target) ? open : [...open, target]))
+      setDockView('roll')
+      setDock((d) => (d.open ? d : { ...d, open: true }))
+      setNotice(`Automating ${targetLabel(target, song, racks)} in ${pattern.name} -- click in the lane under the roll to add points`)
+    },
+    [song, racks, activePattern, editSong],
+  )
+  const automationUi = useStableActions({ automate })
+  const automationContext = useMemo<AutomationUi>(
+    () => ({ view: automationView, automate: automationUi.automate }),
+    [automationView, automationUi],
+  )
+
+  // The roll's lanes. Its names and readouts are read through a ref, so the
+  // object changes only when the lanes, the choice or the knobs on offer do.
+  const laneWords = useRef({ song, racks })
+  laneWords.current = { song, racks }
+  const laneLabel = useCallback((target: string) => targetLabel(target, laneWords.current.song, laneWords.current.racks), [])
+  const laneFormat = useCallback((target: string) => targetFormat(target, laneWords.current.racks), [])
+  const patternLanes = song.patterns.find((p) => p.id === activePattern)?.automation
+  const benchPatch = trackRack?.patch
+  const options = useMemo(
+    () => laneOptions(trackId, { ...song, tracks: song.tracks }, benchPatch ? { [trackId]: { patch: benchPatch } } : {}),
+    // Only what the list is made of: the track and its rack, and the tracks' names.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [trackId, benchPatch, song.tracks],
+  )
+  // No key to fold under: the lane commits once per gesture already, and two
+  // points clicked in quick succession are two steps of undo.
+  const onLaneChange = useCallback(
+    (target: string, lane: Parameters<typeof setLane>[3]) => editSong((s) => setLane(s, activePattern, target, lane)),
+    [editSong, activePattern],
+  )
+  /** A take so far, written over its lane in the roll's pattern, as one step of undo for the take. */
+  const recordLane = useCallback(
+    (target: string, touch: Touch, take: string) =>
+      editSong((s) => {
+        const pattern = s.patterns.find((p) => p.id === activePattern)
+        if (!pattern) return s
+        const points = touch.reduce((list, stretch) => recordOver(list, stretch), laneOf(pattern, target)?.points ?? [])
+        return setLane(s, activePattern, target, { target, points })
+      }, take),
+    [editSong, activePattern],
+  )
+  /** The hand let go of a control being recorded: its automation, with the take in it, has it back. */
+  const letGoLane = useCallback(
+    (target: string) => {
+      const b = bindingOf(target, new Set(song.tracks.map((t) => t.id)), racks)
+      if (b) engine.hold(b.track, b.key, false)
+      automationView.release(target)
+    },
+    [song.tracks, racks, engine, automationView],
+  )
+  const letGo = useStableActions({ letGoLane })
+  const rollLanes = useMemo<RollLanes>(
+    () => ({
+      list: patternLanes ?? [],
+      open: rollLanesOpen,
+      onOpen: setRollLanesOpen,
+      options,
+      label: laneLabel,
+      format: laneFormat,
+      onChange: onLaneChange,
+      moves: liveMoves,
+      record: recordLane,
+      letGo: letGo.letGoLane,
+      onTake: setTake,
+    }),
+    [patternLanes, rollLanesOpen, options, laneLabel, laneFormat, onLaneChange, liveMoves, recordLane, letGo, setTake],
+  )
+
   // What the menus do, as one object that never changes (see
   // `useStableActions`), so the bar below is rebuilt only when something it
   // shows changes -- a tick, a greyed row -- and not on every knob turn.
@@ -1469,12 +1830,25 @@ export default function App() {
     bounceSong: () => setBounceOpen('song'),
     bounceStems: (mix: StemMix) => setBounceOpen(mix),
     exportMidi: () => bounce.exportMidi(),
+    importMidi: () => midiFileInput.current?.click(),
     undo: stepBack,
     redo: stepForward,
     toggleHistory,
-    toggleMidi: () => {
-      setMidiOn(!midiOn)
-      savePrefs({ midi: !midiOn })
+    toggleMidi: () => turnMidiOn(!midiOn),
+    toggleMidiPanel: () => setMidiPanelOpen((o) => !o),
+    // Learning needs something listening and the panel to say what to do:
+    // asked for from the menu, it brings both.
+    toggleMidiLearn: () => {
+      if (midiControl.learning) {
+        midiControl.setLearning(false)
+        return
+      }
+      setMidiPanelOpen(true)
+      if (midi.state === 'ready') midiControl.setLearning(true)
+      else {
+        learnWhenReady.current = true
+        turnMidiOn(true)
+      }
     },
     copy: copyPicked,
     paste: pasteClip,
@@ -1499,6 +1873,10 @@ export default function App() {
     setCompact: (on: boolean) => {
       setCompact(on)
       savePrefs({ compact: on })
+    },
+    setCableOpacity: (opacity: number) => {
+      setCableOpacity(opacity)
+      savePrefs({ cableOpacity: opacity })
     },
     setCableColors: (by: 'signal' | 'module') => {
       setCableColors(by)
@@ -1530,6 +1908,8 @@ export default function App() {
         canRedo: redoable,
         historyOpen,
         midiOn,
+        midiPanelOpen,
+        midiLearning: midiControl.learning,
         canCopy,
         canPaste: hasClip,
         hiddenModules: inPad ? NOT_IN_A_PAD : undefined,
@@ -1539,6 +1919,7 @@ export default function App() {
         knobHelp,
         compact,
         cableColors,
+        cableOpacity,
         appearance,
         utilitiesOpen: utilities.open,
         showNotes,
@@ -1550,6 +1931,8 @@ export default function App() {
       redoable,
       historyOpen,
       midiOn,
+      midiPanelOpen,
+      midiControl.learning,
       canCopy,
       hasClip,
       inPad,
@@ -1559,11 +1942,69 @@ export default function App() {
       knobHelp,
       compact,
       cableColors,
+      cableOpacity,
       appearance,
       utilities.open,
       showNotes,
     ],
   )
+
+  // --- the command palette ----------------------------------------------
+  /**
+   * What Ctrl+K offers besides modules: every menu command, read off the
+   * menus themselves so the two never disagree, then the tracks, patterns
+   * and sections to go to. Built only while it is open.
+   */
+  const paletteCommands = useMemo((): SearchCommand[] => {
+    if (!search || search.cable) return []
+    const out: SearchCommand[] = []
+    const walk = (items: MenuItem[], path: string[], menu: string) => {
+      for (const item of items) {
+        if (item.kind === 'separator') continue
+        if (item.kind === 'submenu') {
+          walk(item.items, [...path, item.label], menu)
+          continue
+        }
+        if (item.kind === 'action' && item.disabled) continue
+        const on = item.kind === 'toggle' && item.checked
+        out.push({
+          label: [...path, item.label.replace(/\.\.\.$|…$/, '')].join(' › '),
+          detail: `${menu}${item.shortcut ? ` · ${item.shortcut}` : ''}${on ? ' · on' : ''}`,
+          run: item.onSelect,
+        })
+      }
+    }
+    // The Modules menu is the catalogue the box already lists, one by one.
+    for (const m of menus) if (m.label !== 'Modules') walk(m.items, [], m.label)
+    for (const t of song.tracks) {
+      out.push({ label: `Go to track: ${t.name}`, detail: 'Track', keywords: 'select bench', run: () => setSelected(t.id) })
+    }
+    for (const p of song.patterns) {
+      out.push({
+        label: `Open pattern: ${p.name}`,
+        detail: 'Pattern',
+        keywords: 'roll edit',
+        run: () => {
+          setPatternId(p.id)
+          setDockView('roll')
+          setDock((d) => (d.open ? d : { ...d, open: true }))
+        },
+      })
+    }
+    for (const s of song.sections ?? []) {
+      out.push({
+        label: `Loop section: ${s.name}`,
+        detail: 'Section',
+        keywords: 'play jump',
+        run: () => {
+          setSection(s.tick)
+          setDockView('song')
+          setDock((d) => (d.open ? d : { ...d, open: true }))
+        },
+      })
+    }
+    return out
+  }, [search, menus, song.tracks, song.patterns, song.sections, setSelected, setPatternId])
 
   // --- notes on the rack -------------------------------------------------
 
@@ -1646,6 +2087,18 @@ export default function App() {
           <MenuBar menus={menus} onOpenChange={setMenuOpen} collapsed={narrow} />
 
           {files.fileInputs}
+          <input
+            ref={midiFileInput}
+            type="file"
+            accept=".mid,.midi,.kar,audio/midi,audio/x-midi"
+            hidden
+            aria-hidden="true"
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              e.target.value = ''
+              if (file) void onMidiFile(file)
+            }}
+          />
 
           {/* Every unit in the rack by name, for getting to one without
               scrolling a long rack to look for it. Choosing one scrolls it into
@@ -1766,7 +2219,17 @@ export default function App() {
         </div>
 
         {libraryOpen && LibraryDialog && (
-          <LibraryDialog onPick={onPickTemplate} onClose={() => setLibraryOpen(false)} onSave={onSaveToLibrary} />
+          <LibraryDialog
+            onPick={onPickTemplate}
+            onClose={() => {
+              audition.stop()
+              setLibraryOpen(false)
+            }}
+            onSave={onSaveToLibrary}
+            onAudition={(t) => void audition.play(t)}
+            onStopAudition={audition.stop}
+            auditioning={audition.playing}
+          />
         )}
 
         {audioOpen && (
@@ -1788,6 +2251,17 @@ export default function App() {
               if (what === 'song') void bounce.bounceSong(settings)
               else void bounce.bounceStems(what, settings)
             }}
+          />
+        )}
+
+        {midiImport && (
+          <MidiImportDialog
+            name={midiImport.name}
+            imp={midiImport.imp}
+            addAtBar={barsOf(song).at(importBar).index + 1}
+            onNew={() => void importMidi('new')}
+            onAdd={() => void importMidi('add')}
+            onClose={() => setMidiImport(null)}
           />
         )}
 
@@ -1824,8 +2298,31 @@ export default function App() {
           )
         })}
 
+        {midiPanelOpen && (
+          <UtilityPanel
+            id="midi"
+            title="MIDI controllers"
+            layer={utilities.open.length}
+            onClose={() => {
+              setMidiPanelOpen(false)
+              midiControl.setLearning(false)
+            }}
+            onRaise={() => {}}
+          >
+            <MidiPanel
+              control={midiControl}
+              mcu={mcu}
+              status={midi}
+              onTurnOn={() => turnMidiOn(true)}
+              context={() => midiTargets.current}
+              notice={(text, warning) => setNotice(warning ? warn(text) : text)}
+            />
+          </UtilityPanel>
+        )}
+
         {search && (
           <ModuleSearch
+            commands={search.cable ? undefined : paletteCommands}
             exclude={padInfo ? NOT_IN_A_PAD : undefined}
             cable={search.cable?.anchorKind}
             onPick={onSearchPick}
@@ -1876,12 +2373,14 @@ export default function App() {
         )}
 
         <KnobHelpCard />
+        <AutomationContext.Provider value={automationContext}>
         <KnobHelpOn.Provider value={knobHelp}>
         <NoteActionsContext.Provider value={noteActions}>
         <NotesShown.Provider value={showNotes}>
         <ThemeContext.Provider value={appearance}>
           <EngineContext.Provider value={engine}>
           <EnginePrefix.Provider value={enginePrefix}>
+          <AutomationScope.Provider value={`rack/${trackId}/${enginePrefix}`}>
           <SampleContext.Provider value={samples}>
             <div
               className={`rack${flipped ? ' rack-flipped' : ''}${turning ? ' turning' : ''}${
@@ -1924,10 +2423,13 @@ export default function App() {
                   cursor={cables.cursor}
                   hovered={hoveredCable}
                   colorBy={cableColors}
+                  labels={labelRects}
+                  opacity={cableOpacity}
                 />
               )}
             </div>
           </SampleContext.Provider>
+          </AutomationScope.Provider>
           </EnginePrefix.Provider>
           </EngineContext.Provider>
         </ThemeContext.Provider>
@@ -1974,8 +2476,10 @@ export default function App() {
             onHeight={setDockHeight}
             onHeightDrag={onDockDrag}
             showSwing={showSwing}
+            lanes={rollLanes}
           />
         </ThemeContext.Provider>
+        </AutomationContext.Provider>
 
         {/* The panel in hand. It rides outside the rack because the rack sets a
             perspective while it turns, and a perspective is a containing

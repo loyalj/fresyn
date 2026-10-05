@@ -159,7 +159,7 @@ export function songEventTicks(song: Song, fromTick: number, toTick: number): So
 
   for (const placement of song.playlist) {
     const pattern = patterns.get(placement.pattern)
-    if (!pattern) continue
+    if (!pattern || placement.mute) continue
 
     // The whole clip is outside the window: skip it without walking its
     // notes. A song is mostly clips that are not playing right now.

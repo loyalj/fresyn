@@ -89,6 +89,51 @@ each; each file is sent to the worklet once rather than the whole library on
 every drop; and the meters and scopes are written into shared memory, so a
 report is a clock and a slot number instead of two cloned 16 KB frames.
 
+## Re-profiled, 2026-10-03
+
+After the library grew to ~260 voices and nine kits, measured again with
+`npm run bench` (`scripts/bench-engine.ts`): songs through `SongPlayer`,
+console on, then every instrument and every module alone. Same machine and
+method as above. The songs are the bench's own, so compare its numbers with
+each other rather than with the audit's.
+
+**Two engine faults, both fixed:**
+
+- **Four kits rendered a sample at a time.** A pad wakes part way through a
+  block only if whatever reaches its Trig jack runs before the pad's
+  modules. A kick whose click starts from a Noise -- a module with no inputs
+  -- could be sorted ahead of the Trigger, and the engine fell back to
+  stepping the *whole rack* per sample. The 909, Industrial, Cinematic and
+  Glitch kits cost 1.6-1.9 ms a block doing nothing (68-94% of the budget
+  each); now 12-20 us. The compiler's sort now orders each pad after its
+  Trig source (`compile.ts`, `after` edges that are preferences, never
+  feedback). `check-song` holds every kit on the shelf to block rendering.
+- **Pads with an echo waited the line's full length to sleep.** A pad holding
+  a Delay or a Granular waited two seconds (their `memory`) after going
+  quiet. Modules now say how long they hold sound *as set* (`holdsFor()`: a
+  12 ms delay holds 12 ms), and a voice or pad waits only that long.
+
+| Song | Before | After | |
+|---|---|---|---|
+| bench 8-track song (the audit's instruments) | 1492 us, 56% | 1462 us, 55% | |
+| the same twice over, 16 tracks | 2952 us, 111% | 2925 us, 110% | |
+| 12 of the newest voices, two of them kits | 7163 us, 269% | 2518 us, 94% | **2.8x** |
+| 24 of them | 14348 us, 538% | 5042 us, 189% | 2.8x |
+
+The bench 8-track song costs the same at the previous commit (1451-1495 us
+over three runs against 1516-1532 now): no regression from the new modules
+or the library.
+
+**Where the time goes now.** No garbage collection while playing. The
+costliest voices are 8-voice pads and string sections holding 3-note chords,
+290-410 us each (11-15% of the budget); the mean instrument is 140 us. Every
+module costs 14-180 ns a sample (reverb the most), so it is the per-voice
+graph walk, not any one module's maths, that a big song of chords spends its
+time on -- the finding of the audit, and what Tier 3's "a generated render
+function per patch" (measured at 5.8x on one voice) or WASM + SIMD across
+voices would address. Sixteen tracks of held chords are past real time on
+this machine; eight are at half the budget.
+
 ## The audio thread
 
 ### Measured

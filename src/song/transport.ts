@@ -1,3 +1,5 @@
+import type { Curve } from '../dsp/automation'
+import { automationChanges } from './automation'
 import { songEnd, songEventTicks, type SongEvent } from './schedule'
 import { tempoMap, type TempoMap } from './timeline'
 import type { Song } from './types'
@@ -37,9 +39,22 @@ export interface Seam extends Cursor {
   before: number
 }
 
+/**
+ * A knob starting to follow a curve, or letting go of one, at an engine
+ * frame. The curve's ends are in engine frames too, unrounded: it is the
+ * same curve however the windows fall.
+ */
+export interface AutomationEvent {
+  frame: number
+  target: string
+  curve: Curve | null
+}
+
 export interface Fill {
   /** Ready to schedule, in engine time, oldest first. */
   events: SongEvent[]
+  /** What the automation does in the same stretch, oldest first. See `song/automation`. */
+  automation: AutomationEvent[]
   cursor: Cursor
   /**
    * Every time round the loop, in order: where the song went back to the
@@ -60,19 +75,28 @@ export interface Fill {
  */
 const MAX_PASSES = 512
 
+/**
+ * `snapshot` says the caller has nothing queued for the automation -- it is
+ * starting, or has just dropped what it had -- so the first window says
+ * where every automated knob stands rather than only what changes. The far
+ * side of a loop's seam always does, for the same reason.
+ */
 export function fill(
   song: Song,
   sampleRate: number,
   cursor: Cursor,
   untilFrame: number,
   loop: Loop | null,
+  snapshot = false,
 ): Fill {
   const events: SongEvent[] = []
+  const automation: AutomationEvent[] = []
   const seams: Seam[] = []
   const time = tempoMap(song, sampleRate)
-  if (!(time.rateAt(cursor.tick) > 0)) return { events, cursor, seams, ended: true }
+  if (!(time.rateAt(cursor.tick) > 0)) return { events, automation, cursor, seams, ended: true }
   // A loop with no length would be an infinite number of passes over nothing.
-  if (loop && !(loop.to > loop.from)) return { events, cursor, seams, ended: false }
+  if (loop && !(loop.to > loop.from)) return { events, automation, cursor, seams, ended: false }
+  let fresh = snapshot
 
   const end = loop ? loop.to : songEnd(song)
   let { tick, frame } = cursor
@@ -101,6 +125,7 @@ export function fill(
       }
       seams.push({ frame, tick: loop.from, before: tick })
       tick = loop.from
+      fresh = true
       continue
     }
 
@@ -137,11 +162,24 @@ export function fill(
       })
     }
 
+    // Stamped the same way, and the curves with them: a curve that began
+    // before this window is placed where it began, so a knob part way along
+    // one is at the same value however the windows happen to fall.
+    for (const c of automationChanges(song, tick, windowEnd, fresh)) {
+      const at = (t: number) => frame + time.span(tick, t)
+      automation.push({
+        frame: Math.round(at(c.tick)),
+        target: c.target,
+        curve: c.curve && { ...c.curve, from: at(c.curve.from), to: at(c.curve.to) },
+      })
+    }
+    fresh = false
+
     frame += time.span(tick, windowEnd)
     tick = windowEnd
   }
 
-  return { events, cursor: { tick, frame }, seams, ended }
+  return { events, automation, cursor: { tick, frame }, seams, ended }
 }
 
 /**

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Transport } from '../audio/Transport'
-import type { LiveNotes } from '../input/liveNotes'
+import type { LiveMoves, LiveNotes } from '../input/liveNotes'
 import { loadPrefs, savePrefs } from '../patch/storage'
 import {
   arpeggiateNotes,
@@ -37,7 +37,7 @@ import {
 } from '../song/scale'
 import type { Bars } from '../song/timeline'
 import { midiNameCents, rowZero, scaleForRows, type Tuning } from '../song/tuning'
-import { PITCH_RANGE, PPQ, type Note, type Swing } from '../song/types'
+import { PITCH_RANGE, PPQ, type AutomationLane, type Note, type Swing } from '../song/types'
 import {
   drawRoll,
   gridBottom,
@@ -62,9 +62,11 @@ import {
   type RollOverlay,
   type RollView,
 } from './rollDraw'
+import { AutomationLaneEditor } from './AutomationLane'
+import type { LaneOption } from './automationLabels'
 import { ContextMenu, type MenuItem } from './Menu'
 import { useAppearance } from './ThemeContext'
-import { useNoteRecording } from './useNoteRecording'
+import { useAutomationRecording, useNoteRecording, type Touch } from './useNoteRecording'
 
 /**
  * Rows, bottom and top: the full range, well past the Keyboard's own two
@@ -249,6 +251,30 @@ interface Props {
    * grid. Only ever the drawing: the notes handed back are on the grid.
    */
   swing?: Swing
+  /** The pattern's automation lanes, and the one shown under the roll. Absent hides the picker. */
+  lanes?: RollLanes
+}
+
+/** What the roll needs to show and edit a pattern's automation. */
+export interface RollLanes {
+  list: readonly AutomationLane[]
+  /** The lanes open under the roll, by target, top to bottom. */
+  open: readonly string[]
+  onOpen: (targets: string[]) => void
+  /** Everything a lane could be added for, grouped by module. */
+  options: readonly { group: string; options: readonly LaneOption[] }[]
+  label: (target: string) => string
+  format: (target: string) => (value: number) => string
+  /** A lane's points after an edit, or null to remove the lane. */
+  onChange: (target: string, lane: AutomationLane | null) => void
+  /** Controls moved by hand as the song plays, which Rec writes into their lanes. */
+  moves?: LiveMoves
+  /** Write a control's take so far into its lane in this pattern. */
+  record: (target: string, touch: Touch, take: string) => void
+  /** The hand let go of a control being recorded: give it back to its automation. */
+  letGo: (target: string) => void
+  /** A recording take begins (its key) or ends (null): everything in it is one step of undo. */
+  onTake: (id: string | null) => void
 }
 
 type Gesture =
@@ -361,8 +387,27 @@ export function PianoRoll({
   transport,
   live,
   onRecord,
+  lanes,
 }: Props) {
   const appearance = useAppearance()
+  /** The Write and help popovers on the toolbar. */
+  const [writeOpen, setWriteOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
+  // A popover closes on a press anywhere outside it, as a menu does.
+  useEffect(() => {
+    if (!writeOpen && !helpOpen) return
+    const away = (e: PointerEvent) => {
+      if (e.target instanceof Element && e.target.closest('.roll-write, .roll-help, .menu')) return
+      setWriteOpen(false)
+      setHelpOpen(false)
+    }
+    window.addEventListener('pointerdown', away)
+    return () => window.removeEventListener('pointerdown', away)
+  }, [writeOpen, helpOpen])
+  /** The lanes open under the roll that this pattern has, in the order they were opened. */
+  const openLanes = lanes ? lanes.open.flatMap((t) => lanes.list.find((l) => l.target === t) ?? []) : []
+  /** Each open lane's height, as dragged; until then, `LANE_H`. */
+  const [laneHeights, setLaneHeights] = useState<Record<string, number>>({})
   const hostRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [size, setSize] = useState({ w: 640, h: 320 })
@@ -1557,6 +1602,23 @@ export function PianoRoll({
     quantize: quant.onInput && !snapOff ? { grid, what: quant.what, strength: quant.strength } : undefined,
     onRecord,
   })
+  // A take is one step of undo, whatever it was made of.
+  const onTake = lanes?.onTake
+  useEffect(() => {
+    if (!recording.armed || !onTake) return
+    onTake(`take:rec:${Date.now()}`)
+    return () => onTake(null)
+  }, [recording.armed, onTake])
+  // And the controls moved while it records, into their lanes.
+  useAutomationRecording({
+    armed: recording.armed,
+    moves: lanes?.moves,
+    transport,
+    lengthTicks,
+    zero: Number.isFinite(playOffset) ? playOffset : 0,
+    onWrite: (target, touch, take) => lanes?.record(target, touch, take),
+    onLetGo: (target) => lanes?.letGo(target),
+  })
   const quantTitle =
     `Snap the ${quant.what === 'start' ? 'starts' : quant.what === 'end' ? 'ends' : quant.what === 'both' ? 'starts and ends' : 'lengths'}` +
     ` of the selected notes to the grid${quant.strength < 1 ? `, ${Math.round(quant.strength * 100)}% of the way` : ''}` +
@@ -1592,12 +1654,21 @@ export function PianoRoll({
     commit(overlay.current.selected.size ? out : { ...out, selected: [] })
   }
   const keyed = hasScale(songScale)
+  /** What the Write button says: the key and the chord, as they stand. */
+  const writeSummary = [
+    keyed ? `${ROOT_NAMES[songScale.root]} ${SCALES.find((x) => x.id === songScale.mode)?.name ?? songScale.mode}${songScale.snap ? ' · snap' : ''}` : 'No key',
+    activeChord ? activeChord.name : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
 
   return (
     <div className="roll">
       <div className="roll-tools">
         <button
           className={`dock-toggle roll-rec${recording.armed ? ' on' : ''}`}
+          data-midi-scope="transport"
+          data-midi-param="record"
           onClick={() => recording.toggle(Number.isFinite(playOffset) ? playOffset : 0)}
           aria-pressed={recording.armed}
           title={
@@ -1631,20 +1702,13 @@ export function PianoRoll({
         {quantMenu && (
           <ContextMenu x={quantMenu.x} y={quantMenu.y} items={quantizeItems} onClose={() => setQuantMenu(null)} />
         )}
-        <button
-          className="dock-toggle"
-          onClick={humanize}
-          title="Nudge the selected notes a little early or late, and a little softer or harder (every note, if none are selected)"
-          type="button"
-        >
-          Humanize
-        </button>
         <select
           className="roll-tools-menu"
           value=""
           onChange={(e) => {
-            const tool = e.target.value as Tool | ''
-            if (tool) transform(tool)
+            const tool = e.target.value as Tool | 'humanize' | ''
+            if (tool === 'humanize') humanize()
+            else if (tool) transform(tool)
             // Back to its label, so the same tool can be chosen twice running.
             e.target.value = ''
           }}
@@ -1652,6 +1716,7 @@ export function PianoRoll({
           title="Transform the selected notes (every note, if none are selected)"
         >
           <option value="">Tools…</option>
+          <option value="humanize">Humanize</option>
           {TOOLS.map(([id, name]) => (
             <option key={id} value={id}>
               {name}
@@ -1659,6 +1724,69 @@ export function PianoRoll({
           ))}
         </select>
 
+        {lanes && (
+          <span className="roll-lanes">
+            {/* An action menu rather than a choice: picking a lane opens it
+                under the roll, or closes it if it is open; picking a knob
+                from the lists below adds a lane for it and opens that. */}
+            <select
+              className="roll-tools-menu roll-lane-pick"
+              value=""
+              onChange={(e) => {
+                const value = e.target.value
+                e.target.value = ''
+                if (!value) return
+                if (value.startsWith('+')) {
+                  const target = value.slice(1)
+                  lanes.onChange(target, { target, points: [] })
+                  lanes.onOpen([...lanes.open.filter((t) => t !== target), target])
+                } else if (lanes.open.includes(value)) lanes.onOpen(lanes.open.filter((t) => t !== value))
+                else lanes.onOpen([...lanes.open, value])
+              }}
+              aria-label="Automation lanes"
+              title="Open or close a knob's automation lane under the roll, or add one"
+            >
+              <option value="">{openLanes.length ? `Automation (${openLanes.length} open)…` : 'Automation…'}</option>
+              {lanes.list.length > 0 && (
+                <optgroup label="In this pattern: open or close">
+                  {lanes.list.map((l) => (
+                    <option key={l.target} value={l.target}>
+                      {lanes.open.includes(l.target) ? '✓ ' : '\u2003'}
+                      {lanes.label(l.target)}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {lanes.options.map((g) => {
+                const free = g.options.filter((o) => !lanes.list.some((l) => l.target === o.target))
+                return free.length ? (
+                  <optgroup key={g.group} label={`Add · ${g.group}`}>
+                    {free.map((o) => (
+                      <option key={o.target} value={`+${o.target}`}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ) : null
+              })}
+            </select>
+          </span>
+        )}
+
+        {/* How notes are written: the key, keeping to it, and the chord a
+            click lays. Set once and left, so folded behind one button that
+            says how they stand. */}
+        <span className="roll-write">
+          <button
+            className={`dock-toggle roll-write-open${writeOpen ? ' on' : ''}`}
+            onClick={() => setWriteOpen((o) => !o)}
+            aria-expanded={writeOpen}
+            title="The key, Snap to key, and the chord a click lays"
+            type="button"
+          >
+            {writeSummary} ▾
+          </button>
+          <div className="roll-popover roll-write-panel" hidden={!writeOpen}>
         <label className="dock-field roll-tools-key">
           <span>Key</span>
           <select
@@ -1731,6 +1859,8 @@ export function PianoRoll({
             ))}
           </select>
         </label>
+          </div>
+        </span>
 
         {/* Zoom across. The rows have Ctrl+wheel; across is Alt+wheel, and
             these for anyone without a wheel. */}
@@ -1746,7 +1876,19 @@ export function PianoRoll({
           </button>
         </span>
 
-        <span className="roll-tools-hint">Alt+drag paints · right-drag erases · Ctrl+drag selects · Shift+wheel scrolls across</span>
+        <span className="roll-help">
+          <button
+            className={`dock-toggle roll-help-open${helpOpen ? ' on' : ''}`}
+            onClick={() => setHelpOpen((o) => !o)}
+            aria-expanded={helpOpen}
+            aria-label="How the roll works"
+            title="How the roll works, and what its rows are named by"
+            type="button"
+          >
+            ?
+          </button>
+          <div className="roll-popover roll-help-panel" hidden={!helpOpen}>
+        <span className="roll-tools-hint">Click draws a note · drag moves it · drag an end resizes · Alt+drag paints · right-drag erases · Ctrl+drag selects · Shift+wheel scrolls across · Alt+wheel zooms across</span>
         <span
           className="roll-tools-tuning"
           title={
@@ -1756,6 +1898,8 @@ export function PianoRoll({
           }
         >
           {tuning ? `Bottom key ${midiNameCents(zero)} · ${tuning.source}` : 'Rows by key position'}
+        </span>
+          </div>
         </span>
       </div>
       <div className="roll-area" ref={hostRef}>
@@ -1785,6 +1929,30 @@ export function PianoRoll({
           onContextMenu={(e) => e.preventDefault()}
         />
       </div>
+      {lanes && openLanes.length > 0 && (
+        <div className="auto-lanes">
+          {openLanes.map((lane) => (
+            <AutomationLaneEditor
+              key={lane.target}
+              lane={lane}
+              view={view}
+              colors={colors}
+              playTick={playTick}
+              label={lanes.label(lane.target)}
+              format={lanes.format(lane.target)}
+              snapOff={snapOff}
+              onChange={(points) => lanes.onChange(lane.target, { target: lane.target, points })}
+              height={laneHeights[lane.target]}
+              onHeight={(h) => setLaneHeights((was) => ({ ...was, [lane.target]: h }))}
+              onHide={() => lanes.onOpen(lanes.open.filter((t) => t !== lane.target))}
+              onRemove={() => {
+                lanes.onChange(lane.target, null)
+                lanes.onOpen(lanes.open.filter((t) => t !== lane.target))
+              }}
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
 }

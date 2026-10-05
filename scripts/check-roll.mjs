@@ -571,10 +571,8 @@ console.log('\nselecting, copying and stretching')
     await edited()
     drawn = (await notesOf()).find((n) => n.pitch === 22)
     check('Quantize snaps the selected note to the grid', drawn?.tick === 240, `tick ${drawn?.tick}`)
-    const humanize = await page.evaluateHandle(() =>
-      [...document.querySelectorAll('.roll-tools .dock-toggle')].find((b) => b.textContent.trim() === 'Humanize'),
-    )
-    await humanize.asElement().click()
+    // Humanize is on the Tools menu.
+    await page.select('.roll-tools select[aria-label="Tools"]', 'humanize')
     await edited()
     const after = await notesOf()
     check('Humanize keeps every note', after.length === before + 1)
@@ -585,10 +583,14 @@ console.log('\nselecting, copying and stretching')
   {
     await page.select('.roll-tools select[aria-label="Scale"]', 'major')
     await wait(300)
+    // Snap to key is under Write, with the key and the chord.
+    await page.click('.roll-write-open')
+    await wait(150)
     const snap = await page.evaluateHandle(() =>
       [...document.querySelectorAll('.roll-tools .dock-toggle')].find((b) => b.textContent.trim() === 'Snap to key'),
     )
     await snap.asElement().click()
+    await page.click('.roll-write-open')
     await edited()
     check('the key is saved with the song', JSON.stringify((await stored()).song.scale) === '{"root":0,"mode":"major","snap":true}',
       JSON.stringify((await stored()).song.scale))

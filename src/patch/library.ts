@@ -40,6 +40,8 @@ export interface Template {
   tip?: string
   /** For an instrument: it sounds for as long as its note is held. */
   held?: true
+  /** A heading within its shelf: a kit's drums sit under the kit's name. */
+  group?: string
   /** The rack, with everything it does not use already taken out. */
   build(): Built
 }

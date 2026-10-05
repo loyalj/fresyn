@@ -160,6 +160,15 @@ export abstract class DspModule {
    * once it has been quiet for longer than it can hold anything.
    */
   readonly memory: number = 0
+  /**
+   * How long it can hold sound for later as it is set now, in seconds: a
+   * delay at 12 ms holds 12 ms, not the two seconds its line could. What a
+   * voice or a pad that has gone quiet waits for before it sleeps. Never more
+   * than `memory`, which is what this falls back to.
+   */
+  holdsFor(): number {
+    return this.memory
+  }
   /** The engine's: this module is resting. */
   resting = false
   /** The engine's: how many samples it has been fed nothing and said nothing. */

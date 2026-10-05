@@ -7,6 +7,8 @@ import type { PortRef } from '../patch/edit'
 
 export type { JackGeometry, Point }
 
+const NO_LABELS: readonly LabelRect[] = []
+
 export interface DragState {
   anchor: PortRef
   anchorKind: 'input' | 'output'
@@ -70,6 +72,21 @@ interface Props {
    * own: by what they carry, or by the module they leave.
    */
   colorBy: 'signal' | 'module'
+  /**
+   * Where the jacks' labels are, in rack coordinates. Cables are cut away
+   * over them, so a cable leaving a jack downwards -- which is every cable --
+   * never runs through the name of the jack it leaves.
+   */
+  labels?: readonly LabelRect[]
+  /** How solid the cables are drawn, 0..1: faded, to work on the knobs behind them. */
+  opacity?: number
+}
+
+export interface LabelRect {
+  x: number
+  y: number
+  w: number
+  h: number
 }
 
 /**
@@ -87,7 +104,7 @@ const SIGNAL_HUE: Record<Signal, number> = { audio: 30, cv: 205, gate: 130 }
  * resolved against the curve in `nearestCable`, so a jack underneath a cable
  * stays usable.
  */
-export const Cables = memo(function Cables({ patch, geometry, drag, cursor, hovered, colorBy }: Props) {
+export const Cables = memo(function Cables({ patch, geometry, drag, cursor, hovered, colorBy, labels = NO_LABELS, opacity = 1 }: Props) {
   const anchorPoint = drag ? geometry[jackKey(drag.anchor)] : undefined
   const typeOf = new Map(patch.modules.map((m) => [m.id, m.type]))
   /** A cable's own colour, or the rack's for it. */
@@ -98,7 +115,16 @@ export const Cables = memo(function Cables({ patch, geometry, drag, cursor, hove
   }
 
   return (
-    <svg className="cables" aria-hidden="true">
+    <svg className="cables" aria-hidden="true" style={{ opacity }}>
+      <defs>
+        <mask id="cable-gaps" maskUnits="userSpaceOnUse" x="-100000" y="-100000" width="200000" height="200000">
+          <rect x="-100000" y="-100000" width="200000" height="200000" fill="white" />
+          {labels.map((r, i) => (
+            <rect key={i} x={r.x - 2} y={r.y - 1} width={r.w + 4} height={r.h + 2} rx={2} fill="black" fillOpacity={0.88} />
+          ))}
+        </mask>
+      </defs>
+      <g mask={labels.length ? 'url(#cable-gaps)' : undefined}>
       {patch.cables.map((c) => {
         const a = geometry[jackKey(c.from)]
         const b = geometry[jackKey(c.to)]
@@ -115,6 +141,7 @@ export const Cables = memo(function Cables({ patch, geometry, drag, cursor, hove
           </g>
         )
       })}
+      </g>
 
       {drag && anchorPoint && <LooseCable anchor={anchorPoint} hue={hueFor(drag.anchor)} cursor={cursor} />}
     </svg>

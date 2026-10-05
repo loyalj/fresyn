@@ -1,4 +1,5 @@
 import type { TrackMix } from '../dsp/SongEngine'
+import { targetTrack } from './automation'
 import { normalizeSong } from './normalize'
 import { clipOffset } from './clip'
 import { heardTracks, trackGain } from './folder'
@@ -15,6 +16,7 @@ import {
   type Console,
   type Meter,
   type Note,
+  type Pattern,
   type Song,
   type Strip,
   type Track,
@@ -67,7 +69,7 @@ export function removeTrack(song: Song, id: string): Song {
   return {
     ...song,
     tracks: song.tracks.filter((t) => t.id !== id),
-    patterns: song.patterns.map((p) => ({ ...p, notes: p.notes.filter((n) => n.track !== id) })),
+    patterns: song.patterns.map((p) => withoutTrack(p, id)),
   }
 }
 
@@ -121,6 +123,7 @@ export function duplicatePattern(song: Song, sourceId: string, id: string, name:
         name,
         length: source.length,
         notes: source.notes.map((n) => ({ ...n })),
+        ...(source.automation ? { automation: source.automation.map((l) => ({ ...l, points: l.points.map((p) => ({ ...p })) })) } : {}),
         // A copy is a variation to write, and it should groove like the
         // part it was copied from until it is told otherwise.
         ...(source.swing ? { swing: { ...source.swing } } : {}),
@@ -362,6 +365,8 @@ export function trackMix(song: Song, only?: readonly string[]): Record<string, T
     mix[t.id] = {
       // The track's fader after its folder's, as a VCA group does it.
       gain: trackGain(song, t),
+      // What multiplies the fader, so an automated fader keeps its folder.
+      scale: song.folders?.length ? trackGain(song, { ...t, gain: 1 }) : 1,
       audible: heard.has(t.id) && (!only || only.includes(t.id)),
       pan: strip.pan,
       eq: strip.eq,
@@ -462,4 +467,15 @@ function sameNotes(a: readonly Note[], b: readonly Note[]): boolean {
     }
   }
   return true
+}
+
+/** A pattern with a track's notes and automation taken out. */
+function withoutTrack(p: Pattern, id: string): Pattern {
+  const next: Pattern = { ...p, notes: p.notes.filter((n) => n.track !== id) }
+  if (p.automation) {
+    const lanes = p.automation.filter((l) => targetTrack(l.target) !== id)
+    if (lanes.length) next.automation = lanes
+    else delete next.automation
+  }
+  return next
 }

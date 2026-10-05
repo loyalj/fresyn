@@ -9,6 +9,16 @@ export interface SearchPick {
   port?: string
 }
 
+/** Something the palette can do besides add a module: a menu command, a track to go to. */
+export interface SearchCommand {
+  label: string
+  /** Where it lives, or what it is: "Edit", "Track", "Pattern". */
+  detail: string
+  /** Words it should also be found by. */
+  keywords?: string
+  run: () => void
+}
+
 interface Entry extends SearchPick {
   label: string
   detail: string
@@ -16,6 +26,8 @@ interface Entry extends SearchPick {
   haystack: string
   /** Where it came in the catalogue, to break ties the way the menu reads. */
   order: number
+  /** A command rather than a module. */
+  run?: () => void
 }
 
 interface Props {
@@ -29,6 +41,12 @@ interface Props {
   exclude?: ReadonlySet<string>
   onPick: (pick: SearchPick) => void
   onClose: () => void
+  /**
+   * Everything else the box can do, which makes it a command palette: every
+   * menu command, the tracks, patterns and sections. Absent while finishing a
+   * cable, which only wants modules.
+   */
+  commands?: readonly SearchCommand[]
 }
 
 /**
@@ -44,13 +62,32 @@ interface Props {
  * captured on the window ahead of whatever has focus, so this has to be
  * something the rack stands down for, and it takes the keys it needs itself.
  */
-export function ModuleSearch({ cable, exclude, onPick, onClose }: Props) {
+export function ModuleSearch({ cable, exclude, onPick, onClose, commands }: Props) {
   const [query, setQuery] = useState('')
   const [at, setAt] = useState(0)
   const input = useRef<HTMLInputElement>(null)
   const list = useRef<HTMLUListElement>(null)
 
-  const entries = useMemo(() => buildEntries(cable, exclude), [cable, exclude])
+  const entries = useMemo(() => {
+    const modules = buildEntries(cable, exclude)
+    if (!commands?.length) return modules
+    // Commands come first, then the modules, each in their own order.
+    const done: Entry[] = commands.map((c, i) => ({
+      type: '',
+      label: c.label,
+      detail: c.detail,
+      haystack: `${c.label} ${c.detail} ${c.keywords ?? ''}`.toLowerCase(),
+      order: i,
+      run: c.run,
+    }))
+    return [...done, ...modules.map((m) => ({ ...m, order: m.order + done.length }))]
+  }, [cable, exclude, commands])
+  const choose = (e: Entry) => {
+    if (e.run) {
+      onClose()
+      e.run()
+    } else onPick({ type: e.type, port: e.port })
+  }
   const shown = useMemo(() => filter(entries, query), [entries, query])
 
   useEffect(() => input.current?.focus(), [])
@@ -73,14 +110,17 @@ export function ModuleSearch({ cable, exclude, onPick, onClose }: Props) {
       } else if (e.key === 'Enter') {
         e.preventDefault()
         const pick = shown[at]
-        if (pick) onPick({ type: pick.type, port: pick.port })
+        if (pick) choose(pick)
       }
     }
     window.addEventListener('keydown', onKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', onKeyDown, { capture: true })
+    // `choose` reads only what is listed here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shown, at, onPick, onClose])
 
-  const title = cable ? 'Finish the cable' : 'Add a module'
+  const palette = !cable && !!commands?.length
+  const title = cable ? 'Finish the cable' : palette ? 'Command palette' : 'Add a module'
   return createPortal(
     <div
       className="sheet-backdrop search-backdrop"
@@ -95,7 +135,11 @@ export function ModuleSearch({ cable, exclude, onPick, onClose }: Props) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder={
-            cable ? `A module to plug this ${cable === 'output' ? 'output' : 'input'} into…` : 'Search modules…'
+            cable
+              ? `A module to plug this ${cable === 'output' ? 'output' : 'input'} into…`
+              : palette
+                ? 'A command, track, pattern or module…'
+                : 'Search modules…'
           }
           aria-label={title}
           spellCheck={false}
@@ -103,13 +147,13 @@ export function ModuleSearch({ cable, exclude, onPick, onClose }: Props) {
         <ul className="search-list" ref={list} role="listbox" aria-label="Matches">
           {shown.length === 0 && <li className="search-empty">Nothing matches “{query}”</li>}
           {shown.map((e, i) => (
-            <li key={`${e.type}.${e.port ?? ''}`}>
+            <li key={e.run ? `cmd.${e.order}` : `${e.type}.${e.port ?? ''}`}>
               <button
                 className={`search-row${i === at ? ' at' : ''}`}
                 role="option"
                 aria-selected={i === at}
                 onPointerEnter={() => setAt(i)}
-                onClick={() => onPick({ type: e.type, port: e.port })}
+                onClick={() => choose(e)}
                 tabIndex={-1}
                 type="button"
               >
@@ -120,8 +164,10 @@ export function ModuleSearch({ cable, exclude, onPick, onClose }: Props) {
           ))}
         </ul>
         <div className="sheet-foot">
-          <span>{cable ? 'Adds the module next to the cable and plugs it in' : 'Adds it at the top of the rack'}</span>
-          <span className="sheet-keys">↑↓ choose · Enter to add · Esc to close</span>
+          <span>
+            {cable ? 'Adds the module next to the cable and plugs it in' : palette ? 'Runs a command, or adds a module at the top of the rack' : 'Adds it at the top of the rack'}
+          </span>
+          <span className="sheet-keys">↑↓ choose · Enter to {palette ? 'run' : 'add'} · Esc to close</span>
         </div>
       </div>
     </div>,

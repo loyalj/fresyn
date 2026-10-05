@@ -76,6 +76,13 @@ export type ToWorklet =
   | { type: 'seek'; frame: number }
   | { type: 'unschedule' }
   | { type: 'allNotesOff' }
+  // A knob, or a desk control on the desk's track, taken from its automation
+  // by a hand on it -- or given back. See `SongEngine.hold`.
+  | { type: 'hold'; track: string; key: string; on: boolean }
+  // Every knob back to its panel and nothing held: the transport stopped.
+  | { type: 'clearAutomation' }
+  // Hear one slot of a track's rack, or -1 for its output again.
+  | { type: 'listen'; track: string; slot: number }
 
 /**
  * Where a report lands in the shared telemetry, in floats from the start of

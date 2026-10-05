@@ -3,6 +3,7 @@ import { BitcrushModule } from './Bitcrush'
 import { BurstModule } from './Burst'
 import { ChorusModule } from './Chorus'
 import { ClockModule } from './Clock'
+import { ClockDivModule } from './ClockDiv'
 import { CompressorModule } from './Compressor'
 import { CvUtilModule } from './CvUtil'
 import { DelayModule } from './Delay'
@@ -10,6 +11,7 @@ import { DriveModule } from './Drive'
 import { DrunkModule } from './Drunk'
 import { DustModule } from './Dust'
 import { EqModule } from './Eq'
+import { FollowerModule } from './Follower'
 import { FormantModule } from './Formant'
 import { GateModule } from './Gate'
 import { GranularModule } from './Granular'
@@ -17,6 +19,7 @@ import { KeysModule } from './Keys'
 import { KitModule } from './Kit'
 import { LadderModule } from './Ladder'
 import { LfoModule } from './Lfo'
+import { LpgModule } from './Lpg'
 import { MacroModule } from './Macro'
 import { MixerModule } from './Mixer'
 import { NoiseModule } from './Noise'
@@ -32,7 +35,9 @@ import { ScopeModule } from './Scope'
 import { SeqModule } from './Seq'
 import { SlewModule } from './Slew'
 import { SvfModule } from './Svf'
+import { TapeModule } from './Tape'
 import type { DspModule, ModuleContext } from './types'
+import { UnisonModule } from './Unison'
 import { VcaModule } from './Vca'
 import { VoiceModule } from './Voice'
 import { WavefoldModule } from './Wavefold'
@@ -58,6 +63,11 @@ export const MODULE_FACTORIES: Record<string, Factory> = {
   seq: (c) => new SeqModule(c),
   macro: (c) => new MacroModule(c),
   slew: (c) => new SlewModule(c),
+  follow: (c) => new FollowerModule(c),
+  unison: (c) => new UnisonModule(c),
+  clkdiv: (c) => new ClockDivModule(c),
+  lpg: (c) => new LpgModule(c),
+  tape: (c) => new TapeModule(c),
   quant: (c) => new QuantizerModule(c),
   cv: (c) => new CvUtilModule(c),
   ladder: (c) => new LadderModule(c),

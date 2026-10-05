@@ -188,7 +188,24 @@ export function compile(input: Patch): CompiledPatch {
   )
 
   // --- ordering ------------------------------------------------------
-  const { order, feedbackCables } = topoSort(patch, connected)
+  // Whatever reaches a pad's Trig jack runs before anything in the pad. The
+  // engine wakes a sleeping pad part way through a block only if its Trig
+  // has been written by the time the pad's first module runs; otherwise it
+  // steps the whole rack a sample at a time. Nothing in the cables says so --
+  // a kick whose click starts from a Noise has a module with no inputs at
+  // all, which the sort is free to put first -- so it is said here.
+  const after: { from: string; to: string }[] = []
+  for (const kit of input.modules) {
+    if (kit.type !== 'kit') continue
+    kitSlots(kit).forEach((slot, i) => {
+      if (!slot) return
+      const source = sourceOfInput.get(`${kit.id}.trig${i + 1}`)?.split('.')[0]
+      if (!source) return
+      const prefix = padModuleId(kit.id, i, '')
+      for (const m of patch.modules) if (m.id.startsWith(prefix)) after.push({ from: source, to: m.id })
+    })
+  }
+  const { order, feedbackCables } = topoSort(patch, connected, after)
 
   // --- parameters ----------------------------------------------------
   const params: number[] = []
@@ -347,13 +364,21 @@ export function compile(input: Patch): CompiledPatch {
  * feedback rather than treated as an error: a patch with a feedback loop is a
  * legitimate patch, and the one-sample delay falls out of the slot ordering
  * for free.
+ *
+ * `after` adds orderings that no cable carries: a preference, so one that
+ * would close a cycle is dropped rather than reported as feedback.
  */
-function topoSort(patch: Patch, cables: { id: string; from: { module: string }; to: { module: string } }[]) {
+function topoSort(
+  patch: Patch,
+  cables: { id: string; from: { module: string }; to: { module: string } }[],
+  after: { from: string; to: string }[] = [],
+) {
   const edges = new Map<string, { to: string; cable: string }[]>()
   for (const m of patch.modules) edges.set(m.id, [])
   for (const c of cables) {
     edges.get(c.from.module)!.push({ to: c.to.module, cable: c.id })
   }
+  for (const a of after) edges.get(a.from)?.push({ to: a.to, cable: '' })
 
   const WHITE = 0
   const GRAY = 1
@@ -383,8 +408,9 @@ function topoSort(patch: Patch, cables: { id: string; from: { module: string }; 
       const edge = out[frame.next++]
       const c = color.get(edge.to)
       if (c === GRAY) {
-        // Back edge: this cable reads last sample's value.
-        feedbackCables.push(edge.cable)
+        // Back edge: this cable reads last sample's value. An ordering with
+        // no cable behind it has nothing to delay, and is simply not kept.
+        if (edge.cable) feedbackCables.push(edge.cable)
       } else if (c === WHITE) {
         color.set(edge.to, GRAY)
         stack.push({ id: edge.to, next: 0 })

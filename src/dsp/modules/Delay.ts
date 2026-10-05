@@ -47,6 +47,17 @@ export class DelayModule extends DspModule {
   readonly rests = true
   /** An echo can be as far off as the longest time. */
   readonly memory = MAX_TIME
+
+  /**
+   * The time it is set to -- the gap between two echoes -- stretched as far
+   * as its CV could take it when that is patched, allowing two volts of it.
+   */
+  holdsFor() {
+    const base = this.params[P_TIME]
+    const patched = this.ins[IN_CV] !== 0
+    const seconds = patched ? base * 2 ** (2 * Math.abs(this.params[P_CV_AMOUNT])) : base
+    return seconds < MAX_TIME ? seconds : MAX_TIME
+  }
   private line = new DelayLine(MAX_TIME * this.ctx.sampleRate)
   private damper = new OnePole()
   private time!: Smoothed

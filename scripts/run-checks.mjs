@@ -25,6 +25,7 @@ const FAST = [
   ['patch', ['scripts/run-ts.mjs', 'check-patch']],
   ['render', ['scripts/run-ts.mjs', 'check-render']],
   ['song', ['scripts/run-ts.mjs', 'check-song']],
+  ['runtime', ['scripts/run-ts.mjs', 'check-runtime']],
   ['manual', ['scripts/run-ts.mjs', 'check-manual']],
   ['instruments', ['scripts/run-ts.mjs', 'check-instruments']],
   ['modules', ['scripts/run-ts.mjs', 'check-modules']],
@@ -32,7 +33,7 @@ const FAST = [
   ['theme', ['scripts/check-theme.mjs']],
 ]
 
-const BROWSER = ['browser', 'audio', 'cables', 'input', 'rack', 'export', 'roll', 'sampler', 'scope', 'timing', 'kit', 'tools', 'utilities-ui', 'notes'].map(
+const BROWSER = ['browser', 'audio', 'cables', 'input', 'rack', 'export', 'roll', 'sampler', 'scope', 'timing', 'kit', 'tools', 'utilities-ui', 'notes', 'midi', 'automation', 'ux'].map(
   (n) => [n, [`scripts/check-${n}.mjs`]],
 )
 

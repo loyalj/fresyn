@@ -124,6 +124,18 @@ export function useDocument(initialDoc: Doc) {
 
   const coalesceKey = useRef<string | null>(null)
   const coalesceAt = useRef(0)
+  /**
+   * The recording take in progress, if one is. While there is one, every
+   * keyed edit folds into it -- the knob turned, the lane it was recorded
+   * into, the notes played -- so the whole take is one step of undo, however
+   * those edits interleave. An edit with no key (a click on Mute) is still
+   * a step of its own.
+   */
+  const takeKey = useRef<string | null>(null)
+  const setTake = useCallback((id: string | null) => {
+    takeKey.current = id
+    coalesceKey.current = null
+  }, [])
 
   /**
    * `key` groups rapid edits to the same control into one undo step. Whether
@@ -134,7 +146,8 @@ export function useDocument(initialDoc: Doc) {
    * `label` names the step in the History list; without one it is worked
    * out from what changed (see `describeEdit`).
    */
-  const commitDoc = useCallback((next: (doc: Doc) => Doc, key?: string, label?: string) => {
+  const commitDoc = useCallback((next: (doc: Doc) => Doc, keyed?: string, label?: string) => {
+    const key = keyed !== undefined && takeKey.current ? takeKey.current : keyed
     const now = Date.now()
     // A recorded take folds however long the gaps between its notes: a take
     // is one step of undo, and its key is new for every take.
@@ -304,6 +317,7 @@ export function useDocument(initialDoc: Doc) {
     setPatternId,
     commitDoc,
     breakCoalesce,
+    setTake,
     editRack,
     editPatch,
     editSong,

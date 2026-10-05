@@ -20,6 +20,7 @@ npm install
 npm run dev          # http://localhost:5173
 npm run build        # type-check, then a production build in dist/
 npm run deploy       # check:fast, build, then publish dist/ to Cloudflare Pages
+npm run build:runtime  # the game runtime, into dist-runtime/ (see below)
 ```
 
 `deploy` runs the headless checks first and stops if any fail, so a broken
@@ -60,7 +61,19 @@ The dock under the rack holds the music: a piano roll that plays whatever is
 on the bench, tracks with a rack each, patterns placed on a playlist, and a
 mix view. **Bounce song** and **Bounce stems** render the arrangement to WAV,
 FLAC, OGG Vorbis or MP3 at the rate you choose, and **Export MIDI** writes the
-notes.
+notes. Any knob, switch or fader can be **automated**: a lane under the roll,
+drawn with points that move in straight lines, hold, or curve, which plays
+wherever the pattern's clips do. The knob is seen turning as it plays, and a
+hand on it takes over until the song stops, and **● Rec** writes the moves of
+any control (mouse or controller) into its lane. **Import MIDI** brings a
+MIDI file in as a new project or as tracks added to this one, each part on
+the nearest library voice and its volume and pan rides as lanes. A
+controller in its DAW mode is a **Mackie Control** surface, with no learning:
+faders, pans, mute, solo, select, record and the transport, its lights
+following the song. A MIDI controller's keys play the selected track. **MIDI learn** maps
+its knobs, sliders and buttons onto any knob, fader or transport button: click
+one on screen, then move one on the controller. Endless knobs, buttons and
+pick-up are worked out without a profile for the controller.
 
 The rack can be repainted. A *theme* is a family of colours and each one comes
 in dark and light -- Standard, the original studio grey and amber; Fall Cafe in
@@ -75,6 +88,16 @@ pencil on graph paper; Winter Holiday, pine, cranberry and gold; Vaporwave,
 aqua over a pink-to-purple sunset; and Tube Amp, Tolex, chicken-head knobs and
 valve glow. The two are separate choices, so picking light does not drop you
 back into the standard palette. The change cross-fades and is remembered.
+
+## The game runtime
+
+`npm run build:runtime` writes `dist-runtime/`: `fresyn-processor.js`, an
+AudioWorklet carrying the whole engine, and `fresyn-runtime.js`, a few
+kilobytes of client with its type definitions beside it. A game copies the
+folder in, loads its `.fproject.json` files into it, and plays them live: a
+piece of music changing section on the bar, a bank of sound effects played as
+notes, knobs turned as the game changes. The manual's *Playing a project in a
+game* has the calls. Arknoise (`../arknoise`) is the first game built on it.
 
 ## Checks
 
@@ -93,6 +116,7 @@ npm run check:dsp          # compiler and graph engine
 npm run check:patch        # rack editing and the save format
 npm run check:render       # offline render, WAV and zip
 npm run check:song         # the arrangement, scheduling, and SongPlayer
+npm run check:runtime      # what a game does: notes, the grid, tempo, the host
 npm run check:manual       # every patch the manual teaches, rendered
 npm run check:instruments  # every library instrument, built, played and in tune
 npm run check:modules      # audits every module in the catalogue
@@ -111,6 +135,10 @@ npm run check:scope        # the scope, read back off the canvas
 npm run check:tools        # search, bypass, copying, cable colours, shelves
 npm run check:utilities-ui # the Utilities menu, and every panel end to end
 npm run check:notes        # notes on the rack: added, moved, undone, saved, hidden
+npm run check:midi         # a pretend controller learnt onto knobs and buttons, and played
+npm run check:automation   # a lane drawn under the roll, played, taken over by hand, and kept
+npm run check:ux           # the counter, the loop on the ruler, clip menus, Ctrl+K, audition, jacks
+npm run bench              # not a check: songs, instruments and modules against the audio budget
 ```
 
 The headless checks are TypeScript that imports the real DSP and patch code;
@@ -134,6 +162,19 @@ sample-accurate and makes feedback patches possible.
 render path. This is fast enough for the voice counts in scope, and keeping the
 classes free of any Web Audio dependency leaves a Rust/WASM port available
 later without a rewrite.
+
+**A game runs one player per job, not one song with everything in it.** The
+music changes section and tempo, and the sound effects must not change with
+it, so the runtime hosts several `SongPlayer`s side by side and sums them.
+What they share is the clock: every player renders the same blocks, so the
+distance between two players' frames never changes, and a laser synced to
+the music's sixteenth lands on it from a player that has no music at all.
+
+**A game's notes survive the song changing course.** A section change or a
+change of tempo drops everything queued past its moment and schedules again,
+which would take a note-off the game asked for with it and leave a hum held
+for good. The player keeps the game's own notes until the speakers pass
+them, and hands them back after every rewind.
 
 **Every module is audited as a catalogue, not one at a time.**
 `check:modules` drives each module's knobs to both ends of their ranges, in
@@ -554,6 +595,7 @@ src/
     build.ts           # the building blocks every shipped rack is written with
     library.ts         # tutorial racks and templates to start from
     instruments.ts     # off-the-shelf voices for the roll
+    kits.ts            # the 808, 909, lo-fi... drum kits, pad by pad
     myLibrary.ts       # the library's own shelves: saved and starred racks
     knobHelp.ts        # what each knob does, read out of the manual
     defaultPatch.ts
@@ -566,17 +608,26 @@ src/
     record.ts          # notes played in while the song runs
     range.ts           # insert, delete, clear, copy and paste bars
     midi.ts            # the arrangement as a Standard MIDI File
+    automation.ts      # automation lanes: targets, curves, and what is in force when
+    midiFile.ts midiImport.ts gm.ts   # a MIDI file read, made into tracks, voiced by program
     normalize.ts       # the invariants a song holds however it arrived
     bind.ts            # what in a rack a track's notes are played on
     chord.ts scale.ts  # the roll's chord tool, and its scales
     runtime.ts         # SongPlayer: a project, played with no browser at all,
                        # and every knob in it a game can turn
+    game.ts            # the words a game and a song share; types only
     serialize.ts project.ts   # a defensive reader, and the project file
+  runtime/             # the game runtime: what a game copies in and plays
+    host.ts            # several projects at once, summed, on one clock
+    processor.ts       # the worklet around the host, registers 'fresyn-runtime'
+    client.ts          # the game's side: load, play, and read the beat back
+    protocol.ts        # the messages between the two
   dsp/                 # audio thread; no DOM, no allocation in process()
     worklet.ts         # AudioWorkletProcessor entry, registers 'fresyn-voice'
     protocol.ts        # the messages between the main thread and the worklet
     SongEngine.ts      # one graph per track, summed; the worklet is its shell
     Console.ts         # the song desk: strips, shared effects, the limiter
+    automation.ts      # a curve's value at a frame, and a knob's position as its value
     GraphEngine.ts     # runs the compiled graph a block at a time, loops a sample at a time
     modules/           # one file per module type, plus the type registry
     PolyBlepOsc.ts LadderFilter.ts Envelope.ts DcBlocker.ts Smoothed.ts Rng.ts
@@ -607,11 +658,19 @@ src/
   input/               # browser input capture and key bindings
     InputManager.ts useInput.ts keyLabel.ts
     liveNotes.ts midi.ts   # notes played by hand, and MIDI controllers
+    midiMap.ts         # a controller's controls: learnt, classified, picked up
+    midiTargets.ts     # what they can move: rack knobs, the desk, the transport
+    useMidiControl.ts  # the mappings, learn mode and the monitor
+    mcu.ts useMcu.ts   # Mackie Control: a controller's DAW mode, read and lit
   ui/                  # Knob, Switch, Control, ModulePanel, RackUnit
     theme.ts           # the theme catalogue, and where the choice is kept
     ThemeContext.ts    # the current appearance, and the cross-fade
     palette.ts         # the hues a pattern or a track can be given
     Menu.tsx ModuleSearch.tsx LibraryDialog.tsx RackIndex.tsx
+    MidiPanel.tsx      # the MIDI controllers panel: mappings, Learn, monitor
+    AutomationLane.tsx # a pattern's automation lane, under the roll
+    AutomationContext.ts automationLabels.ts   # knobs following their curves; lane names
+    mixSpecs.ts        # the desk's knob ranges, shared with the MIDI mapping
     OscFace.tsx LfoFace.tsx KeysFace.tsx SeqFace.tsx LadderFace.tsx
     SvfFace.tsx MacroFace.tsx SamplerFace.tsx   # hand-laid-out panels
     EnvelopeGraph.tsx envelopeShape.ts WaveGraph.tsx waveShape.ts
@@ -680,7 +739,8 @@ scope, rec.
    - freeze a track to its stem, once there is a CPU wall worth measuring
 8. ~~Stretch: bake a patch into a small standalone synth to ship in a game and
    generate sounds at runtime instead of streaming WAVs.~~ `SongPlayer` does
-   this for a whole piece; what is left is packaging it as its own module.
+   this for a whole piece, and `npm run build:runtime` packages it as a
+   worklet and a client a game copies in. Arknoise is the first game on it.
 9. Vocal synthesis, as separate modules the way a throat and mouth split it:
    - ~~Voice: a glottal pulse source with breath, jitter, growl and vibrato~~
    - ~~Formant: a five-band vowel filter with a continuous morph and a Size~~

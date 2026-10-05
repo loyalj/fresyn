@@ -1,6 +1,7 @@
 import { memo, useCallback, useContext, useMemo, useState } from 'react'
 import type { PortRef } from '../patch/edit'
 import type { ModuleDef, PatchModule, RackNote } from '../patch/types'
+import { AutomationScope } from './AutomationContext'
 import { BackPanel } from './BackPanel'
 import { UnitBoundary } from './ErrorBoundary'
 import type { JackKind } from './Jack'
@@ -153,6 +154,7 @@ function UnitFaces({
 
   // --- notes --------------------------------------------------------------
   const noteActions = useContext(NoteActionsContext)
+  const rackScope = useContext(AutomationScope)
   const [front, back] = useMemo(() => {
     const all = notes ?? []
     return [all.filter((n) => n.face === 'front'), all.filter((n) => n.face === 'back')]
@@ -240,8 +242,10 @@ function UnitFaces({
   )
 
   return (
-    // Named on the element so a drag can match a rectangle on the page back
-    // to the module it belongs to, rather than trusting its position.
+    // Every knob inside is automated as this module's: see `AutomationScope`.
+    <AutomationScope.Provider value={rackScope === null ? null : `${rackScope}${moduleId}.`}>
+    {/* Named on the element so a drag can match a rectangle on the page back
+        to the module it belongs to, rather than trusting its position. */}
     <div
       className={`unit-flip${def.width === 'half' ? ' half' : ''}${
         flipped ? ' flipped' : ''
@@ -316,6 +320,7 @@ function UnitFaces({
         />
       )}
     </div>
+    </AutomationScope.Provider>
   )
 }
 

@@ -22,8 +22,9 @@ import { SongEngine } from '../src/dsp/SongEngine'
 import { compile } from '../src/patch/compile'
 import type { Cable, Patch, PatchModule } from '../src/patch/types'
 import { engineEvents, kitRow, noteTarget } from '../src/song/bind'
-import { flattenKits, kitSlots, padView, setKitSlot, updateKitSlot, withPadView } from '../src/patch/kit'
-import { templateById } from '../src/patch/library'
+import { flattenKits, kitSlots, padPatch, padView, setKitSlot, updateKitSlot, withPadView } from '../src/patch/kit'
+import { rack as buildRack } from '../src/patch/build'
+import { LIBRARY, templateById } from '../src/patch/library'
 import { fromStored, toStored } from '../src/patch/serialize'
 import { connect as wireUp, initialValues, reconcileValues } from '../src/patch/edit'
 import { sampleIdsIn } from '../src/patch/sampleRefs'
@@ -93,8 +94,40 @@ import { chordById, chordPitches } from '../src/song/chord'
 import { midiName, midiNameCents, rowForMidi, rowZero, scaleForRows, tuningOf } from '../src/song/tuning'
 import { clearTime, copyTime, deleteTime, duplicateTime, insertTime, pasteTime } from '../src/song/range'
 import { addRecorded, MIN_RECORDED, patternTick, recordedNote, spanTicks } from '../src/song/record'
-import { parseMidi } from '../src/input/midi'
+import { parseMidi, readMessage, type MidiMessage } from '../src/input/midi'
+import {
+  bind,
+  classify,
+  cleanMappings,
+  correctedEncoding,
+  dispatch,
+  freshState,
+  Learner,
+  matches,
+  relativeSteps,
+  type MidiMapping,
+  type MidiTarget,
+} from '../src/input/midiMap'
 import { parseSong } from '../src/song/serialize'
+import { songToMidi, varLen } from '../src/song/midi'
+import { parseMidiFile, type MidiFile } from '../src/song/midiFile'
+import { midiGain, readImport, songFromImport } from '../src/song/midiImport'
+import { gmVoice, GM_DRUMS } from '../src/song/gm'
+import { INSTRUMENTS } from '../src/patch/instruments'
+import { mapValue, shapeAt, unmapValue } from '../src/dsp/automation'
+import { mcuFeedback, mcuNote, nothingSent, readMcu } from '../src/input/mcu'
+import { barBeat, clockTime, parsePosition } from '../src/ui/PositionCounter'
+import {
+  automationBindings,
+  automationChanges,
+  automationValueAt,
+  laneValueAt,
+  movedTargets,
+  recordOver,
+  thinPoints,
+  parseTarget,
+  setLane,
+} from '../src/song/automation'
 import { describeEdit } from '../src/hooks/describeEdit'
 import { defaultPatch } from '../src/patch/defaultPatch'
 import { initialValues as rackValues } from '../src/patch/edit'
@@ -761,6 +794,7 @@ console.log('\nthe playhead around a loop')
     schedule: () => {},
     unschedule: () => {},
     allNotesOff: () => {},
+    clearAutomation: () => {},
   }
   const transport = new Transport(fake as unknown as AudioEngine, song())
   transport.setLoop({ from: 0, to: PPQ * 8 })
@@ -1525,6 +1559,7 @@ console.log('\nchords through a real voice')
   const after = rms(reference.subarray(60000))
   check('and it all falls quiet on release', after < 1e-4, `rms ${after.toExponential(2)}`)
   check('and the voices go back to sleep', sleeping)
+
 }
 
 console.log('\na hand on a keyboard with voices')
@@ -2589,6 +2624,194 @@ console.log('\nrecording notes played in')
   check('and nothing lands outside the rows', rowForMidi(127, { source: 'o', base: 0, octave: -3 }) === PITCH_RANGE.high)
 }
 
+console.log('\na controller\'s knobs and buttons, mapped')
+{
+  const cc = (number: number, value: number, channel = 1, device = 'Pad'): MidiMessage => ({ device, channel, kind: 'cc', number, value })
+  const read = readMessage([0xb2, 21, 100], 'Pad')
+  check('a control change is read with its input, channel, number and value',
+    JSON.stringify(read) === JSON.stringify({ device: 'Pad', channel: 3, kind: 'cc', number: 21, value: 100 }), JSON.stringify(read))
+  check('a note on at velocity zero is a release here too', readMessage([0x90, 36, 0], 'Pad')?.kind === 'noteOff')
+  check('the clock is not a control', readMessage([0xf8], 'Pad') === null)
+
+  const knob = classify([40, 41, 43, 44, 46].map((v) => cc(21, v)))
+  check('a knob with ends never repeats itself, and is read as one', knob.kind === 'absolute', JSON.stringify(knob))
+  check('one turned slowly from the bottom is still one', classify([1, 2, 3, 4].map((v) => cc(21, v))).kind === 'absolute')
+  const twos = classify([1, 1, 2, 1, 127, 127].map((v) => cc(21, v)))
+  check('an endless knob sending 1 and 127 is two\'s complement', twos.kind === 'relative' && twos.encoding === 'twos', JSON.stringify(twos))
+  const offset = classify([65, 65, 66, 63, 63].map((v) => cc(21, v)))
+  check('one sending 65 and 63 is binary offset', offset.kind === 'relative' && offset.encoding === 'offset', JSON.stringify(offset))
+  const signed = classify([1, 1, 65, 65].map((v) => cc(21, v)))
+  check('one sending 1 and 65 is sign and magnitude', signed.kind === 'relative' && signed.encoding === 'signed', JSON.stringify(signed))
+  const ccButton = classify([cc(30, 127), cc(30, 0)])
+  check('a control change that only says 0 and 127 is a button that toggles', ccButton.kind === 'button' && ccButton.button === 'toggle')
+  const pad = classify([{ device: 'Pad', channel: 10, kind: 'noteOn', number: 36, value: 90 }])
+  check('a note is a button', pad.kind === 'button')
+
+  check('two\'s complement steps', relativeSteps(1, 'twos') === 1 && relativeSteps(127, 'twos') === -1 && relativeSteps(125, 'twos') === -3)
+  check('offset steps', relativeSteps(66, 'offset') === 2 && relativeSteps(63, 'offset') === -1)
+  check('sign and magnitude steps', relativeSteps(2, 'signed') === 2 && relativeSteps(65, 'signed') === -1)
+
+  // A value target over a plain number, as a rack knob is.
+  let value = 0.8
+  const writes: number[] = []
+  const target: MidiTarget = { kind: 'value', label: 'Cutoff', get: () => value, set: (t) => (writes.push(t), (value = t)) }
+  const slider: MidiMapping = { control: { device: 'Pad', channel: 1, type: 'cc', number: 7 }, kind: 'absolute', target: 'rack/vcf/cutoff' }
+  let state = freshState()
+  let now = 0
+  const move = (v: number, mapping = slider) => dispatch(mapping, cc(7, v), target, state, (now += 10))
+  check('a slider standing low does not drag a value standing high', !move(20) && !move(40) && value === 0.8 && writes.length === 0)
+  check('it takes the value once it passes it', move(110) && value === 110 / 127)
+  check('and follows from then on', move(30) && value === 30 / 127)
+  value = 0.9
+  now += 1000
+  check('a value moved some other way has to be picked up again', !move(31) && value === 0.9)
+  check('picked up by reaching it', move(114) && Math.abs(value - 114 / 127) < 1e-9)
+  state = freshState()
+  check('with pick up off, the slider jumps it', dispatch(slider, cc(7, 0), target, state, (now += 10), false) && value === 0)
+
+  value = 0.5
+  state = freshState()
+  const endless: MidiMapping = { ...slider, kind: 'relative', encoding: 'twos' }
+  move(1, endless)
+  move(1, endless)
+  check('an endless knob nudges from where the value is, two steps for two messages', Math.abs(value - 0.52) < 1e-9, String(value))
+  move(126, endless)
+  check('and back down', Math.abs(value - 0.5) < 1e-9, String(value))
+
+  const stepped: MidiTarget = { kind: 'value', label: 'Wave', steps: 4, get: () => value, set: (t) => (value = Math.round(t * 3) / 3) }
+  const press: MidiMapping = { ...slider, kind: 'button', button: 'toggle' }
+  value = 0
+  state = freshState()
+  dispatch(press, cc(7, 127), stepped, state, (now += 10))
+  dispatch(press, cc(7, 0), stepped, state, (now += 10))
+  dispatch(press, cc(7, 127), stepped, state, (now += 10))
+  check('a button steps a switch through its positions', Math.abs(value - 2 / 3) < 1e-9, String(value))
+
+  let on = false
+  const mute: MidiTarget = { kind: 'switch', label: 'Mute', get: () => on, set: (v) => (on = v) }
+  state = freshState()
+  dispatch(press, cc(7, 127), mute, state, (now += 10))
+  dispatch(press, cc(7, 0), mute, state, (now += 10))
+  const muted = () => on
+  check('a press toggles, and letting go does not', muted())
+  dispatch(press, cc(7, 127), mute, state, (now += 10))
+  check('the next press toggles back', !muted())
+  dispatch({ ...press, button: 'follow' }, cc(7, 127), mute, state, (now += 10))
+  const followOn = muted()
+  dispatch({ ...press, button: 'follow' }, cc(7, 0), mute, state, (now += 10))
+  check('a latching button is followed: on while it says on', followOn && !muted())
+
+  const fired: string[] = []
+  const gate: MidiTarget = { kind: 'trigger', label: 'Trig', press: () => fired.push('down'), release: () => fired.push('up') }
+  state = freshState()
+  dispatch(slider, cc(7, 30), gate, state, (now += 10))
+  dispatch(slider, cc(7, 90), gate, state, (now += 10))
+  dispatch(slider, cc(7, 100), gate, state, (now += 10))
+  dispatch(slider, cc(7, 10), gate, state, (now += 10))
+  check('a knob fires a trigger crossing the middle, once each way', fired.join() === 'down,up', fired.join())
+
+  const a: MidiMapping = { control: { device: 'Pad', channel: 1, type: 'cc', number: 21 }, kind: 'absolute', target: 'track/1/gain' }
+  const b: MidiMapping = { control: { device: 'Pad', channel: 1, type: 'cc', number: 22 }, kind: 'absolute', target: 'track/2/gain' }
+  const relearnt = bind([a, b], { ...a, target: 'master/level' })
+  check('learning a control again moves it to the new target', relearnt.length === 2 && relearnt.some((m) => m.target === 'master/level' && m.control.number === 21))
+  const stolen = bind([a, b], { ...b, control: { ...b.control, number: 23 }, target: 'track/1/gain' })
+  check('and a target learnt again lets go of its old control', stolen.length === 2 && !stolen.some((m) => m.control.number === 21))
+  check('a mapping for any input hears every input', matches({ ...a.control, device: '' }, cc(21, 5, 1, 'Other')) && !matches(a.control, cc(21, 5, 1, 'Other')))
+
+  const clean = cleanMappings({
+    fresyn: 'midi-mappings',
+    mappings: [a, { ...b, kind: 'relative' }, { control: { device: 'Pad', channel: 17, type: 'cc', number: 1 }, kind: 'absolute', target: 'x' }, 'junk', { ...a, kind: 'wobble' }],
+  })
+  check('a mappings file is read back, and what is not a mapping is dropped',
+    clean.length === 2 && clean[1].encoding === 'twos' && clean[0].target === 'track/1/gain', JSON.stringify(clean))
+  check('storage that holds nothing reads as no mappings', cleanMappings(undefined).length === 0 && cleanMappings('x').length === 0)
+
+  const learner = new Learner()
+  learner.hear(cc(21, 64))
+  learner.hear(cc(99, 3))
+  learner.hear(cc(21, 66))
+  const learnt = learner.finish('rack/osc1/pitch')
+  check('learning listens to the first control moved and ignores the rest',
+    learnt?.control.number === 21 && learnt.kind === 'absolute' && learnt.target === 'rack/osc1/pitch', JSON.stringify(learnt))
+  check('and starts afresh after', !learner.started && learner.finish('x') === null)
+
+  // Faders that send pitch bend, and endless knobs that give their encoding away.
+  const bent = readMessage([0xe2, 0x7f, 0x7f], 'Pad')
+  check('a bend is read with its whole fourteen bits', bent?.kind === 'bend' && bent.channel === 3 && bent.fine === 16383)
+  check('and is a fader with ends when learnt', classify([bent!, { ...bent!, fine: 8000, value: 62 }]).kind === 'absolute')
+  check('a fader learnt from bends is matched by them, not by notes',
+    matches({ device: 'Pad', channel: 3, type: 'bend', number: 0 }, bent!) && !matches({ device: 'Pad', channel: 3, type: 'note', number: 0 }, bent!))
+  check('a knob taken for 1/127 that sends 65 is really 1/65', correctedEncoding('twos', 65) === 'signed')
+  check('and one taken for 1/65 that sends 127 is really 1/127', correctedEncoding('signed', 127) === 'twos')
+  check('one taken for 65/63 that sends 1 going the other way is really 1/65', correctedEncoding('offset', 1) === 'signed')
+  check('a fast turn is not mistaken for a wrong guess', correctedEncoding('twos', 5) === null && correctedEncoding('twos', 120) === null && correctedEncoding('offset', 70) === null)
+}
+
+console.log('\nthe UX batch: clip mute, positions, listening at a jack')
+{
+  const notes = [{ track: 'bench', tick: 0, length: 240, pitch: 0, velocity: 1 }]
+  const base: Song = {
+    tempo: 120,
+    tracks: [{ id: 'bench', name: 'Rack', patch: 'bench', gain: 1 }],
+    patterns: [{ id: 'p', name: 'P', length: PPQ * 4, notes }],
+    playlist: [{ pattern: 'p', tick: 0 }, { pattern: 'p', tick: PPQ * 4, mute: true }],
+  }
+  const ons = songEventTicks(base, 0, PPQ * 8).filter((e) => e.kind === 'on')
+  check('a muted clip plays nothing while its pattern\'s other clips play', ons.length === 1 && ons[0].tick === 0)
+  check('and a clip\'s mute is kept in a file', parseSong(JSON.parse(JSON.stringify(base)))?.playlist[1].mute === true)
+
+  const waltz: Song = { ...base, meter: { beats: 3, unit: 4 } }
+  check('a position reads bar.beat.sixteenth', barBeat(waltz, 3 * PPQ + PPQ + PPQ / 2) === '2.2.3', barBeat(waltz, 3 * PPQ + PPQ + PPQ / 2))
+  check('and as a time at the tempo', clockTime(base, PPQ * 4) === '0:02.0', clockTime(base, PPQ * 4))
+  check('a bar typed in is its first tick', parsePosition(waltz, '3') === 6 * PPQ)
+  check('a bar and beat', parsePosition(waltz, '2.3') === 3 * PPQ + 2 * PPQ)
+  check('a time', parsePosition(base, '0:01') === 2 * PPQ)
+  check('and nonsense is not a position', parsePosition(base, 'soon') === null && parsePosition(base, '0.1') === null)
+
+  // A Keyboard into an oscillator: listening at the oscillator's output hears
+  // it alone, and at a jack with nothing in it there is nothing to choose.
+  const patch: Patch = {
+    modules: [{ id: 'osc1', type: 'osc', params: { pitch: 440 } }, { id: 'vca1', type: 'vca', params: { level: 0 } }],
+    cables: [{ id: 'c1', from: { module: 'osc1', port: 'out' }, to: { module: 'vca1', port: 'in' } }],
+  }
+  const compiled = compile(patch)
+  const engine = new GraphEngine(compiled, 48000)
+  const l = new Float32Array(1024)
+  const r = new Float32Array(1024)
+  engine.render(l, r)
+  const quiet = Math.max(...l.map(Math.abs))
+  const slot = compiled.modules.find((m) => m.id === 'osc1')!.outs[0]
+  engine.listenAt(slot)
+  for (let i = 0; i < 4; i++) engine.render(l, r)
+  const heard = Math.max(...l.map(Math.abs))
+  check('listening at an oscillator hears it, though the VCA after it is shut', quiet < 1e-6 && heard > 0.2, `${quiet} then ${heard}`)
+  check('softly limited, so a jack never blasts', heard <= 1)
+  engine.listenAt(-1)
+  engine.render(l, r)
+  engine.render(l, r)
+  check('and letting go is the rack again', Math.max(...l.map(Math.abs)) < 1e-6)
+}
+
+console.log('\nMackie Control')
+{
+  const msg = (data: number[]) => readMessage(data, 'Surface')!
+  check('a fader on channel 3 is strip 3, as a position', JSON.stringify(readMcu(msg([0xe2, 0, 0x40])) ) === JSON.stringify({ kind: 'fader', strip: 2, position: 8192 / 16383 }))
+  check('a V-pot turned two steps right', JSON.stringify(readMcu(msg([0xb0, 17, 2]))) === JSON.stringify({ kind: 'vpot', strip: 1, steps: 2 }))
+  check('and three left', (readMcu(msg([0xb0, 17, 0x43])) as { steps: number }).steps === -3)
+  check('Mute on strip 5', JSON.stringify(readMcu(msg([0x90, 20, 127]))) === JSON.stringify({ kind: 'button', button: 'mute', strip: 4, down: true }))
+  check('Select let go of', JSON.stringify(readMcu(msg([0x90, 24, 0]))) === JSON.stringify({ kind: 'button', button: 'select', strip: 0, down: false }))
+  check('the transport and the bank buttons', ['play', 'stop', 'record', 'bankLeft', 'rewind', 'up'].every((b, i) => (readMcu(msg([0x90, [94, 93, 95, 46, 91, 96][i], 127])) as { button: string }).button === b))
+  check('a note no button sends means nothing', readMcu(msg([0x90, 60, 127])) === null)
+  check('a button lights by its own note', mcuNote('solo', 3) === 11 && mcuNote('play') === 94)
+
+  const sent = nothingSent()
+  const view = { lit: { 16: true, 94: false }, faders: [1, 0.5], rings: [0.5, null] }
+  const first = mcuFeedback(view, sent)
+  check('the first time, everything is sent', JSON.stringify(first) === JSON.stringify([[0x90, 16, 0x7f], [0x90, 94, 0], [0xe0, 0x7f, 0x7f], [0xe1, 0x00, 0x40], [0xb0, 0x30, 0x16], [0xb0, 0x31, 0]]), JSON.stringify(first))
+  check('after that, only what changed', JSON.stringify(mcuFeedback({ ...view, lit: { 16: false, 94: false } }, sent)) === JSON.stringify([[0x90, 16, 0]]))
+  check('and nothing when nothing did', mcuFeedback({ ...view, lit: { 16: false, 94: false } }, sent).length === 0)
+}
+
 console.log('\nthe History list names each edit')
 {
   const patch = defaultPatch()
@@ -2616,6 +2839,13 @@ console.log('\nthe History list names each edit')
     song: { ...base.song, playlist: [{ pattern: 'main', tick: 0, length: 960 }, { pattern: 'main', tick: 960, offset: 960, length: 2880 }] },
   }
   check('a split clip is a split', describeEdit(base, split) === 'Split clip', describeEdit(base, split))
+  const T = 'rack/bench/lpf1.cutoff'
+  const laned = (points: { tick: number; value: number }[] | null) => ({ ...base, song: setLane(base.song, 'main', T, points && { target: T, points }) })
+  const empty = laned([])
+  const drawn = laned([{ tick: 0, value: 0.5 }])
+  check('a new lane is named for its knob', describeEdit(base, empty) === 'Add lane · lpf1.cutoff', describeEdit(base, empty))
+  check('a point drawn in it is a point', describeEdit(empty, drawn) === 'Add point · lpf1.cutoff', describeEdit(empty, drawn))
+  check('and one dragged is a move', describeEdit(drawn, laned([{ tick: 240, value: 0.5 }])) === 'Move point · lpf1.cutoff')
 }
 
 console.log('\ntempo changes')
@@ -2985,6 +3215,102 @@ console.log('\nthe drum kit')
   }
   check('and it sounds', heard > 0.05, heard.toFixed(3))
 
+  // A pad that is quiet before it sounds: a granulator reading 0.3 s behind
+  // what it records, so a hit comes out a third of a second late. Released
+  // and silent is not finished while something in it still holds the hit.
+  {
+    const late = buildRack(
+      [
+        ['gate1', 'gate'],
+        ['osc1', 'osc', { pitch: 220, wave: 0, envAmount: 1, attack: 0.0005, decay: 0.05, sustain: 0, release: 0.05 }],
+        ['grn1', 'gran', { size: 0.05, density: 40, position: 0.3, spray: 0, pitch: 0, spread: 0, mix: 1 }],
+        ['mix1', 'mixer', { level1: 1 }],
+      ],
+      ['gate1.gate -> osc1.gate', 'osc1.out -> grn1.in', 'grn1.l -> mix1.in1'],
+    )
+    const kp2 = setKitSlot({ modules: [{ id: 'kit1', type: 'kit', params: {} }], cables: [] }, 'kit1', 0, {
+      name: 'Late',
+      note: 36,
+      patch: padPatch(late.patch, late.values),
+    })
+    const c2 = compile(kp2)
+    const e2 = new GraphEngine(c2, SR, c2.params)
+    // Long enough first for the pad to have fallen asleep.
+    let now = 0
+    for (; now < SR / 4; now += 128) e2.render(bl, br)
+    for (const ev of engineEvents([
+      { frame: now, track: 't', kind: 'on', pitch: kitRow(36), velocity: 1 },
+      { frame: now + 2400, track: 't', kind: 'off', pitch: kitRow(36), velocity: 0 },
+    ], noteTarget(kp2)!)) e2.schedule(ev)
+    let early = 0
+    let later = 0
+    for (let i = 0; i < SR * 0.6; i += 128) {
+      e2.render(bl, br)
+      const p = Math.max(...bl.map(Math.abs))
+      if (i < SR * 0.25) early = Math.max(early, p)
+      else later = Math.max(later, p)
+    }
+    check('a pad that sounds late is not put to sleep before it does', later > 0.02 && early < later / 4, `${early.toFixed(3)} then ${later.toFixed(3)}`)
+  }
+
+  // A pad with an echo in it waits, once it is quiet, as long as that echo is
+  // set to hold sound for -- and only that long. A 12 ms delay is not a
+  // two-second one, and a kit whose pads all waited two seconds a hit would
+  // cost a song its headroom.
+  {
+    const echoing = (time: number) => {
+      const rack = buildRack(
+        [
+          ['gate1', 'gate'],
+          ['osc1', 'osc', { pitch: 220, wave: 0, envAmount: 1, attack: 0.001, decay: 0.03, sustain: 0, release: 0.03 }],
+          ['dly1', 'delay', { time, feedback: 0, mix: 0.5 }],
+          ['mix1', 'mixer', { level1: 1 }],
+        ],
+        ['gate1.gate -> osc1.gate', 'osc1.out -> dly1.in', 'dly1.out -> mix1.in1'],
+      )
+      const kp3 = setKitSlot({ modules: [{ id: 'kit1', type: 'kit', params: {} }], cables: [] }, 'kit1', 0, {
+        name: 'Echo',
+        note: 36,
+        patch: padPatch(rack.patch, rack.values),
+      })
+      const c3 = compile(kp3)
+      const e3 = new GraphEngine(c3, SR, c3.params)
+      let now = 0
+      for (; now < SR / 4; now += 128) e3.render(bl, br)
+      for (const ev of engineEvents([
+        { frame: now, track: 't', kind: 'on', pitch: kitRow(36), velocity: 1 },
+        { frame: now + 480, track: 't', kind: 'off', pitch: kitRow(36), velocity: 0 },
+      ], noteTarget(kp3)!)) e3.schedule(ev)
+      const awakeAt: number[] = []
+      let echo = 0
+      for (let i = 0; i < SR; i += 128) {
+        e3.render(bl, br)
+        awakeAt.push((e3 as unknown as { padAwake: Uint8Array }).padAwake[0])
+        if (i >= 0.6 * SR && i < 0.65 * SR) echo = Math.max(echo, ...bl.map(Math.abs))
+      }
+      return { echo, awake: (seconds: number) => awakeAt[Math.floor((seconds * SR) / 128)] === 1 }
+    }
+    const chorus = echoing(0.012)
+    check('a pad through a short delay sleeps soon after it is quiet', !chorus.awake(0.4))
+    const long = echoing(0.6)
+    check('one through a long one waits out the gap for its echo', long.awake(0.45))
+    check('and the echo is heard', long.echo > 0.02, long.echo.toFixed(3))
+  }
+
+  // Every kit on the shelf runs a block at a time. A pad whose rack starts
+  // from a module with no inputs -- a kick's click from a Noise -- once let
+  // the sort put it ahead of the Trigger that fires the pad, and the engine,
+  // unable to wake the pad part way through a block, stepped the whole rack
+  // a sample at a time: four of the kits cost a hundred times what they should.
+  {
+    const kits = LIBRARY.filter((t) => noteTarget(t.build().patch)?.kind === 'kit')
+    const slow = kits.filter((t) => {
+      const c = compile(t.build().patch)
+      return (new GraphEngine(c, SR, c.params) as unknown as { stepwise: boolean }).stepwise
+    })
+    check('every kit on the shelf runs a block at a time', kits.length >= 9 && slow.length === 0, slow.map((t) => t.name).join(', ') || `${kits.length} kits`)
+  }
+
   // A gate into a Trig jack plays the pad: the library kit's Space is its kick.
   const g = new GraphEngine(compiled, SR, compiled.params)
   g.setModuleGate('gate1', true)
@@ -3068,6 +3394,207 @@ console.log('\na pad opened on the bench')
   const doc = (r: { patch: Patch; values: Record<string, number> }) => ({ name: 'P', song: bench, racks: { bench: r } })
   check('a knob in a pad is named with the pad', describeEdit(doc(rack), doc(turned)) === 'Decay · osc1 (Pad 1)', describeEdit(doc(rack), doc(turned)))
   check('and a cable in one', describeEdit(doc(rack), doc(rewired)) === 'Unplug cable (Pad 1)', describeEdit(doc(rack), doc(rewired)))
+}
+
+console.log('\nautomation lanes')
+{
+  const near = (a: number | null, b: number, eps = 1e-9) => a !== null && Math.abs(a - b) < eps
+  const lane = {
+    target: 'rack/t1/lpf1.cutoff',
+    points: [
+      { tick: 240, value: 0.2 },
+      { tick: 720, value: 1, shape: 'hold' as const },
+      { tick: 1200, value: 0.5, shape: 'curve' as const, tension: 1 },
+      { tick: 1680, value: 0.9 },
+    ],
+  }
+  const L = PPQ * 2
+  check('before the first point, the first point holds', near(laneValueAt(lane, L, 0), 0.2))
+  check('a straight line between two points', near(laneValueAt(lane, L, 480), 0.6))
+  check('a hold stays put and jumps at the next point', near(laneValueAt(lane, L, 1199), 1) && near(laneValueAt(lane, L, 1200), 0.5))
+  check('a curve with tension starts slowly', near(laneValueAt(lane, L, 1440), 0.5 + 0.4 * Math.pow(0.5, 4)))
+  check('after the last point, the last point holds to the end', near(laneValueAt(lane, L, L - 1), 0.9))
+  check('tension never overshoots either end', shapeAt('curve', -1, 0.3) <= 1 && shapeAt('curve', 1, 0.3) >= 0 && shapeAt('curve', 0.5, 1) === 1)
+  check('a lane with no points plays nothing', laneValueAt({ target: lane.target, points: [] }, L, 100) === null)
+
+  // A two-beat pattern of automation, placed twice: once whole at bar 2, and
+  // once stretched to loop and trimmed from the front at bar 4.
+  const B = PPQ * 4
+  const auto = { id: 'a', name: 'Sweep', length: L, notes: [], automation: [lane] }
+  const empty = { id: 'e', name: 'Empty', length: B, notes: [] }
+  const song: Song = {
+    tempo: 120,
+    tracks: [{ id: 't1', name: 'Bass', patch: 't1', gain: 1 }],
+    patterns: [empty, auto],
+    playlist: [
+      { pattern: 'e', tick: 0 },
+      { pattern: 'a', tick: B },
+      { pattern: 'a', tick: 3 * B, offset: PPQ, length: L * 2, lane: 1 },
+    ],
+  }
+  const T = lane.target
+  check('nothing automates the knob before its clip', automationValueAt(song, T, B - 1) === null)
+  check('inside the clip the lane has it', near(automationValueAt(song, T, B + 480), 0.6))
+  check('and after the clip it is the knob\'s again', automationValueAt(song, T, B + L + 10) === null)
+  check('a clip trimmed from the front plays from part way through its pattern', near(automationValueAt(song, T, 3 * B), laneValueAt(lane, L, PPQ)!))
+  check('and loops the pattern when stretched past it', near(automationValueAt(song, T, 3 * B + L + 480 - PPQ), 0.6))
+
+  // Overlap: a later clip takes over, and the earlier one has it back after.
+  const flat = { id: 'f', name: 'Flat', length: PPQ, notes: [], automation: [{ target: T, points: [{ tick: 0, value: 0.05 }] }] }
+  const over: Song = { ...song, patterns: [...song.patterns, flat], playlist: [...song.playlist, { pattern: 'f', tick: B + 480, lane: 2 }] }
+  check('where two clips automate a knob, the later-starting one has it', near(automationValueAt(over, T, B + 600), 0.05))
+  check('and once it ends, the one underneath carries on', near(automationValueAt(over, T, B + 480 + PPQ + 1), laneValueAt(lane, L, 480 + PPQ + 1)!))
+
+  // Windows tile: the changes over a span are the same however it is cut up.
+  const whole = automationChanges(song, 0, 6 * B)
+  const tiled = [0, 700, 1919, B, B + 1000, 3 * B + 5, 5 * B].flatMap((from, i, all) => automationChanges(song, from, all[i + 1] ?? 6 * B))
+  check('changes over a span are the same however the windows fall', JSON.stringify(whole) === JSON.stringify(tiled), `${whole.length} vs ${tiled.length}`)
+  check('a clip\'s end sends the knob back', whole.some((c) => c.tick === B + L && c.curve === null))
+  const snap = automationChanges(song, B + 500, B + 501, true)
+  check('a snapshot says where a knob stands mid-curve', snap.length === 1 && snap[0].curve !== null && snap[0].curve.from === B + 240)
+  check('and lets go of one nothing automates there', automationChanges(song, 10, 11, true)[0]?.curve === null)
+
+  // The transport's fill: stamped in frames, and snapshotted round a loop.
+  const SR = 48000
+  const out = fill(song, SR, { tick: 0, frame: 0 }, SR * 4, null, true)
+  const fpt = SR / (2 * PPQ)
+  const start = out.automation.find((e) => e.curve && e.frame === Math.round(B * fpt))
+  check('fill stamps automation in frames, its curve with it', !!start && Math.abs(start.curve!.to - (B + 240) * fpt) < 1e-6)
+  check('and starts by letting go of anything not automated yet', out.automation[0]?.frame === 0 && out.automation[0]?.curve === null)
+  const looped = fill(song, SR, { tick: B, frame: 0 }, SR * 6, { from: B, to: B + L }, false)
+  const atSeams = looped.seams.map((s) => looped.automation.filter((e) => e.frame === Math.round(s.frame)).length)
+  check('round a loop, the far side of every seam says where the knob is', looped.seams.length > 0 && atSeams.every((n) => n >= 1), JSON.stringify(atSeams))
+
+  // Where a lane goes.
+  const racks = { t1: { patch: { modules: [{ id: 'lpf1', type: 'ladder', params: {} }], cables: [] } as Patch } }
+  const binds = automationBindings(
+    { ...song, patterns: [{ ...auto, automation: [lane, { target: 'rack/t1/gone1.cutoff', points: [{ tick: 0, value: 1 }] }, { target: 'strip/t1/gain', points: [] }, { target: 'space/level', points: [] }] }] },
+    racks,
+  )
+  check('a knob\'s lane goes to its track, curved like the knob', binds.get(T)?.track === 't1' && binds.get(T)?.map.kind === 'exp')
+  check('a lane for a module since removed goes nowhere', !binds.has('rack/t1/gone1.cutoff'))
+  check('a fader is automated in dB, as it is drawn', binds.get('strip/t1/gain')?.map.kind === 'fader' && binds.get('strip/t1/gain')?.track === '')
+  check('a return\'s level is not a fader', binds.get('space/level')?.map.kind === 'lin' && binds.get('space/level')?.map.max === 2)
+  check('a target is read back as written', JSON.stringify(parseTarget('rack/t1/kit1/3/osc1.pitch')) === JSON.stringify({ kind: 'rack', track: 't1', key: 'kit1/3/osc1.pitch', module: 'kit1/3/osc1', param: 'pitch' }))
+  check('and nonsense is not a target', parseTarget('strip/t1/wobble') === null && parseTarget('rack/t1/nodot') === null && parseTarget('x') === null)
+
+  // Kept, copied and tidied with the song.
+  const back = parseSong(JSON.parse(JSON.stringify(song)))!
+  check('lanes survive a save and a load', JSON.stringify(back.patterns.find((p) => p.id === 'a')?.automation) === JSON.stringify([lane]))
+  const odd = parseSong({ ...song, patterns: [{ ...auto, automation: [{ target: 'rack/zz/x.y', points: [{ tick: 0, value: 1 }] }, { target: T, points: [{ tick: -5, value: 7 }, { tick: 'x', value: 0 }] }] }] })!
+  const kept = odd.patterns[0].automation
+  check('a file\'s lanes for missing tracks, and bad points, are dropped', kept?.length === 1 && kept[0].points.length === 1 && kept[0].points[0].tick === 0 && kept[0].points[0].value === 1, JSON.stringify(kept))
+  const two: Song = { ...song, tracks: [...song.tracks, { id: 't2', name: 'Lead', patch: 't2', gain: 1 }] }
+  check('removing a track takes its lanes', removeTrack(two, 't1').patterns.every((p) => !p.automation))
+  const copy = duplicatePattern(song, 'a', 'a2', 'Sweep 2').patterns.find((p) => p.id === 'a2')
+  check('a duplicated pattern has its own copy of the lanes', JSON.stringify(copy?.automation) === JSON.stringify([lane]) && copy?.automation?.[0] !== lane)
+  const edited = setLane(song, 'a', T, { target: T, points: [{ tick: 0, value: 0.3 }] })
+  check('a lane is replaced in place', edited.patterns[1].automation?.length === 1 && edited.patterns[1].automation[0].points[0].value === 0.3)
+  check('the same lane again is no edit', setLane(edited, 'a', T, { target: T, points: [{ tick: 0, value: 0.3 }] }) === edited)
+  check('and removing the last lane leaves no field behind', !('automation' in setLane(song, 'a', T, null).patterns[1]))
+
+  // Recording.
+  const ramp = Array.from({ length: 61 }, (_, i) => ({ tick: 400 + i * 10, value: 0.2 + i * 0.01 }))
+  const thin = thinPoints(ramp)
+  check('a steady turn recorded sixty times is two points', thin.length === 2 && thin[0].tick === 400 && thin[1].tick === 1000, JSON.stringify(thin))
+  const bend = thinPoints([...ramp, ...Array.from({ length: 30 }, (_, i) => ({ tick: 1010 + i * 10, value: 0.78 - i * 0.02 }))])
+  check('and a turn that comes back keeps its corner', bend.length === 3 && bend[1].tick === 1000, JSON.stringify(bend))
+  const taken = recordOver(lane.points, ramp)
+  check('a take replaces what the lane had where it was recorded', !taken.some((p) => p.tick === 720), JSON.stringify(taken))
+  check('and keeps the rest', taken.some((p) => p.tick === 240) && taken.some((p) => p.tick === 1200) && taken.some((p) => p.tick === 1680))
+  check('a take is written in order', taken.every((p, i) => i === 0 || p.tick >= taken[i - 1].tick))
+  const knobRacks = { t1: { values: { 'lpf1.cutoff': 1000 } } }
+  const turned = movedTargets({ song, racks: knobRacks }, { song: updateStrip(song, 't1', { pan: 0.5 }), racks: { t1: { values: { 'lpf1.cutoff': 2000 } } } })
+  check('a knob turned and a pan moved are both seen as moved', JSON.stringify(turned) === JSON.stringify([{ target: T, value: 2000 }, { target: 'strip/t1/pan', value: 0.5 }]), JSON.stringify(turned))
+  check('nothing moved is nothing', movedTargets({ song, racks: knobRacks }, { song, racks: knobRacks }).length === 0)
+  const maps = [{ kind: 'exp', min: 20, max: 18000 }, { kind: 'lin', min: -1, max: 1 }, { kind: 'fader', min: 0, max: 1 }, { kind: 'step', min: 0, max: 3 }] as const
+  check('a value turns back into the position that reads it', maps.every((m) => [0, 0.25, 0.7, 1].every((t) => m.kind === 'step' || Math.abs(unmapValue(m, mapValue(m, t)) - t) < 1e-9)))
+}
+
+console.log('\nMIDI files brought in')
+{
+  // A file by hand, at 96 ticks to the beat: a conductor track, then a piano
+  // using running status with a program, a volume ride and a pan; then drums
+  // on channel 10.
+  const vl = (n: number) => varLen(n)
+  const trk = (events: number[][]) => {
+    const body = events.flat()
+    return [0x4d, 0x54, 0x72, 0x6b, (body.length >>> 24) & 255, (body.length >> 16) & 255, (body.length >> 8) & 255, body.length & 255, ...body]
+  }
+  const text = (s: string) => [...new TextEncoder().encode(s)]
+  const conductor = trk([
+    [0, 0xff, 0x51, 3, 0x07, 0xa1, 0x20], // 120 bpm
+    [0, 0xff, 0x58, 4, 3, 2, 24, 8], // 3/4
+    [0, 0xff, 0x06, 5, ...text('Intro')],
+    [...vl(96 * 6), 0xff, 0x51, 3, 0x09, 0x27, 0xc0], // 100 bpm at bar 3
+    [0, 0xff, 0x06, 5, ...text('Verse')],
+    [0, 0xff, 0x2f, 0],
+  ])
+  const piano = trk([
+    [0, 0xff, 0x03, 5, ...text('Piano')],
+    [0, 0xc0, 4], // electric piano
+    [0, 0xb0, 7, 127],
+    [0, 0xb0, 10, 127],
+    [0, 0x90, 60, 100],
+    [0, 64, 80], // running status: a second note at once
+    [...vl(96), 60, 0], // and a note on at nothing, which is a release
+    [0, 0x80, 64, 0],
+    [...vl(96), 0xb0, 7, 64],
+    [...vl(96), 0x90, 67, 127],
+    [...vl(48), 0x80, 67, 0],
+    [0, 0xff, 0x2f, 0],
+  ])
+  const drums = trk([
+    [0, 0x99, 36, 110],
+    [...vl(24), 0x89, 36, 0],
+    [0, 0xff, 0x2f, 0],
+  ])
+  const bytes = new Uint8Array([0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 1, 0, 3, 0, 96, ...conductor, ...piano, ...drums])
+  const file = parseMidiFile(bytes)
+  check('a type 1 file is read, track by track', 'tracks' in file && file.tracks.length === 3 && file.division === 96)
+  const imp = readImport(file as MidiFile)
+  check('its tempo, and the change to it, in the song\'s ticks', imp.tempo === 120 && JSON.stringify(imp.tempos) === JSON.stringify([{ tick: 6 * PPQ, bpm: 100 }]), JSON.stringify(imp.tempos))
+  check('its meter', imp.meter.beats === 3 && imp.meter.unit === 4)
+  check('its markers', JSON.stringify(imp.markers) === JSON.stringify([{ tick: 0, name: 'Intro' }, { tick: 6 * PPQ, name: 'Verse' }]))
+  const [keys, kit] = imp.parts
+  check('a part for each track that plays', imp.parts.length === 2 && keys.name === 'Piano' && keys.program === 4 && kit.drums && !keys.drums)
+  check('running status and a note on at nothing are read as they are meant',
+    JSON.stringify(keys.notes.map((n) => [n.tick, n.length, n.note])) === JSON.stringify([[0, PPQ, 60], [0, PPQ, 64], [3 * PPQ, PPQ / 2, 67]]), JSON.stringify(keys.notes))
+  check('velocities come through', Math.abs(keys.notes[0].velocity - 100 / 127) < 1e-9)
+  check('volume as a level, on General MIDI\'s curve', keys.gain.length === 2 && keys.gain[0].value === 1 && Math.abs(keys.gain[1].value - midiGain(64)) < 1e-9)
+  check('and pan', keys.pan.length === 1 && keys.pan[0].value === 1)
+  check('a drum on channel 10 is a drum', kit.notes.length === 1 && kit.notes[0].note === 36 && kit.notes[0].length === PPQ / 4)
+  check('a file that is not one says so', 'error' in parseMidiFile(new Uint8Array([1, 2, 3])))
+  check('voices for every program are on the shelf, and the drums', Array.from({ length: 128 }, (_, i) => gmVoice(i)).every((id) => !!INSTRUMENTS.find((x) => x.id === id)) && !!INSTRUMENTS.find((x) => x.id === GM_DRUMS))
+
+  // Into a song.
+  const rackOf = (id: string) => {
+    const built = INSTRUMENTS.find((x) => x.id === id)!.make()
+    return { patch: built.patch, values: built.values }
+  }
+  const made = songFromImport(imp, (p) => rackOf(p.drums ? GM_DRUMS : gmVoice(p.program ?? 0)), { kind: 'new' })
+  const s = made.song
+  check('a track and a rack for each part', s.tracks.length === 2 && Object.keys(made.racks).length === 2 && s.tracks[0].name === 'Piano' && s.tracks[1].name === 'Drums')
+  check('a pattern for each, on a lane of its own', s.patterns.length === 2 && s.playlist.length === 2 && (s.playlist[0].lane ?? 0) === 0 && s.playlist[1].lane === 1)
+  check('as long as the file, in whole bars', s.patterns[0].length % (3 * PPQ) === 0 && s.patterns[0].length >= 3 * PPQ)
+  check('the song takes the file\'s tempo, meter and markers', s.tempo === 120 && s.tempos?.length === 1 && s.meter?.beats === 3 && s.sections?.map((x) => x.name).join() === 'Intro,Verse')
+  const tuning = tuningOf(made.racks[s.tracks[0].id])
+  check('a note plays the row named for it on its track', s.patterns[0].notes[0].pitch === rowForMidi(60, tuning), `${s.patterns[0].notes[0].pitch}`)
+  check('a drum lands on its pad\'s row', s.patterns[1].notes[0].pitch === kitRow(36))
+  check('a volume ride becomes a lane on the strip, as steps', s.patterns[0].automation?.length === 1 && s.patterns[0].automation[0].target === `strip/${s.tracks[0].id}/gain` && s.patterns[0].automation[0].points.every((p) => p.shape === 'hold'))
+  check('and where the file starts it, the fader and pan start', s.tracks[0].gain === 1 && s.tracks[0].strip?.pan === 1)
+  check('it all plays', songEventTicks(s, 0, songEnd(s)).filter((e) => e.kind === 'on').length === 4)
+
+  const host = benchSong()
+  const into = songFromImport(imp, (p) => rackOf(p.drums ? GM_DRUMS : 'synthpiano'), { kind: 'add', song: host, at: 4 * PPQ })
+  check('added to a song, its tracks come after the song\'s own', into.song.tracks.length === 3 && into.song.tracks[0].id === host.tracks[0].id && into.tracks.length === 2)
+  check('at the place asked, below what is there', into.song.playlist.slice(1).every((p) => p.tick === 4 * PPQ && (p.lane ?? 0) >= 1))
+  check('keeping the song\'s own tempo and meter', into.song.tempo === host.tempo && !into.song.meter && !into.song.tempos)
+
+  // Out and back in again.
+  const back = readImport(parseMidiFile(songToMidi(s, { noteOf: (track, row) => (track === s.tracks[1].id ? row + 12 : row + rowZero(tuningOf(made.racks[track]))) })) as MidiFile)
+  check('a song exported and brought back has the same notes', JSON.stringify(back.parts.map((p) => p.notes.map((n) => [n.tick, n.length, n.note]))) === JSON.stringify(imp.parts.map((p) => p.notes.map((n) => [n.tick, n.length, n.note]))),
+    JSON.stringify(back.parts.map((p) => p.notes.length)))
 }
 
 console.log(failures === 0 ? '\nall good\n' : `\n${failures} failed\n`)

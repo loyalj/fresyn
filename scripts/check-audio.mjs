@@ -50,7 +50,9 @@ check('it measures the open device', /ms/.test(await readout()), await readout()
 
 // A new buffer means a new context; the readout comes back once it is up.
 await page.select('#audio-latency', 'balanced')
-await waitUntil(page, () => !!document.querySelector('.audio-total'), { timeout: 8000 })
+// The old readout can still be showing for a moment before the rebuild clears
+// it, so wait for a measurement rather than for the element.
+await waitUntil(page, () => /ms/.test(document.querySelector('.audio-readout')?.textContent ?? '') && !/Opening/.test(document.querySelector('.audio-readout')?.textContent ?? ''), { timeout: 8000 })
 check('Balanced is remembered', (await prefs()).latency === 'balanced')
 check('the rebuilt device is measured', /ms/.test(await readout()), await readout())
 check('the rebuild did not fail', await noFailure())

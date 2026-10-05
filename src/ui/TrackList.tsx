@@ -274,6 +274,7 @@ export function TrackList({
       <div
         key={track.id}
         data-track={track.id}
+        data-midi-scope={`track/${song.tracks.findIndex((t) => t.id === track.id) + 1}`}
         className={`track${track.id === selected ? ' on' : ''}${silent ? ' silent' : ''}${
           drag?.id === track.id ? ' dragging' : ''
         }${track.color !== undefined ? ' colored' : ''}${folder && !pinnedBand ? ' in-folder' : ''}${
@@ -337,6 +338,7 @@ export function TrackList({
 
         <input
           className="track-gain"
+          data-midi-param="gain"
           type="range"
           min={0}
           max={1}
@@ -350,6 +352,7 @@ export function TrackList({
 
         <button
           className={`track-flag${track.mute ? ' on' : ''}`}
+          data-midi-param="mute"
           onClick={() => onChange(track.id, { mute: track.mute ? undefined : true })}
           aria-pressed={!!track.mute}
           aria-label={`Mute ${track.name || 'track'}`}
@@ -360,6 +363,7 @@ export function TrackList({
         </button>
         <button
           className={`track-flag${track.solo ? ' on' : ''}`}
+          data-midi-param="solo"
           onClick={() => onSolo(track.id)}
           aria-pressed={!!track.solo}
           aria-label={`Solo ${track.name || 'track'}`}

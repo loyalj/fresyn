@@ -213,6 +213,47 @@ export interface Pattern {
    * roll, or by a game through `SongPlayer.setSwing`.
    */
   swing?: Swing
+  /**
+   * Knobs that move while it plays: a lane per knob, for any track or the
+   * desk, like the notes. Repeated, trimmed and split with the pattern's
+   * clips, because it is part of the pattern. Absent is none. See
+   * `song/automation`.
+   */
+  automation?: AutomationLane[]
+}
+
+/**
+ * One knob's movement through a pattern.
+ *
+ * Outside the clips that play it, the knob is wherever its own panel says.
+ * Inside, the lane decides: before its first point it holds that point's
+ * value, and after its last it holds the last one, to the end of the
+ * pattern.
+ */
+export interface AutomationLane {
+  /** What it moves. See `song/automation` for how a target is written. */
+  target: string
+  /** In order of tick. Two may share a tick, which is a jump. */
+  points: AutomationPoint[]
+}
+
+export interface AutomationPoint {
+  /** From the start of the pattern. */
+  tick: number
+  /**
+   * Where the knob stands, 0..1 along its travel: the position, not the
+   * value. A cutoff sweep is then the same shape as turning the knob by hand,
+   * whatever the knob's range or curve.
+   */
+  value: number
+  /**
+   * How it gets from here to the next point. Absent is a straight line;
+   * `hold` stays here and jumps at the next point; `curve` bends by
+   * `tension`.
+   */
+  shape?: 'hold' | 'curve'
+  /** -1..1, for a curve: above nought it starts slowly and finishes fast, below the other way round. */
+  tension?: number
 }
 
 /**
@@ -385,6 +426,8 @@ export interface Placement {
   offset?: number
   /** How long the clip lasts, in ticks. Absent is the pattern's length. */
   length?: number
+  /** Silenced, notes and automation both, while the pattern's other clips play. */
+  mute?: boolean
 }
 
 /** An empty song, which is what a new project opens on. */

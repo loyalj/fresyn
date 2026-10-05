@@ -1,5 +1,6 @@
 import type { AudioSettings } from '../audio/AudioEngine'
 import type { StoredSample } from '../audio/sampleStore'
+import type { MidiMapping } from '../input/midiMap'
 import {
   fromStoredProject,
   makeProjectBundle,
@@ -123,8 +124,17 @@ const DOCK_KEY = 'fresyn.dock.v1'
 
 export interface DockState {
   open: boolean
+  /** The height a dock was last kept at, in pixels: what a save from before `shares` has. */
   height: number
+  /**
+   * How much of the window each view's dock takes, 0..1: the roll, the
+   * playlist and the desk each kept at their own size, and in proportion,
+   * so a bigger screen gets a bigger roll.
+   */
+  shares?: Partial<Record<DockView, number>>
 }
+
+export type DockView = 'roll' | 'song' | 'mix'
 
 /**
  * Whether the roll is out, and how tall. Guarded like every other accessor
@@ -145,7 +155,13 @@ export function loadDock(): DockState | null {
     if (!text) return null
     const data = JSON.parse(text) as Record<string, unknown>
     if (typeof data.open !== 'boolean' || typeof data.height !== 'number') return null
-    return { open: data.open, height: data.height }
+    const shares: Partial<Record<DockView, number>> = {}
+    const raw = (typeof data.shares === 'object' && data.shares !== null ? data.shares : {}) as Record<string, unknown>
+    for (const view of ['roll', 'song', 'mix'] as const) {
+      const v = raw[view]
+      if (typeof v === 'number' && v > 0 && v < 1) shares[view] = v
+    }
+    return { open: data.open, height: data.height, shares }
   } catch {
     return null
   }
@@ -177,7 +193,19 @@ export interface Prefs {
   bounce?: { format: 'wav' | 'flac' | 'ogg' | 'mp3'; sampleRate: number; bitDepth: number; quality: number }
   /** Whether MIDI controllers are listened to. Off until asked for: the browser asks the person first. */
   midi?: boolean
+  /**
+   * What each knob, slider and button on a controller is mapped onto. This
+   * machine's, not the project's: they are about the controller on the desk.
+   * Read back through `cleanMappings`.
+   */
+  midiMappings?: MidiMapping[]
+  /** The inputs in Mackie Control (DAW) mode: see `useMcu`. */
+  mcuDevices?: string[]
+  /** Whether a controller's knob waits to reach the value before moving it. On to begin with. */
+  midiPickup?: boolean
   cableColors?: 'signal' | 'module'
+  /** How solid cables are drawn: 1, 0.5 or 0.22. */
+  cableOpacity?: number
   compact?: boolean
   knobHelp?: boolean
   /** Whether notes stuck to the rack are showing. */
