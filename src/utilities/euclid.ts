@@ -8,6 +8,7 @@
  * other into a polyrhythm nobody would program by hand.
  */
 import { mulberry32 } from '../dsp/Rng'
+import { PPQ } from '../song/types'
 
 /** The most steps a lane can have. */
 export const MAX_STEPS = 32
@@ -53,6 +54,15 @@ export interface Lane {
   steps: number
   hits: number
   rotate: number
+  /**
+   * The steps written out, for a lane that is not Euclidean: `X` an accented
+   * hit, `x` a hit, `g` a ghost note, `.` a rest. When it is here it is the
+   * rhythm, and Steps, Hits and Accent are read from it; Rotate still turns
+   * it.
+   */
+  pattern?: string
+  /** Steps to a quarter note, when this lane's grid is not the rhythm's own. */
+  perBeat?: number
   /** How many of the hits are accented, spread evenly among them the same way the hits are. */
   accents: number
   /** 0..1: how likely an unaccented hit is to be written. Accented hits always are. */
@@ -66,14 +76,71 @@ export interface Lane {
   mute?: boolean
 }
 
+/** One step of a lane: a rest, or a hit that may be accented or a ghost. */
+export interface LaneStep {
+  hit: boolean
+  accent: boolean
+  ghost?: boolean
+}
+
+/** A written-out pattern as steps. Anything but `X`, `x` and `g` is a rest. */
+export function parsePattern(pattern: string): LaneStep[] {
+  return [...pattern.slice(0, MAX_STEPS)].map((c) => ({ hit: c === 'X' || c === 'x' || c === 'g', accent: c === 'X', ...(c === 'g' ? { ghost: true } : {}) }))
+}
+
+/** Steps back to the pattern they were read from. */
+export const patternOf = (steps: readonly LaneStep[]) =>
+  steps.map((s) => (!s.hit ? '.' : s.accent ? 'X' : s.ghost ? 'g' : 'x')).join('')
+
 /** What a lane plays in one cycle: a hit or a rest on each step, and which hits are accented. */
-export function laneSteps(lane: Pick<Lane, 'steps' | 'hits' | 'rotate' | 'accents'>): { hit: boolean; accent: boolean }[] {
+export function laneSteps(lane: Pick<Lane, 'steps' | 'hits' | 'rotate' | 'accents' | 'pattern'>): LaneStep[] {
+  if (lane.pattern) return rotate(parsePattern(lane.pattern), lane.rotate)
   const base = euclid(lane.hits, lane.steps)
   const hitCount = base.filter(Boolean).length
   const accents = euclid(Math.min(lane.accents, hitCount), Math.max(1, hitCount))
   let h = 0
   const marked = base.map((hit) => ({ hit, accent: hit && accents[h++] === true }))
   return rotate(marked, lane.rotate)
+}
+
+/**
+ * The Euclidean rhythm a pattern is, if it is one: so many hits in so many
+ * steps and the rotation that turns E(k,n) into it -- the smallest, when a
+ * symmetrical rhythm has several. Null for one that is not, as son clave is
+ * not. Accents and ghosts are hits like any other here.
+ */
+export function euclidOf(steps: readonly boolean[]): { hits: number; steps: number; rotate: number } | null {
+  const n = steps.length
+  if (n < 1 || n > MAX_STEPS) return null
+  const k = steps.filter(Boolean).length
+  if (k === 0 || k === n) return null
+  const base = euclid(k, n)
+  for (let r = 0; r < n; r++) {
+    const turned = rotate(base, r)
+    if (turned.every((h, i) => h === steps[i])) return { hits: k, steps: n, rotate: r }
+  }
+  return null
+}
+
+/**
+ * The Euclidean rhythm nearest a pattern: as many hits in as many steps, at
+ * whichever rotation shares the most of them with it, the earliest of equals.
+ */
+export function nearestEuclid(steps: readonly boolean[]): { hits: number; steps: number; rotate: number } {
+  const n = Math.max(1, Math.min(MAX_STEPS, steps.length))
+  const k = steps.slice(0, n).filter(Boolean).length
+  const base = euclid(k, n)
+  let best = 0
+  let shared = -1
+  for (let r = 0; r < n; r++) {
+    const turned = rotate(base, r)
+    const same = turned.filter((h, i) => h && steps[i]).length
+    if (same > shared) {
+      shared = same
+      best = r
+    }
+  }
+  return { hits: k, steps: n, rotate: best }
 }
 
 /** One hit of a written rhythm, on a row, in ticks from the start of the pattern. */
@@ -95,6 +162,8 @@ export interface RhythmSpec {
   /** Velocity of a plain hit and an accented one, 0..1. */
   velocity: number
   accent: number
+  /** Velocity of a ghost note; half a plain hit's when absent. */
+  ghost?: number
   /** Which roll of the dice decides the hits left to chance. The same seed is the same rhythm. */
   seed: number
 }
@@ -113,7 +182,8 @@ export function rhythmNotes(spec: RhythmSpec): RhythmHit[] {
     if (lane.mute) return
     const cycle = laneSteps(lane)
     const n = cycle.length
-    const stepTicks = lane.fit ? spec.bar / n : spec.step
+    if (n === 0) return
+    const stepTicks = lane.fit ? spec.bar / n : lane.perBeat ? PPQ / lane.perBeat : spec.step
     if (!(stepTicks > 0)) return
     const rng = mulberry32((Math.imul(spec.seed >>> 0, 2654435761) ^ (index + 1) * 40503) >>> 0)
     const chance = Math.min(1, Math.max(0, lane.probability))
@@ -126,7 +196,8 @@ export function rhythmNotes(spec: RhythmSpec): RhythmHit[] {
       // hits after a change of chance.
       const roll = s.hit ? rng() : 1
       if (!s.hit || (!s.accent && roll >= chance)) continue
-      out.push({ row: lane.row, tick, length: Math.min(length, spec.length - tick), velocity: s.accent ? spec.accent : spec.velocity })
+      const velocity = s.accent ? spec.accent : s.ghost ? (spec.ghost ?? spec.velocity / 2) : spec.velocity
+      out.push({ row: lane.row, tick, length: Math.min(length, spec.length - tick), velocity })
     }
   })
   return out.sort((a, b) => a.tick - b.tick || a.row - b.row)
@@ -135,87 +206,3 @@ export function rhythmNotes(spec: RhythmSpec): RhythmHit[] {
 function clampInt(v: number, lo: number, hi: number): number {
   return Number.isFinite(v) ? Math.min(hi, Math.max(lo, Math.round(v))) : lo
 }
-
-/**
- * Grooves to start from. Lanes name the General MIDI note the pad is
- * usually on, and land on whichever pad of the kit is on it -- or, in a kit
- * laid out some other way, on the pad nearest in the list.
- */
-export interface RhythmPreset {
-  id: string
-  name: string
-  description: string
-  /** Grid step as a share of a quarter note: 4 is sixteenths. */
-  perBeat: number
-  lanes: (Omit<Lane, 'row' | 'probability' | 'accents'> & { note: number; probability?: number; accents?: number })[]
-}
-
-export const RHYTHM_PRESETS: readonly RhythmPreset[] = [
-  {
-    id: 'four',
-    name: 'Four on the floor',
-    description: 'Kick on every beat, clap on two and four, hats between',
-    perBeat: 4,
-    lanes: [
-      { note: 36, steps: 4, hits: 1, rotate: 0 },
-      { note: 39, steps: 8, hits: 1, rotate: 4 },
-      { note: 42, steps: 4, hits: 1, rotate: 2 },
-    ],
-  },
-  {
-    id: 'tresillo',
-    name: 'Tresillo',
-    description: 'Three in eight: the 3-3-2 under reggaeton, dancehall and half of pop',
-    perBeat: 4,
-    lanes: [
-      { note: 36, steps: 8, hits: 3, rotate: 0 },
-      { note: 38, steps: 16, hits: 2, rotate: 4 },
-      { note: 42, steps: 16, hits: 16, rotate: 0, accents: 4, probability: 0.75 },
-    ],
-  },
-  {
-    id: 'cinquillo',
-    name: 'Cinquillo',
-    description: 'Five in eight, the Cuban cell, over a steady kick',
-    perBeat: 4,
-    lanes: [
-      { note: 36, steps: 4, hits: 1, rotate: 0 },
-      { note: 37, steps: 8, hits: 5, rotate: 0 },
-      { note: 42, steps: 8, hits: 4, rotate: 1 },
-    ],
-  },
-  {
-    id: 'bossa',
-    name: 'Bossa nova',
-    description: 'Five in sixteen on the rim, the kick in dotted pairs',
-    perBeat: 4,
-    lanes: [
-      { note: 36, steps: 8, hits: 3, rotate: 0 },
-      { note: 37, steps: 16, hits: 5, rotate: 0 },
-      { note: 70, steps: 16, hits: 16, rotate: 0, accents: 4 },
-    ],
-  },
-  {
-    id: 'three-four',
-    name: 'Three against four',
-    description: 'Four kicks and three cowbells in the same bar',
-    perBeat: 4,
-    lanes: [
-      { note: 36, steps: 4, hits: 4, rotate: 0, fit: true },
-      { note: 56, steps: 3, hits: 3, rotate: 0, fit: true },
-      { note: 42, steps: 16, hits: 8, rotate: 1, probability: 0.85 },
-    ],
-  },
-  {
-    id: 'polymeter',
-    name: 'Drifting',
-    description: 'Lanes of five, seven and sixteen steps going in and out of phase',
-    perBeat: 4,
-    lanes: [
-      { note: 36, steps: 16, hits: 4, rotate: 0 },
-      { note: 63, steps: 5, hits: 2, rotate: 0 },
-      { note: 75, steps: 7, hits: 3, rotate: 0 },
-      { note: 42, steps: 16, hits: 11, rotate: 0, accents: 3, probability: 0.7 },
-    ],
-  },
-]

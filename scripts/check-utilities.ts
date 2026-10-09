@@ -11,7 +11,9 @@
 import { PPQ, type Song } from '../src/song/types'
 import { secondsAt } from '../src/song/timeline'
 import { UTILITIES } from '../src/utilities'
-import { euclid, laneSteps, notation, RHYTHM_PRESETS, rhythmNotes, rotate } from '../src/utilities/euclid'
+import { euclid, euclidOf, laneSteps, nearestEuclid, notation, parsePattern, patternOf, rhythmNotes, rotate } from '../src/utilities/euclid'
+import { LIBRARY_NOTES, padFor, RHYTHM_CATEGORIES } from '../src/utilities/rhythmLibrary'
+import { euclidLabel, RHYTHM_LIBRARY } from '../src/utilities/rhythms'
 import {
   chordMidi,
   CIRCLE,
@@ -304,7 +306,83 @@ console.log('\neuclidean rhythms')
   check('the same seed is the same rhythm', JSON.stringify(rhythmNotes(chance)) === JSON.stringify(some))
   check('another seed is another', JSON.stringify(rhythmNotes({ ...chance, seed: 2 })) !== JSON.stringify(some))
   check('a muted lane writes nothing', rhythmNotes({ ...spec, lanes: [{ ...spec.lanes[0], mute: true }] }).length === 0)
-  check('every preset has lanes that fit', RHYTHM_PRESETS.every((p) => p.lanes.length > 0 && p.lanes.every((l) => l.hits <= l.steps)))
+
+  // Written-out lanes, for the rhythms that are not Euclidean.
+  const clave = 'x..x..x...x.x...'
+  check('a pattern reads back as itself', patternOf(parsePattern('X.xg..x')) === 'X.xg..x')
+  const written = laneSteps({ steps: 0, hits: 0, rotate: 0, accents: 0, pattern: clave })
+  check('a written lane plays its pattern, not its counts', notation(written.map((x) => x.hit)) === clave)
+  check('and Rotate still turns it', notation(laneSteps({ steps: 0, hits: 0, rotate: 1, accents: 0, pattern: clave }).map((x) => x.hit)) === '.x..x..x...x.x..')
+  const ghosted = rhythmNotes({ ...spec, lanes: [{ row: 0, steps: 0, hits: 0, rotate: 0, accents: 0, probability: 1, pattern: 'X.x.g...' }] })
+  check('accents, hits and ghosts at three levels', ghosted.slice(0, 3).map((h) => h.velocity).join() === '1,0.7,0.35', ghosted.slice(0, 3).map((h) => h.velocity).join())
+  const triplets = rhythmNotes({ ...spec, lanes: [{ row: 0, steps: 0, hits: 0, rotate: 0, accents: 0, probability: 1, pattern: 'x..x..', perBeat: 3 }], length: PPQ * 2 })
+  check('a lane on a grid of its own steps by it', triplets.map((h) => h.tick).join() === `0,${PPQ}`, triplets.map((h) => h.tick).join())
+  check('son clave is no Euclidean rhythm', euclidOf(parsePattern(clave).map((x) => x.hit)) === null)
+  check('the tresillo turned is still E(3,8), and says how far', JSON.stringify(euclidOf(rotate(euclid(3, 8), 2))) === JSON.stringify({ hits: 3, steps: 8, rotate: 2 }))
+  const near = nearestEuclid(parsePattern(clave).map((x) => x.hit))
+  check('the nearest Euclidean rhythm to the clave is five in sixteen, sharing four hits',
+    near.hits === 5 && near.steps === 16 && rotate(euclid(5, 16), near.rotate).filter((h, i) => h && clave[i] === 'x').length === 4, JSON.stringify(near))
+}
+
+/**
+ * Grooves with a lane that is meant not to fill a bar -- five or seven steps
+ * going round against sixteen -- so the check on whole bars leaves those
+ * lanes alone.
+ */
+const SHORT_LANES = new Set(['drifting'])
+
+console.log('\nthe rhythm library')
+{
+  const ids = new Set<string>()
+  const problems: string[] = []
+  const categories = new Set(RHYTHM_CATEGORIES.map((c) => c.id))
+  for (const r of RHYTHM_LIBRARY) {
+    const where = r.id
+    if (ids.has(r.id)) problems.push(`${where}: id used twice`)
+    ids.add(r.id)
+    if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(r.id)) problems.push(`${where}: id is not kebab-case`)
+    if (!categories.has(r.category)) problems.push(`${where}: no category ${r.category}`)
+    if (!r.name.trim() || !r.origin.trim() || !r.description.trim()) problems.push(`${where}: a name, origin or description is empty`)
+    if (/E\(\d+,\d+\)/.test(r.name)) problems.push(`${where}: the E label is worked out, not written in the name`)
+    if (r.kind === 'timeline' ? r.lanes.length !== 1 : r.lanes.length < 2 || r.lanes.length > 6) problems.push(`${where}: ${r.lanes.length} lanes for a ${r.kind}`)
+    const m = /^(\d+)\/(\d+)$/.exec(r.meter)
+    if (!m) problems.push(`${where}: meter ${r.meter}`)
+    // A bar in quarter notes: a compound meter on the triplet grid is played
+    // in the time of a simple one, three of its eighths to the beat.
+    const bar = m ? (r.perBeat === 3 && m[2] === '8' ? Number(m[1]) / 3 : (Number(m[1]) * 4) / Number(m[2])) : 0
+    for (const lane of r.lanes) {
+      if (!(LIBRARY_NOTES as readonly number[]).includes(lane.note)) problems.push(`${where}: note ${lane.note} is not on the standard kit`)
+      if (!/^[Xxg.]+$/.test(lane.pattern)) problems.push(`${where}: pattern ${lane.pattern}`)
+      if (lane.pattern.length > 32) problems.push(`${where}: ${lane.pattern.length} steps`)
+      if (!/[Xxg]/.test(lane.pattern)) problems.push(`${where}: a lane with no hits`)
+      const quarters = lane.pattern.length / (lane.perBeat ?? r.perBeat)
+      const bars = quarters / bar
+      if (r.lanes.length === 1 || !SHORT_LANES.has(r.id)) {
+        if (Math.abs(bars - Math.round(bars)) > 1e-9 || Math.round(bars) < 1) problems.push(`${where}: a lane of ${lane.pattern.length} steps is ${bars.toFixed(3)} bars of ${r.meter}`)
+      }
+    }
+    const label = euclidLabel(r)
+    if (label) {
+      const [k, n] = label.slice(2, -1).split(',').map(Number)
+      const steps = parsePattern(r.lanes[0].pattern).map((x) => x.hit)
+      const e = euclidOf(steps)
+      if (!e || e.hits !== k || e.steps !== n || notation(rotate(euclid(k, n), e.rotate)) !== notation(steps)) problems.push(`${where}: ${label} is wrong`)
+    }
+  }
+  check('every rhythm is well formed', problems.length === 0, problems.slice(0, 12).join('; ') + (problems.length > 12 ? ` …and ${problems.length - 12} more` : ''))
+  check('there are a lot of them', RHYTHM_LIBRARY.length >= 150, `${RHYTHM_LIBRARY.length}`)
+  check('every category has some', RHYTHM_CATEGORIES.every((c) => RHYTHM_LIBRARY.some((r) => r.category === c.id)),
+    RHYTHM_CATEGORIES.filter((c) => !RHYTHM_LIBRARY.some((r) => r.category === c.id)).map((c) => c.name).join(', '))
+  check('the Euclidean shelf is all Euclidean', RHYTHM_LIBRARY.filter((r) => r.category === 'euclidean').every((r) => euclidLabel(r) !== null),
+    RHYTHM_LIBRARY.filter((r) => r.category === 'euclidean' && !euclidLabel(r)).map((r) => r.id).join(', '))
+  check('the tresillo is labelled E(3,8)', RHYTHM_LIBRARY.some((r) => r.kind === 'timeline' && /tresillo/i.test(r.name) && euclidLabel(r) === 'E(3,8)'))
+  check('son clave in 4/4 is not labelled at all', RHYTHM_LIBRARY.filter((r) => /son clave/i.test(r.name) && r.meter === '4/4').every((r) => euclidLabel(r) === null))
+  check('four on the floor is there to start from', RHYTHM_LIBRARY.some((r) => r.id === 'four-on-the-floor'))
+
+  const standard = [36, 37, 38, 39, 42, 45, 46, 49, 51, 54, 56, 60, 63, 70, 75, 76].map((note) => ({ note }))
+  check('a library note finds its own pad', padFor(75, standard) === 75)
+  check('or the nearest in sound', padFor(75, [{ note: 36 }, { note: 77 }]) === 77 && padFor(63, [{ note: 45 }]) === 45)
+  check('or none', padFor(75, [{ note: 36 }]) === null)
 }
 
 console.log('\nthe registry')

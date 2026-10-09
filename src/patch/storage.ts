@@ -267,12 +267,22 @@ export interface RhythmPrefs {
     probability: number
     fit?: boolean
     mute?: boolean
+    /** The steps written out, for a lane from the library: see `Lane.pattern`. */
+    pattern?: string
+    /** Steps to a quarter note, when the lane's grid is its own rather than `perBeat`. */
+    perBeat?: number
   }[]
   /** Grid steps to a quarter note: 4 is sixteenths, 6 sixteenth triplets. */
   perBeat: number
   seed: number
   /** Whether writing takes the lanes' rows in the pattern away first. */
   replace: boolean
+  /** Whether the library drawer is open. */
+  libraryOpen?: boolean
+  /** Library rhythms starred, by id, in the order they were starred. */
+  favourites?: string[]
+  /** Library rhythms used, most recent first. */
+  recent?: string[]
 }
 
 export interface MetronomePrefs {

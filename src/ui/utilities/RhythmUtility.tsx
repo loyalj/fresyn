@@ -4,9 +4,12 @@ import { loadPrefs, savePrefs, type RhythmPrefs } from '../../patch/storage'
 import { setPatternNotes } from '../../song/edit'
 import { barTicks, PPQ, type Note } from '../../song/types'
 import type { UtilityProps, UtilityTrack } from '../../utilities'
-import { laneSteps, MAX_STEPS, notation, RHYTHM_PRESETS, rhythmNotes, type Lane, type RhythmPreset } from '../../utilities/euclid'
+import { euclidOf, laneSteps, MAX_STEPS, nearestEuclid, notation, parsePattern, patternOf, rhythmNotes, type Lane } from '../../utilities/euclid'
+import { padFor, type LibraryLane, type LibraryRhythm } from '../../utilities/rhythmLibrary'
+import { RHYTHM_LIBRARY } from '../../utilities/rhythms'
 import { NumberField } from '../NumberField'
 import { useAudition } from './audition'
+import { RhythmLibrary } from './RhythmLibrary'
 
 type LanePrefs = RhythmPrefs['lanes'][number]
 
@@ -18,6 +21,17 @@ const GRIDS: [perBeat: number, label: string][] = [
   [6, '1/16 triplet'],
   [8, '1/32'],
 ]
+/** The same, as short as a lane's Grid column can show them; a lane may also step in quarters. */
+const LANE_GRIDS: [perBeat: number, label: string][] = [
+  [1, '1/4'],
+  [2, '1/8'],
+  [3, '1/8 t'],
+  [4, '1/16'],
+  [6, '1/16 t'],
+  [8, '1/32'],
+]
+/** How many rhythms Recent remembers. */
+const RECENT = 12
 /** The most lanes a rhythm has: one for each pad of a kit. */
 const MAX_LANES = 16
 const VELOCITY = 0.7
@@ -27,19 +41,41 @@ const TRIGGER_ROW = 0
 /** How much of a rhythm Hear it plays: enough to hear a long lane go round. */
 const HEAR_BARS = 2
 
-const presetLanes = (p: RhythmPreset): LanePrefs[] =>
-  p.lanes.map(({ note, steps, hits, rotate, accents, probability, fit }) => ({
+/**
+ * A library lane as one of the utility's: written out, on its own grid so a
+ * change of Step leaves it as it was, and on `note` -- the pad it was
+ * matched to in the kit.
+ */
+function fromLibrary(lane: LibraryLane, rhythm: LibraryRhythm, note: number): LanePrefs {
+  const steps = parsePattern(lane.pattern)
+  const perBeat = lane.perBeat ?? rhythm.perBeat
+  // A lane that is a Euclidean rhythm, accents and all, comes in as one, so
+  // its knobs work on it; only what no count can say is written out.
+  const every = steps.length > 0 && steps.every((x) => x.hit)
+  const e = steps.some((x) => x.ghost) ? null : every ? { hits: steps.length, steps: steps.length, rotate: 0 } : euclidOf(steps.map((x) => x.hit))
+  if (e) {
+    const accents = steps.filter((x) => x.accent).length
+    const as = { ...e, accents }
+    if (patternOf(laneSteps(as)) === patternOf(steps)) return { note, ...as, probability: 1, perBeat }
+  }
+  return {
     note,
-    steps,
-    hits,
-    rotate,
-    accents: accents ?? 0,
-    probability: probability ?? 1,
-    ...(fit ? { fit } : {}),
-  }))
+    steps: steps.length,
+    hits: steps.filter((s) => s.hit).length,
+    rotate: 0,
+    accents: steps.filter((s) => s.accent).length,
+    probability: 1,
+    pattern: lane.pattern,
+    perBeat,
+  }
+}
+
+/** What a fresh Rhythm utility starts with: the first groove there is, four on the floor. */
+const FIRST = RHYTHM_LIBRARY.find((r) => r.id === 'four-on-the-floor') ?? RHYTHM_LIBRARY.find((r) => r.kind === 'groove')
 
 function initial(): RhythmPrefs {
-  return { lanes: presetLanes(RHYTHM_PRESETS[0]), perBeat: 4, seed: 1, replace: true, ...loadPrefs().rhythm }
+  const lanes = FIRST ? FIRST.lanes.map((l) => fromLibrary(l, FIRST, l.note)) : []
+  return { lanes, perBeat: FIRST?.perBeat ?? 4, seed: 1, replace: true, ...loadPrefs().rhythm }
 }
 
 const isDrums = (t: UtilityTrack) => t.kind === 'kit' || t.kind === 'trigger'
@@ -66,11 +102,16 @@ export function RhythmUtility(props: UtilityProps) {
   const [status, setStatus] = useState<string | null>(null)
   const { strike } = useAudition(props)
   const [hearing, setHearing] = useState(false)
+  /** Which library rhythm is being heard, when it is one rather than the lanes. */
+  const [previewing, setPreviewing] = useState<string | null>(null)
+  /** The lanes as they were before the library last replaced them, to go back to. */
+  const [previous, setPrevious] = useState<Pick<RhythmPrefs, 'lanes' | 'perBeat'> | null>(null)
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
   const stop = () => {
     for (const t of timers.current) clearTimeout(t)
     timers.current = []
     setHearing(false)
+    setPreviewing(null)
   }
   useEffect(() => () => timers.current.forEach(clearTimeout), [])
 
@@ -104,16 +145,71 @@ export function RhythmUtility(props: UtilityProps) {
     seed: state.seed,
   })
 
+  /** Some lanes played once through the drum track, for `length` ticks. */
+  const play = (list: Lane[], length: number, then: () => void) => {
+    if (!target) return
+    const sec = 60 / (song.tempo * PPQ)
+    for (const hit of rhythmNotes({ ...spec(length), lanes: list })) {
+      timers.current.push(setTimeout(() => strike(target.id, hit.row, hit.velocity, 0.12), hit.tick * sec * 1000))
+    }
+    timers.current.push(setTimeout(then, length * sec * 1000))
+  }
+
   const hear = () => {
     stop()
     if (!target) return
-    const sec = 60 / (song.tempo * PPQ)
-    const length = Math.min(pattern?.length ?? barTicks(song), barTicks(song) * HEAR_BARS)
-    for (const hit of rhythmNotes(spec(length))) {
-      timers.current.push(setTimeout(() => strike(target.id, hit.row, hit.velocity, 0.12), hit.tick * sec * 1000))
-    }
-    timers.current.push(setTimeout(() => setHearing(false), length * sec * 1000))
+    play(lanes(), Math.min(pattern?.length ?? barTicks(song), barTicks(song) * HEAR_BARS), () => setHearing(false))
     setHearing(true)
+  }
+
+  /** The lanes a library rhythm would become in this kit. */
+  const libraryLanes = (r: LibraryRhythm): LanePrefs[] =>
+    r.lanes.map((l) => fromLibrary(l, r, kit ? (padFor(l.note, target!.pads) ?? l.note) : l.note))
+
+  /**
+   * A library rhythm heard on the drum track: two bars, or as many whole
+   * turns of its longest lane as reach past them, so a bar of 7/8 is heard
+   * going round.
+   */
+  const preview = (r: LibraryRhythm) => {
+    const was = previewing
+    stop()
+    if (!target || was === r.id) return
+    const turn = Math.max(...r.lanes.map((l) => (l.pattern.length * PPQ) / (l.perBeat ?? r.perBeat)))
+    const length = Math.ceil((barTicks(song) * HEAR_BARS) / turn) * turn
+    const list = libraryLanes(r).flatMap((l) => {
+      const row = rowOf(l)
+      return row === null ? [] : [{ ...l, row }]
+    })
+    play(list, length, () => setPreviewing(null))
+    setPreviewing(r.id)
+  }
+
+  const addFromLibrary = (r: LibraryRhythm) => {
+    const added = libraryLanes(r)
+    setState((s) => ({ ...s, lanes: [...s.lanes, ...added].slice(0, MAX_LANES), recent: [r.id, ...(s.recent ?? []).filter((id) => id !== r.id)].slice(0, RECENT) }))
+    setPrevious(null)
+    setStatus(`Added ${r.name} as ${added.length === 1 ? 'a lane' : `${added.length} lanes`}${unmatched(added)}`)
+  }
+
+  const loadFromLibrary = (r: LibraryRhythm) => {
+    const loaded = libraryLanes(r)
+    setPrevious({ lanes: state.lanes, perBeat: state.perBeat })
+    setState((s) => ({ ...s, lanes: loaded, perBeat: r.perBeat, recent: [r.id, ...(s.recent ?? []).filter((id) => id !== r.id)].slice(0, RECENT) }))
+    setStatus(`Loaded ${r.name}${unmatched(loaded)}`)
+  }
+
+  /** What to say about lanes that found no pad in this kit. */
+  const unmatched = (list: LanePrefs[]) => {
+    const lost = kit ? list.filter((l) => rowOf(l) === null).length : 0
+    return lost ? ` -- ${lost} of its drums ${lost === 1 ? 'has' : 'have'} no pad in this kit: pick one` : ''
+  }
+
+  const goBack = () => {
+    if (!previous) return
+    set({ lanes: previous.lanes, perBeat: previous.perBeat })
+    setPrevious(null)
+    setStatus('Back to the lanes you had')
   }
 
   const write = () => {
@@ -129,6 +225,15 @@ export function RhythmUtility(props: UtilityProps) {
     ].sort((a, b) => a.tick - b.tick || a.pitch - b.pitch)
     editSong((s) => setPatternNotes(s, pattern.id, notes), undefined, 'Write rhythm')
     setStatus(`Wrote ${written.length} hit${written.length === 1 ? '' : 's'} into ${pattern.name} on ${target.name} -- undo takes it back`)
+  }
+
+  /** A written-out lane turned into the Euclidean rhythm nearest it, which its knobs then work on. */
+  const makeEuclidean = (i: number) => {
+    const lane = state.lanes[i]
+    if (!lane.pattern) return
+    const steps = parsePattern(lane.pattern)
+    const near = nearestEuclid(steps.map((x) => x.hit))
+    setLane(i, { ...near, rotate: near.rotate, accents: steps.filter((x) => x.accent).length, pattern: undefined })
   }
 
   const addLane = () => {
@@ -180,23 +285,32 @@ export function RhythmUtility(props: UtilityProps) {
       </div>
 
       <div className="pitch-section">
-        <h3>Start from</h3>
-        <div className="progression-presets">
-          {RHYTHM_PRESETS.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              className="progression-preset"
-              title={p.description}
-              onClick={() => {
-                set({ lanes: presetLanes(p), perBeat: p.perBeat })
-                setStatus(null)
-              }}
-            >
-              {p.name}
-            </button>
-          ))}
+        <div className="timing-sections-head">
+          <h3>Library</h3>
+          <button
+            type="button"
+            className="rhythm-library-toggle"
+            aria-expanded={!!state.libraryOpen}
+            onClick={() => set({ libraryOpen: !state.libraryOpen || undefined })}
+          >
+            {state.libraryOpen ? 'Close' : `Browse ${RHYTHM_LIBRARY.length} rhythms`}
+          </button>
         </div>
+        {state.libraryOpen && (
+          <RhythmLibrary
+            favourites={state.favourites ?? []}
+            recent={state.recent ?? []}
+            onFavourite={(id) => {
+              const f = state.favourites ?? []
+              set({ favourites: f.includes(id) ? f.filter((x) => x !== id) : [...f, id] })
+            }}
+            previewing={previewing}
+            onPreview={preview}
+            onAdd={addFromLibrary}
+            onLoad={loadFromLibrary}
+            room={MAX_LANES - state.lanes.length}
+          />
+        )}
       </div>
 
       <div className="pitch-section">
@@ -214,7 +328,7 @@ export function RhythmUtility(props: UtilityProps) {
             <span title="How many steps later the rhythm starts">Rotate</span>
             <span title="How many of the hits are accented, spread evenly among them">Accent</span>
             <span title="How likely an unaccented hit is to be written, in percent">Chance</span>
-            <span title="Spread the lane's steps evenly over a bar, whatever the grid: a polyrhythm">Bar</span>
+            <span title="How long each of the lane's steps is. Bar spreads its steps evenly over a bar, whatever their number: a polyrhythm">Grid</span>
             <span />
           </div>
             {state.lanes.map((lane, i) => {
@@ -254,10 +368,23 @@ export function RhythmUtility(props: UtilityProps) {
                           <span className="rhythm-pad-name">{padName(lane.note)}</span>
                         )}
                       </div>
-                      <NumberField value={lane.steps} min={1} max={MAX_STEPS} label={`Lane ${i + 1}: steps`} onChange={(steps) => setLane(i, { steps })} />
-                      <NumberField value={lane.hits} min={0} max={lane.steps} label={`Lane ${i + 1}: hits`} onChange={(hits) => setLane(i, { hits })} />
-                      <NumberField value={lane.rotate} min={0} max={Math.max(0, lane.steps - 1)} label={`Lane ${i + 1}: rotation`} onChange={(rotate) => setLane(i, { rotate })} />
-                      <NumberField value={lane.accents} min={0} max={lane.hits} label={`Lane ${i + 1}: accents`} onChange={(accents) => setLane(i, { accents })} />
+                      {lane.pattern ? (
+                        <>
+                          <span className="rhythm-fixed" title="Written out: the steps are the pattern's">{cycle.length}</span>
+                          <span className="rhythm-fixed" title="Written out: the hits are the pattern's">{cycle.filter((c) => c.hit).length}</span>
+                        </>
+                      ) : (
+                        <>
+                          <NumberField value={lane.steps} min={1} max={MAX_STEPS} label={`Lane ${i + 1}: steps`} onChange={(steps) => setLane(i, { steps })} />
+                          <NumberField value={lane.hits} min={0} max={lane.steps} label={`Lane ${i + 1}: hits`} onChange={(hits) => setLane(i, { hits })} />
+                        </>
+                      )}
+                      <NumberField value={lane.rotate} min={0} max={Math.max(0, cycle.length - 1)} label={`Lane ${i + 1}: rotation`} onChange={(rotate) => setLane(i, { rotate })} />
+                      {lane.pattern ? (
+                        <span className="rhythm-fixed" title="Written out: the accents are the pattern's">{cycle.filter((c) => c.accent).length}</span>
+                      ) : (
+                        <NumberField value={lane.accents} min={0} max={lane.hits} label={`Lane ${i + 1}: accents`} onChange={(accents) => setLane(i, { accents })} />
+                      )}
                       <NumberField
                         value={Math.round(lane.probability * 100)}
                         min={0}
@@ -265,13 +392,35 @@ export function RhythmUtility(props: UtilityProps) {
                         label={`Lane ${i + 1}: chance of an unaccented hit, in percent`}
                         onChange={(p) => setLane(i, { probability: p / 100 })}
                       />
-                      <input
-                        type="checkbox"
-                        checked={!!lane.fit}
-                        aria-label={`Lane ${i + 1}: fit to the bar`}
-                        onChange={(e) => setLane(i, { fit: e.target.checked || undefined })}
-                      />
+                      <select
+                        className="rhythm-grid"
+                        value={lane.fit ? 'bar' : String(lane.perBeat ?? '')}
+                        aria-label={`Lane ${i + 1}: grid`}
+                        onChange={(e) => {
+                          const v = e.target.value
+                          setLane(i, v === 'bar' ? { fit: true, perBeat: undefined } : { fit: undefined, perBeat: v ? Number(v) : undefined })
+                        }}
+                      >
+                        <option value="">Step</option>
+                        {LANE_GRIDS.map(([perBeat, label]) => (
+                          <option key={perBeat} value={perBeat}>
+                            {label}
+                          </option>
+                        ))}
+                        <option value="bar">Bar</option>
+                      </select>
                       <span className="rhythm-actions">
+                        {lane.pattern && (
+                          <button
+                            type="button"
+                            className="rhythm-mute"
+                            title="Make it Euclidean: the nearest even spread of as many hits, which Steps, Hits and Accent then work on"
+                            aria-label={`Make lane ${i + 1} Euclidean`}
+                            onClick={() => makeEuclidean(i)}
+                          >
+                            E
+                          </button>
+                        )}
                         <button
                           type="button"
                           className={`rhythm-mute${lane.mute ? ' on' : ''}`}
@@ -293,14 +442,14 @@ export function RhythmUtility(props: UtilityProps) {
                     </div>
                     <div className="rhythm-steps" aria-label={`Lane ${i + 1}: ${notation(cycle.map((c) => c.hit))}`} role="img">
                       {cycle.map((c, k) => (
-                        <span key={k} className={c.accent ? 'accent' : c.hit ? (lane.probability < 1 ? 'hit chance' : 'hit') : ''} />
+                        <span key={k} className={c.accent ? 'accent' : c.hit ? `${c.ghost ? 'ghost' : 'hit'}${lane.probability < 1 ? ' chance' : ''}` : ''} />
                       ))}
                     </div>
                 </div>
               )
             })}
         </div>
-        {state.lanes.length === 0 && <p className="timing-dim timing-empty">No lanes: add one, or start from a groove above.</p>}
+        {state.lanes.length === 0 && <p className="timing-dim timing-empty">No lanes: add one, or start from the library above.</p>}
       </div>
 
       <div className="progression-options">
@@ -326,6 +475,11 @@ export function RhythmUtility(props: UtilityProps) {
       </div>
 
       <p className="timing-dim timing-status" aria-live="polite">
+        {previous && (
+          <button type="button" className="rhythm-back" onClick={goBack}>
+            ↶ Back to what you had
+          </button>
+        )}
         {status ??
           (!target
             ? 'No drum track in the song: add a track whose rack has a Drum Kit, or a Trigger.'
@@ -339,6 +493,10 @@ export function RhythmUtility(props: UtilityProps) {
 
 /** A lane with its numbers inside one another: no more hits than steps, no more accents than hits. */
 function tidy(l: LanePrefs): LanePrefs {
+  if (l.pattern) {
+    const n = Math.min(MAX_STEPS, l.pattern.length)
+    return { ...l, rotate: Math.min(n - 1, Math.max(0, Math.round(l.rotate))), probability: Math.min(1, Math.max(0, l.probability)) }
+  }
   const steps = Math.min(MAX_STEPS, Math.max(1, Math.round(l.steps)))
   const hits = Math.min(steps, Math.max(0, Math.round(l.hits)))
   return {

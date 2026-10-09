@@ -1,10 +1,12 @@
 import { AdsrModule } from './Adsr'
 import { BitcrushModule } from './Bitcrush'
 import { BurstModule } from './Burst'
+import { ChordModule } from './Chord'
 import { ChorusModule } from './Chorus'
 import { ClockModule } from './Clock'
 import { ClockDivModule } from './ClockDiv'
 import { CompressorModule } from './Compressor'
+import { ConvolveModule } from './Convolve'
 import { CvUtilModule } from './CvUtil'
 import { DelayModule } from './Delay'
 import { DriveModule } from './Drive'
@@ -23,17 +25,22 @@ import { LpgModule } from './Lpg'
 import { MacroModule } from './Macro'
 import { MixerModule } from './Mixer'
 import { NoiseModule } from './Noise'
+import { OrganModule } from './Organ'
 import { OscModule } from './Osc'
 import { QuantizerModule } from './Quantizer'
 import { RecorderModule } from './Recorder'
 import { ResonatorModule } from './Resonator'
-import { RingModModule } from './RingMod'
 import { ReverbModule } from './Reverb'
+import { RingModModule } from './RingMod'
+import { RotaryModule } from './Rotary'
 import { SampleHoldModule } from './SampleHold'
 import { SamplerModule } from './Sampler'
 import { ScopeModule } from './Scope'
 import { SeqModule } from './Seq'
+import { ShepardModule } from './Shepard'
 import { SlewModule } from './Slew'
+import { SplitModule } from './Split'
+import { SpringModule } from './Spring'
 import { SvfModule } from './Svf'
 import { TapeModule } from './Tape'
 import type { DspModule, ModuleContext } from './types'
@@ -59,12 +66,15 @@ export const MODULE_FACTORIES: Record<string, Factory> = {
   sh: (c) => new SampleHoldModule(c),
   drunk: (c) => new DrunkModule(c),
   clock: (c) => new ClockModule(c),
+  chord: (c) => new ChordModule(c),
   burst: (c) => new BurstModule(c),
   seq: (c) => new SeqModule(c),
   macro: (c) => new MacroModule(c),
   slew: (c) => new SlewModule(c),
   follow: (c) => new FollowerModule(c),
   unison: (c) => new UnisonModule(c),
+  organ: (c) => new OrganModule(c),
+  shepard: (c) => new ShepardModule(c),
   clkdiv: (c) => new ClockDivModule(c),
   lpg: (c) => new LpgModule(c),
   tape: (c) => new TapeModule(c),
@@ -75,6 +85,7 @@ export const MODULE_FACTORIES: Record<string, Factory> = {
   formant: (c) => new FormantModule(c),
   vca: (c) => new VcaModule(c),
   eq: (c) => new EqModule(c),
+  split: (c) => new SplitModule(c),
   drive: (c) => new DriveModule(c),
   fold: (c) => new WavefoldModule(c),
   ring: (c) => new RingModModule(c),
@@ -83,7 +94,10 @@ export const MODULE_FACTORIES: Record<string, Factory> = {
   gran: (c) => new GranularModule(c),
   delay: (c) => new DelayModule(c),
   chorus: (c) => new ChorusModule(c),
+  rotary: (c) => new RotaryModule(c),
   reverb: (c) => new ReverbModule(c),
+  spring: (c) => new SpringModule(c),
+  convolve: (c) => new ConvolveModule(c),
   res: (c) => new ResonatorModule(c),
   mixer: (c) => new MixerModule(c),
   scope: (c) => new ScopeModule(c),

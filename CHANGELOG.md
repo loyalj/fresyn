@@ -4,6 +4,110 @@ What changed, newest first. The README says what Fresyn is now; this is how
 it got there. The older entries are the milestone notes that used to sit at
 the top of the README, moved here as they were written.
 
+## Fixed: a click at the start of every note played over the last
+
+A note that began while the one before was still sounding -- any legato
+line, a pad's chord change, whole notes back to back -- clicked as it
+started. The oscillator's envelope has a Delay stage whose shortest setting
+is 0.2 ms, and while it waited the envelope sat at nothing, wherever it had
+been: ten samples of silence in the middle of a held tone, then a jump back.
+A first note, starting from silence, never showed it, which is how it went
+unheard for so long. While the Delay waits, the last note now goes on letting
+go from where it was. `check-dsp` holds an envelope retriggered mid-note to
+staying within a few percent of its level.
+
+## A rhythm library: 282 timelines and grooves
+
+The Rhythm utility's six **Start from** buttons are now a library of 282
+rhythms, browsed in a drawer above the lanes.
+
+- **Timelines** -- one line a tradition hangs on -- are added as a lane:
+  son, rumba and 6/8 clave, the 12/8 bells of West Africa and Cuba,
+  cáscara, Brazilian and Afro-Cuban parts, doum-tek iqa'at, Balkan aksak
+  groupings, flamenco compás, North Indian and Carnatic talas, and
+  twenty-seven of the named Euclidean rhythms from Toussaint's paper.
+- **Grooves** -- a drum to a lane -- are loaded in place of the lanes, or
+  added to them: rock, funk and soul, hip-hop and trap, house, techno,
+  breaks, drum & bass, reggae, dancehall, dembow, afrobeats, jazz on a
+  triplet grid, and kit grooves in 5/4, 7/8, 9/8, 11/8, 13/8 and 15/8.
+- Every row draws its rhythm, a strip per drum to the same scale of time.
+  ▶ or Space plays it on the drum track, Enter uses it, the arrow keys move.
+  Search covers names, places, meters and Euclidean counts; shelves for each
+  tradition and scene, ★ favourites and Recent, and Timelines / Grooves.
+- A timeline that is Euclidean is labelled **E(k,n)**, worked out from its
+  steps rather than written beside them.
+- **↶ Back to what you had** undoes a Load, since the utility has no undo of
+  its own.
+
+**Lanes can be written out.** Most of the world's rhythms are not
+Euclidean -- son clave is no rotation of five in sixteen -- so a lane can now
+hold its steps as a pattern of accents, hits, ghost notes and rests, with
+Rotate, Chance and Grid still working on it. **E** turns one into the
+Euclidean rhythm nearest it. A library lane that is Euclidean, accents and
+all, comes in as a Euclidean lane. **Each lane has a Grid of its own**, which
+takes in what the Bar tick did: a triplet bell over sixteenth hats. Ghost
+notes are written at half a plain hit's velocity. In a kit laid out another
+way, a library lane finds the pad nearest in sound.
+
+`check-utilities` checks every rhythm in the library: well formed, on the
+standard kit's notes, whole bars of its meter at its grid, a timeline one
+lane, a groove two to six, ids unique, and every E label true. It also
+checks written lanes, lane grids, ghost velocity, and finding the Euclidean
+rhythm a pattern is, or the nearest one. `check-utilities-ui` drives the
+drawer: search, a label, Load and going back, + Lane with a clave, E, and ★.
+
+## Seven new modules: an organ, its cabinet, two reverbs, chords, bands and an endless tone
+
+- **Drawbar Organ** (Voice): nine sine tones at an organ's pipe lengths, from
+  the 16' sub to the 1', each drawbar 3 dB a step from 0 to 8. Percussion on
+  the second or third harmonic, a key click, and Gate and Pitch from a
+  Keyboard. It starts at 888000000.
+- **Rotary Speaker** (Effects): a Leslie. The highs go to a horn and the lows
+  to a drum, each spinning at its own speed and heard through two microphones,
+  so the sound swells, bends in pitch and swirls across the stereo field.
+  Speed (or a gate at Fast) switches between chorale and tremolo, and the
+  rotors wind up and down over Ramp, the drum slower than the horn.
+- **Spring Reverb** (Effects): two springs, one a side, each a delay with a
+  chain of stretched all-passes in its loop, so every echo comes back smeared
+  into a chirp. Decay, Tension (how soon the echoes come round), Drip and Tone.
+- **Convolution** (Effects): any sound used as the space another plays in --
+  a room's impulse response, a speaker cabinet's, a door slamming. Drop a file
+  on its screen as on the Sampler. Up to four seconds, stereo or mono, brought
+  to a common loudness, with Pre-delay, Length and Reverse. It is a uniformly
+  partitioned convolution in two sizes, the tail's work spread across the
+  blocks that follow it, so a four-second hall costs about 4% of the audio
+  budget and never spikes. Everything through it is 127 samples late.
+- **Chord** (Control): one pitch in, four out. Ten fixed chords, or **in key**
+  and **key 7**, which stack thirds of a Root and Scale on the nearest note of
+  the key. Inversion and Voicing, and a Gate passed on to G1–G4 Strum apart,
+  up or down, each pitch held from when its own gate opens.
+- **Band Splitter** (Effects): three Linkwitz-Riley bands at 24 dB an octave
+  that sum back flat, each with a level, and Out with all three summed, which
+  makes it a DJ isolator on its own.
+- **Shepard Tone** (Voice): ten octave-spaced tones gliding under a bell of
+  loudness, so it climbs or falls for ever. Rate in octaves a second (with a
+  CV), Center, Width, Tone, glide or semitone steps, and a Pos output.
+
+The Sampler's face, with its drop zone and waveform, now serves the
+Convolution too, and `Biquad.ts` gains a high-pass and an all-pass.
+
+`check-dsp` holds each to what it says. The organ's drawbars are tested as
+harmonics, 3 dB a step, with percussion and click. The Shepard tone's
+loudness holds steady as it goes round, and an octave on it is where it
+started. The rotary's swells come at each rotor's speed, a gate speeds it up,
+and it winds up rather than jumping. The spring's tail lasts as long as
+Decay, its echoes arrive as Tension says, and Drip smears them. A spike
+anywhere in a convolution's impulse, head or tail, comes out exactly that far
+late, with spikes adding, stereo, Pre-delay, Length and Reverse. Chord is
+checked chord by chord, in key and strummed. The splitter's bands sum to
+within 1% and cross at -6 dB. `check-modules` fuzzes all seven.
+
+**Fixed in `check-modules`:** the cap on switch combinations was declared
+below the loops that read it, so it was never set when they ran and every
+combination was always tried. Nothing had more than 48 until the Chord, whose
+6,912 hung the audit; the cap now applies, and the audit takes two and a half
+minutes.
+
 ## Tape, Clock Divider, Unison Oscillator and Low-Pass Gate
 
 Four new modules:

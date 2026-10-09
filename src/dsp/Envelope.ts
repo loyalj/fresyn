@@ -55,13 +55,22 @@ export class Envelope {
       case 'idle':
         return 0
 
-      case 'delay':
+      case 'delay': {
+        // Waiting to start the new note, the old one goes on letting go from
+        // wherever it was. Silent from a standstill, as before; but a note
+        // retriggered while the last is still sounding used to drop to
+        // nothing for the whole delay and jump back -- and the oscillator's
+        // Delay never goes below 0.2 ms, so every legato note clicked.
+        const c = this.coeff(this.release)
+        this.level *= c
+        if (this.level <= 1e-5) this.level = 0
         this.elapsed += this.secondsPerSample
         if (this.elapsed >= this.delay) {
           this.stage = 'attack'
           this.elapsed = 0
         }
-        return 0
+        break
+      }
 
       case 'attack': {
         // Aim past 1.0 and stop early; that overshoot is what gives the

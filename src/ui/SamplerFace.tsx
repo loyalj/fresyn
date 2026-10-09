@@ -55,9 +55,14 @@ export function SamplerFace({
 
   const peaks = useMemo(() => (loaded ? peaksOf(loaded.data.channels[0]) : null), [loaded])
 
-  const start = read('start')
+  // The Convolution wears this face too, for its impulse: what it plays is
+  // the file from the start for Length seconds, and its knobs are its own.
+  const sampler = def.type === 'sampler'
+  const start = sampler ? read('start') : 0
   const length = read('length')
-  const regionEnd = start + (1 - start) * length
+  const seconds = loaded ? loaded.data.frames / loaded.data.rate : 0
+  const regionEnd = sampler ? start + (1 - start) * length : seconds > 0 ? Math.min(1, length / seconds) : 1
+  const controls = sampler ? CONTROLS : def.params.map((p) => p.id)
 
   const take = (files: FileList | null) => {
     const file = files?.[0]
@@ -111,7 +116,7 @@ export function SamplerFace({
               </>
             ) : (
               <>
-                <span className="sampler-missing">Drop audio here</span>
+                <span className="sampler-missing">{sampler ? 'Drop audio here' : 'Drop an impulse here'}</span>
                 <span>WAV, MP3, OGG or FLAC — or click to choose a file</span>
               </>
             )}
@@ -152,7 +157,7 @@ export function SamplerFace({
       </div>
 
       <div className="controls">
-        {CONTROLS.map(control)}
+        {controls.map(control)}
         {faceExtra}
       </div>
     </div>

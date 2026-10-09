@@ -28,6 +28,8 @@ import { ReverbModule } from '../src/dsp/modules/Reverb'
 import { SvfModule, svfResponse } from '../src/dsp/modules/Svf'
 import type { DspModule } from '../src/dsp/modules/types'
 import { WavefoldModule } from '../src/dsp/modules/Wavefold'
+import { OscModule } from '../src/dsp/modules/Osc'
+import { MODULE_DEFS } from '../src/patch/defs'
 import { compile } from '../src/patch/compile'
 import { fft } from '../src/ui/fft'
 import { defaultPatch, triggerPatch } from '../src/patch/defaultPatch'
@@ -3670,6 +3672,365 @@ console.log('\nchorus')
     `${flanged(500).toFixed(3)} at 500 Hz, ${flanged(1000).toFixed(3)} at 1 kHz`)
 }
 
+// --- drawbar organ ----------------------------------------------------
+console.log('\ndrawbar organ')
+{
+  const organ = (params: Record<string, number>, frames = SR / 2, gate = true) =>
+    render({
+      modules: [
+        { id: 'org1', type: 'organ', params: { pitch: 220, click: 0, ...params } },
+        { id: 'rec1', type: 'rec', params: {} },
+      ],
+      cables: [cable('org1', 'out', 'rec1', 'l')],
+    }, { frames, gate }).left
+  const tail = (b: Float32Array) => b.subarray(b.length / 2)
+
+  // A whole second, so every partial fits the window a whole number of times.
+  const full = tail(organ({}, SR))
+  const has = (hz: number) => powerAt(full, hz)
+  check('888000000 plays the sub, the fifth and the fundamental', has(110) > 0.01 && has(330) > 0.01 && has(220) > 0.01, `${has(110).toFixed(3)} ${has(330).toFixed(3)} ${has(220).toFixed(3)}`)
+  check('and not the drawbars pushed in', has(440) < has(220) / 1000 && has(660) < has(220) / 1000, `${has(440).toExponential(1)} at 440`)
+
+  const flute = tail(organ({ bar1: 0, bar2: 0, bar3: 8 }))
+  const quieter = tail(organ({ bar1: 0, bar2: 0, bar3: 7 }))
+  const db = 20 * Math.log10(stats(quieter).rms / stats(flute).rms)
+  check('a drawbar step is 3 dB', Math.abs(db + 3) < 0.1, `${db.toFixed(2)} dB`)
+
+  const high = tail(organ({ bar1: 0, bar2: 0, bar3: 0, bar9: 8 }))
+  check("the 1' drawbar is three octaves over the 8'", powerAt(high, 1760) > 0.01 && powerAt(high, 220) < 1e-4, powerAt(high, 1760).toFixed(3))
+
+  const shut = organ({}, SR / 4, false)
+  check('with the gate shut it is silent', stats(shut).peak === 0, `${stats(shut).peak}`)
+
+  const perc = organ({ bar1: 0, bar2: 0, perc: 1, percDecay: 0.1 }, SR)
+  const early = powerAt(perc.subarray(0, 4800), 440)
+  const late = powerAt(perc.subarray(SR - 4800), 440)
+  check('Perc strikes the second harmonic and lets it die', early > 0.01 && late < early / 100, `${early.toFixed(3)} then ${late.toExponential(1)}`)
+
+  const clicked = organ({ bar1: 0, bar2: 0, bar3: 0, click: 1 }, 1024)
+  check('Click is a burst at the key, with no drawbars out', stats(clicked.subarray(0, 200)).peak > 0.05 && stats(clicked.subarray(400)).peak === 0, stats(clicked.subarray(0, 200)).peak.toFixed(3))
+}
+
+// --- shepard tone ------------------------------------------------------
+console.log('\nshepard tone')
+{
+  const shepard = (params: Record<string, number>, frames: number) =>
+    render({
+      modules: [
+        { id: 'shp1', type: 'shepard', params },
+        { id: 'rec1', type: 'rec', params: {} },
+      ],
+      cables: [cable('shp1', 'out', 'rec1', 'l'), cable('shp1', 'pos', 'rec1', 'r')],
+    }, { frames })
+
+  const up = shepard({ rate: 0.5 }, SR)
+  const moved = up.right[SR - 1] - up.right[0]
+  check('Pos climbs at Rate: half an octave in a second', Math.abs(moved - 0.5) < 0.01, moved.toFixed(4))
+
+  // Four seconds at a full octave a second: four times round. The loudness
+  // has to stay where it was the whole way, or the hand-over would be heard.
+  const round = shepard({ rate: 1 }, SR * 4).left
+  const slices: number[] = []
+  for (let s = 0; s < 16; s++) slices.push(stats(round.subarray(s * SR / 4, (s + 1) * SR / 4)).rms)
+  const lo = Math.min(...slices)
+  const hi = Math.max(...slices)
+  check('it goes round and round at the same loudness', lo > 0.05 && hi / lo < 1.25, `${lo.toFixed(3)} to ${hi.toFixed(3)}`)
+
+  // A whole octave later it is the same sound: the same tones at the same weights.
+  const a = round.subarray(SR / 2, SR / 2 + 8192)
+  const b = round.subarray(SR / 2 + SR, SR / 2 + SR + 8192)
+  const bands = [100, 200, 400, 800, 1600].map((hz) => [powerAt(a, hz * 1.19), powerAt(b, hz * 1.19)])
+  const alike = bands.every(([x, y]) => Math.abs(x - y) <= 0.15 * Math.max(x, y) + 1e-4)
+  check('an octave on, it is where it started', alike, bands.map(([x, y]) => `${x.toFixed(3)}/${y.toFixed(3)}`).join(' '))
+
+  const down = shepard({ rate: -0.5 }, SR / 2)
+  check('a negative Rate falls', down.right[SR / 2 - 1] < 0.8 && down.right[SR / 2 - 1] > 0.7, down.right[SR / 2 - 1].toFixed(3))
+
+  const steps = shepard({ rate: 1, motion: 1 }, SR)
+  const levels = distinctValues(steps.right)
+  check('steps moves a semitone at a time', levels <= 13 && levels >= 11 && steps.right.every((v) => Math.abs(v * 12 - Math.round(v * 12)) < 1e-4), `${levels} positions`)
+}
+
+// --- rotary speaker ----------------------------------------------------
+console.log('\nrotary speaker')
+{
+  const rotary = (params: Record<string, number>, hz: number, frames: number, fastGate = false) =>
+    render({
+      modules: [
+        { id: 'osc1', type: 'osc', params: { pitch: hz, wave: 3, level: 0.5 } },
+        ...(fastGate ? [{ id: 'gate1', type: 'gate', params: {} }] : []),
+        { id: 'rot1', type: 'rotary', params: { drive: 0, ...params } },
+        { id: 'rec1', type: 'rec', params: {} },
+      ],
+      cables: [
+        cable('osc1', 'out', 'rot1', 'in'),
+        cable('rot1', 'l', 'rec1', 'l'),
+        cable('rot1', 'r', 'rec1', 'r'),
+        ...(fastGate ? [cable('gate1', 'gate', 'rot1', 'fast')] : []),
+      ],
+    }, { frames })
+  // How many times a second the level swells, from the envelope's crossings of its own mean.
+  const swells = (b: Float32Array, from: number) => {
+    const win = 480
+    const env: number[] = []
+    for (let i = from; i + win <= b.length; i += win) env.push(stats(b.subarray(i, i + win)).rms)
+    const mean = env.reduce((s, v) => s + v, 0) / env.length
+    let rises = 0
+    for (let i = 1; i < env.length; i++) if (env[i - 1] < mean && env[i] >= mean) rises++
+    return rises / ((b.length - from) / SR)
+  }
+  const slow = rotary({ ramp: 0.2 }, 3000, SR * 4)
+  const fast = rotary({ ramp: 0.2, speed: 1 }, 3000, SR * 4)
+  const s = swells(slow.left, SR)
+  const f = swells(fast.left, SR)
+  check('slow, the horn swells under once a second', s > 0.4 && s < 1.3, `${s.toFixed(2)} a second`)
+  check('fast, nearly seven times', f > 5.5 && f < 8, `${f.toFixed(2)} a second`)
+
+  const gated = rotary({ ramp: 0.2 }, 3000, SR * 4, true)
+  check('a gate at Fast speeds it up', Math.abs(swells(gated.left, SR) - f) < 0.6, `${swells(gated.left, SR).toFixed(2)} a second`)
+
+  // Spinning up takes time: the first stretch is still slow.
+  const winding = rotary({ ramp: 5, speed: 1 }, 3000, SR * 2)
+  check('it winds up rather than jumping', swells(winding.left, SR / 2) < f / 2, `${swells(winding.left, SR / 2).toFixed(2)} a second after a moment`)
+
+  const wide = fast.left.subarray(SR).map((v, i) => v - fast.right[SR + i])
+  check('the two microphones hear it differently', stats(wide).rms > 0.05, stats(wide).rms.toFixed(3))
+
+  // The drum carries the lows: with the balance all the way to it, a high tone is gone.
+  const drumOnly = rotary({ balance: 0 }, 6000, SR / 2)
+  const hornOnly = rotary({ balance: 1 }, 6000, SR / 2)
+  check('Balance chooses between the horn and the drum', stats(drumOnly.left.subarray(SR / 4)).rms < stats(hornOnly.left.subarray(SR / 4)).rms / 10,
+    `${stats(drumOnly.left.subarray(SR / 4)).rms.toFixed(4)} drum, ${stats(hornOnly.left.subarray(SR / 4)).rms.toFixed(3)} horn`)
+}
+
+// --- spring reverb -----------------------------------------------------
+console.log('\nspring reverb')
+{
+  const spring = (params: Record<string, number>, frames = SR * 2) =>
+    render({
+      modules: [
+        { id: 'gate1', type: 'gate', params: { mode: 1, length: 0.002 } },
+        { id: 'spr1', type: 'spring', params: { mix: 1, ...params } },
+        { id: 'rec1', type: 'rec', params: {} },
+      ],
+      cables: [cable('gate1', 'gate', 'spr1', 'in'), cable('spr1', 'l', 'rec1', 'l'), cable('spr1', 'r', 'rec1', 'r')],
+    }, { frames })
+
+  const long = spring({ decay: 4 })
+  const short = spring({ decay: 0.4 })
+  const lateLong = energy(long.left, SR, SR * 2)
+  const lateShort = energy(short.left, SR, SR * 2)
+  check('a hit rings on for as long as Decay', lateLong > 100 * lateShort && lateLong > 1e-3, `${lateLong.toExponential(1)} against ${lateShort.toExponential(1)} after a second`)
+
+  // The first echo comes back after one trip down the spring.
+  const arrival = (b: Float32Array) => b.findIndex((v) => Math.abs(v) > 0.02)
+  const loose = arrival(spring({ tension: 0, drip: 0 }, SR / 4).left)
+  const taut = arrival(spring({ tension: 1, drip: 0 }, SR / 4).left)
+  check('Tension sets how soon the echoes come round', loose > 0.07 * SR && taut < 0.035 * SR, `${(loose / SR * 1000).toFixed(1)} ms loose, ${(taut / SR * 1000).toFixed(1)} ms taut`)
+
+  // Drip smears each echo out: how long the first one takes to arrive in full.
+  const spread = (b: Float32Array) => {
+    const first = arrival(b)
+    const window = b.subarray(first, first + Math.round(0.03 * SR))
+    const total = window.reduce((s, v) => s + v * v, 0)
+    let run = 0
+    let lo = -1
+    let hi = -1
+    for (let i = 0; i < window.length; i++) {
+      run += window[i] * window[i]
+      if (lo < 0 && run > 0.1 * total) lo = i
+      if (hi < 0 && run > 0.9 * total) hi = i
+    }
+    return hi - lo
+  }
+  // A click with its lows taken off, since what a spring smears is the top:
+  // a low thump comes back almost as it went in.
+  const click = (drip: number) =>
+    render({
+      modules: [
+        { id: 'gate1', type: 'gate', params: { mode: 1, length: 0.002 } },
+        { id: 'hp1', type: 'svf', params: { cutoff: 2000, mode: 2, resonance: 0 } },
+        { id: 'spr1', type: 'spring', params: { mix: 1, drip, decay: 0.3, tone: 1 } },
+        { id: 'rec1', type: 'rec', params: {} },
+      ],
+      cables: [cable('gate1', 'gate', 'hp1', 'in'), cable('hp1', 'out', 'spr1', 'in'), cable('spr1', 'l', 'rec1', 'l')],
+    }, { frames: SR / 4 }).left
+  const dry = spread(click(0))
+  const dripped = spread(click(1))
+  check('Drip smears each echo into a chirp', dripped > dry * 3, `${(dry / SR * 1000).toFixed(2)} ms to ${(dripped / SR * 1000).toFixed(2)} ms`)
+
+  const stereo = long.left.map((v, i) => v - long.right[i])
+  check('two springs, one a side', stats(stereo).rms > stats(long.left).rms * 0.5, stats(stereo).rms.toFixed(4))
+}
+
+// --- convolution -------------------------------------------------------
+console.log('\nconvolution')
+{
+  /** An impulse response of `frames` at the rack's rate, with spikes where asked. */
+  const impulse = (frames: number, spikes: [number, number][], right?: [number, number][]) => {
+    const l = new Float32Array(frames)
+    for (const [at, v] of spikes) l[at] = v
+    const channels = [l]
+    if (right) {
+      const r = new Float32Array(frames)
+      for (const [at, v] of right) r[at] = v
+      channels.push(r)
+    }
+    return { channels, rate: SR, frames }
+  }
+  // A step through the impulse: the output rises where each spike lands.
+  const convolve = (ir: ReturnType<typeof impulse>, params: Record<string, number>, frames: number) =>
+    render({
+      modules: [
+        { id: 'gate1', type: 'gate', params: {} },
+        { id: 'conv1', type: 'convolve', params: { mix: 1, ...params }, sample: { id: 'ir', name: 'ir.wav' } },
+        { id: 'rec1', type: 'rec', params: {} },
+      ],
+      cables: [cable('gate1', 'gate', 'conv1', 'in'), cable('conv1', 'l', 'rec1', 'l'), cable('conv1', 'r', 'rec1', 'r')],
+    }, { frames, samples: new Map([['ir', ir]]) })
+  const rise = (b: Float32Array) => b.findIndex((v) => v > 0.5)
+  const LATE = 127
+
+  for (const at of [0, 1000, 4096, 10000, 50000]) {
+    const out = convolve(impulse(at + 100, [[at, 1]]), {}, at + 4096).left
+    const got = rise(out)
+    const level = out[out.length - 1]
+    check(`a spike ${at} samples in comes out ${at} late, plus ${LATE}`, got === at + LATE && Math.abs(level - 1) < 1e-3, `at ${got}, level ${level.toFixed(4)}`)
+  }
+
+  const twice = convolve(impulse(30000, [[100, 0.6], [20000, 0.8]]), {}, 24576).left
+  const before = twice[20000]
+  const after = twice[24000]
+  // Brought to unit energy: 0.6 and 0.8 already are.
+  check('spikes add, head and tail together', Math.abs(before - 0.6) < 1e-3 && Math.abs(after - 1.4) < 1e-3, `${before.toFixed(4)} then ${after.toFixed(4)}`)
+
+  const loud = convolve(impulse(1000, [[0, 4]]), {}, 4096).left
+  check('an impulse is brought to a common loudness', Math.abs(loud[loud.length - 1] - 1) < 1e-3, loud[loud.length - 1].toFixed(4))
+
+  const stereo = convolve(impulse(2000, [[100, 1]], [[1500, 1]]), {}, 4096)
+  check('a stereo impulse plays each side its own', rise(stereo.left) === 100 + LATE && rise(stereo.right) === 1500 + LATE,
+    `${rise(stereo.left)} and ${rise(stereo.right)}`)
+
+  const pre = convolve(impulse(200, [[0, 1]]), { predelay: 0.1 }, SR / 4).left
+  check('Pre-delay holds the wet side back', Math.abs(rise(pre) - (0.1 * SR + LATE)) <= 1, `${rise(pre)}`)
+
+  const cut = convolve(impulse(SR, [[SR / 2 + 2000, 1], [0, 0.001]]), { length: 0.25 }, SR).left
+  check('Length cuts the impulse short', stats(cut.subarray(SR / 2)).peak < 0.01, stats(cut.subarray(SR / 2)).peak.toFixed(4))
+
+  // Backwards, the spike at the start lands at the end of what is kept.
+  const back = convolve(impulse(4800, [[0, 1]]), { reverse: 1 }, SR / 4).left
+  const kept = Math.ceil(4800 / 128) * 128
+  check('Reverse plays it from the end', rise(back) === kept - 1 + LATE, `${rise(back)} for ${kept - 1 + LATE}`)
+
+  const none = render({
+    modules: [
+      { id: 'gate1', type: 'gate', params: {} },
+      { id: 'conv1', type: 'convolve', params: { mix: 0.5 } },
+      { id: 'rec1', type: 'rec', params: {} },
+    ],
+    cables: [cable('gate1', 'gate', 'conv1', 'in'), cable('conv1', 'l', 'rec1', 'l')],
+  }, { frames: 1024 }).left
+  check('with no impulse it is the dry side alone, as late', rise(none) === -1 && Math.abs(none[1000] - 0.5) < 1e-6 && none[LATE - 1] === 0, `${none[1000]}`)
+}
+
+// --- chord -------------------------------------------------------------
+console.log('\nchord')
+{
+  const semis = (v: number) => Math.round(v * 12 * 1000) / 1000
+  const chordOf = (params: Record<string, number>, pitch = 0) => {
+    const out = capture({
+      modules: [
+        { id: 'cv1', type: 'cv', params: { offset1: pitch } },
+        { id: 'chd1', type: 'chord', params },
+        { id: 'scope1', type: 'scope', params: {} },
+        { id: 'scope2', type: 'scope', params: {} },
+      ],
+      cables: [
+        cable('cv1', 'out1', 'chd1', 'pitch'),
+        cable('chd1', 'p1', 'scope1', 'in'),
+        cable('chd1', 'p2', 'scope1', 'in2'),
+        cable('chd1', 'p3', 'scope2', 'in'),
+        cable('chd1', 'p4', 'scope2', 'in2'),
+      ],
+    })
+    const at = SCOPE_CAPTURE - 1
+    return [out.scope1[at], out['scope1.b'][at], out.scope2[at], out['scope2.b'][at]].map(semis)
+  }
+  const same = (a: number[], b: number[]) => a.length === b.length && a.every((v, i) => v === b[i])
+  const show = (a: number[]) => a.join(' ')
+
+  check('a major chord on the note', same(chordOf({}), [0, 4, 7, 12]), show(chordOf({})))
+  check('a minor seventh', same(chordOf({ quality: 4 }), [0, 3, 7, 10]), show(chordOf({ quality: 4 })))
+  check('built on whatever comes in', same(chordOf({}, 5 / 12), [5, 9, 12, 17]), show(chordOf({}, 5 / 12)))
+  check('the first inversion lifts the root', same(chordOf({ inversion: 1 }), [4, 7, 12, 12]), show(chordOf({ inversion: 1 })))
+  check('drop 2 takes the second from the top down', same(chordOf({ quality: 3, voicing: 1 }), [-5, 0, 4, 11]), show(chordOf({ quality: 3, voicing: 1 })))
+
+  // In key: thirds of C major on D is D minor, on G with the seventh is G7.
+  check('in key, D in C major is D minor', same(chordOf({ quality: 10 }, 2 / 12), [2, 5, 9, 14]), show(chordOf({ quality: 10 }, 2 / 12)))
+  check('and key 7 on G is a dominant seventh', same(chordOf({ quality: 11 }, 7 / 12), [7, 11, 14, 17]), show(chordOf({ quality: 11 }, 7 / 12)))
+  check('a note outside the key is moved onto it', same(chordOf({ quality: 10 }, 1 / 12), chordOf({ quality: 10 }, 0)) || same(chordOf({ quality: 10 }, 1 / 12), chordOf({ quality: 10 }, 2 / 12)),
+    show(chordOf({ quality: 10 }, 1 / 12)))
+  check('Root moves the key: in A minor, A is A minor', same(chordOf({ quality: 10, root: 9, scale: 1 }, 9 / 12), [9, 12, 16, 21]), show(chordOf({ quality: 10, root: 9, scale: 1 }, 9 / 12)))
+
+  // Strum: the gates open one after another, Strum apart.
+  const strummed = (direction: number) => {
+    const out = render({
+      modules: [
+        { id: 'gate1', type: 'gate', params: {} },
+        { id: 'chd1', type: 'chord', params: { strum: 0.01, direction } },
+        { id: 'rec1', type: 'rec', params: {} },
+      ],
+      cables: [
+        cable('gate1', 'gate', 'chd1', 'gate'),
+        cable('chd1', 'g1', 'rec1', 'l'),
+        cable('chd1', 'g4', 'rec1', 'r'),
+      ],
+    }, { frames: SR / 10 })
+    return [out.left.findIndex((v) => v > 0.5), out.right.findIndex((v) => v > 0.5)]
+  }
+  const [g1, g4] = strummed(0)
+  check('Strum opens G1 first and G4 three gaps later', g1 === 0 && g4 === 3 * 0.01 * SR, `${g1} and ${g4}`)
+  const [d1, d4] = strummed(1)
+  check('and downward the other way round', d4 === 0 && d1 === 3 * 0.01 * SR, `${d1} and ${d4}`)
+}
+
+// --- band splitter -----------------------------------------------------
+console.log('\nband splitter')
+{
+  const split = (hz: number, params: Record<string, number> = {}) => {
+    const out = render({
+      modules: [
+        { id: 'osc1', type: 'osc', params: { pitch: hz, wave: 3, level: 0.5 } },
+        { id: 'xo1', type: 'split', params },
+        { id: 'rec1', type: 'rec', params: {} },
+        { id: 'rec2', type: 'rec', params: {} },
+      ],
+      cables: [cable('osc1', 'out', 'xo1', 'in'), cable('xo1', 'out', 'rec1', 'l'), cable('xo1', 'low', 'rec1', 'r')],
+    }, { frames: SR / 2 })
+    return out
+  }
+  const level = (b: Float32Array) => stats(b.subarray(SR / 4)).rms / (0.5 * Math.SQRT1_2)
+  const flat = [50, 250, 700, 2500, 9000].map((hz) => level(split(hz).left))
+  check('the three bands sum back to what went in', flat.every((v) => Math.abs(v - 1) < 0.01), flat.map((v) => v.toFixed(3)).join(' '))
+
+  const band = (hz: number, port: string, params: Record<string, number> = {}) =>
+    level(render({
+      modules: [
+        { id: 'osc1', type: 'osc', params: { pitch: hz, wave: 3, level: 0.5 } },
+        { id: 'xo1', type: 'split', params },
+        { id: 'rec1', type: 'rec', params: {} },
+      ],
+      cables: [cable('osc1', 'out', 'xo1', 'in'), cable('xo1', port, 'rec1', 'l')],
+    }, { frames: SR / 2 }).left)
+  check('each band is 6 dB down where it meets the next', Math.abs(band(250, 'low') - 0.5) < 0.02 && Math.abs(band(2500, 'high') - 0.5) < 0.02,
+    `${band(250, 'low').toFixed(3)} and ${band(2500, 'high').toFixed(3)}`)
+  check('and falls away 24 dB an octave beyond it', band(1000, 'low') < 0.07 && band(62.5, 'mid') < 0.07 && band(10000, 'mid') < 0.07,
+    `${band(1000, 'low').toFixed(3)} ${band(62.5, 'mid').toFixed(3)} ${band(10000, 'mid').toFixed(3)}`)
+  check('the mids pass in the middle', band(800, 'mid') > 0.95, band(800, 'mid').toFixed(3))
+  const killed = level(split(80, { low: 0 }).left)
+  check('turning a band down takes it out of Out', killed < 0.05, killed.toFixed(3))
+}
+
 // --- survival, smoothing and the master limiter ------------------------
 /**
  * A module run on its own, outside any patch, with its jacks as slots in a
@@ -3698,6 +4059,27 @@ function bench(mod: DspModule, inputs: number, outputs: number, params: number[]
 
 const ctx = { sampleRate: SR }
 const sine = (hz: number, i: number, amp = 0.5) => amp * Math.sin((2 * Math.PI * hz * i) / SR)
+
+console.log('\na note played over the last one does not click')
+{
+  // A legato line: the gate held, dropped for one sample as a new note
+  // retriggers it, and held again. The oscillator's Delay never goes below
+  // 0.2 ms, and the envelope used to sit at nothing for all of it -- ten
+  // samples of silence in the middle of a held tone, on every note.
+  const shape: Record<string, number> = { envAmount: 1, attack: 0.01, sustain: 0.9, decay: 0.1, release: 0.25, wave: 3 }
+  const params = MODULE_DEFS.osc.params.map((p) => shape[p.id] ?? p.default)
+  const osc = bench(new OscModule(ctx), 5, 2, params)
+  const env: number[] = []
+  for (let i = 0; i < 4000; i++) {
+    osc.step(0, 0, 0, i === 2000 ? 0 : 1, 0)
+    env.push(osc.out(1))
+  }
+  const around = env.slice(1990, 2100)
+  check('the envelope holds through the retrigger', Math.min(...around) > 0.85, `dips to ${Math.min(...around).toFixed(3)}`)
+  const fresh = bench(new OscModule(ctx), 5, 2, params)
+  fresh.step(0, 0, 0, 1, 0)
+  check('and a first note still starts from silence', fresh.out(1) < 0.01, fresh.out(1).toFixed(4))
+}
 
 console.log('\none bad sample does not kill anything for good')
 {

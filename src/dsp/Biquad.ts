@@ -91,3 +91,19 @@ export function bell(s: Section, sr: number, f: number, db: number, q: number) {
   const cos = Math.cos(w)
   s.set(1 + alpha * a, -2 * cos, 1 - alpha * a, 1 + alpha / a, -2 * cos, 1 - alpha / a)
 }
+
+/** A plain high-pass, the low-pass's mirror: two of each at Q 0.707 are a Linkwitz-Riley crossover. */
+export function highpass(s: Section, sr: number, f: number, q: number) {
+  const w = (2 * Math.PI * Math.min(f, sr * 0.49)) / sr
+  const alpha = Math.sin(w) / (2 * q)
+  const cos = Math.cos(w)
+  s.set((1 + cos) / 2, -(1 + cos), (1 + cos) / 2, 1 + alpha, -2 * cos, 1 - alpha)
+}
+
+/** An all-pass: every frequency at full level, the phase turned through 360 degrees about `f`. */
+export function allpass(s: Section, sr: number, f: number, q: number) {
+  const w = (2 * Math.PI * Math.min(f, sr * 0.49)) / sr
+  const alpha = Math.sin(w) / (2 * q)
+  const cos = Math.cos(w)
+  s.set(1 - alpha, -2 * cos, 1 + alpha, 1 + alpha, -2 * cos, 1 - alpha)
+}

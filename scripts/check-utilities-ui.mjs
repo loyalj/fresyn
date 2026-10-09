@@ -460,12 +460,33 @@ console.log('\nrhythm')
   await waitUntil(page, () => !!document.querySelector('.rhythm select[aria-label="Lane 1\'s pad"]'), { timeout: 3000 }).catch(() => {})
   check('a Drum Kit on the bench is a drum track', !(await page.$eval('.rhythm .progression-write', (b) => b.disabled)))
 
-  await page.evaluate(() => [...document.querySelectorAll('.rhythm .progression-preset')].find((b) => b.textContent === 'Tresillo')?.click())
+  // The library: searched, then a groove loaded from it.
+  const before = (await page.$$('.rhythm-row')).length
+  await (await page.$('.rhythm-library-toggle')).click()
+  await waitUntil(page, () => !!document.querySelector('.rhythm-library-list')).catch(() => {})
+  const total = (await page.$$('.rhythm-entry')).length
+  check('the library opens with every rhythm in it', total >= 150, `${total}`)
+  await (await page.$('.rhythm-search')).type('clave 3-2')
+  await wait(80)
+  const found = await page.$$eval('.rhythm-entry .rhythm-entry-name > span:first-child', (es) => es.map((e) => e.textContent))
+  check('search narrows it', found.length > 0 && found.length < 10 && found.includes('Son clave 3-2'), found.join(', '))
+  await page.$eval('.rhythm-search', (e) => {
+    e.value = ''
+  })
+  await (await page.$('.rhythm-search')).click({ clickCount: 3 })
+  await page.keyboard.type('tresillo')
+  await wait(80)
+  const badge = await text('#rhythm-entry-euclid-tresillo .rhythm-badge')
+  check('a Euclidean timeline says which it is', badge === 'E(3,8)', badge)
+  await (await page.$('#rhythm-entry-tresillo-groove .rhythm-apply')).click()
   await wait(80)
   check('a groove fills the lanes', (await page.$$('.rhythm-row')).length === 3)
+  check('and can be taken back', !!(await page.$('.rhythm-back')))
   check('each lane drawn: three in eight is x..x..x.', (await page.$eval('.rhythm-steps', (e) => e.getAttribute('aria-label'))).endsWith('x..x..x.'))
   check('on the kit\'s own pads', (await page.$eval('.rhythm-row select', (s) => s.selectedOptions[0].textContent)) === 'Kick')
 
+  // The hats left to chance, so Reroll has something to roll.
+  await type('.rhythm input[aria-label="Lane 3: chance of an unaccented hit, in percent"]', '50')
   await (await page.$('.rhythm .progression-write')).click()
   await wait(120)
   const doc = await saved()
@@ -483,6 +504,42 @@ console.log('\nrhythm')
   await wait(120)
   const rerolled = (await saved()).song.patterns[0].notes.filter((n) => n.pitch === 42 - 12)
   check('Reroll changes what chance left out, and only that', JSON.stringify(rerolled) !== JSON.stringify(hats) && (await saved()).song.patterns[0].notes.filter((n) => n.pitch === 24).length === kicks.length)
+
+  // A timeline is added as a lane, written out, on its own grid.
+  await (await page.$('.rhythm-search')).click({ clickCount: 3 })
+  await page.keyboard.type('son clave 3-2')
+  await wait(80)
+  await (await page.$('#rhythm-entry-son-clave-3-2 .rhythm-apply')).click()
+  await wait(80)
+  const rows = await page.$$('.rhythm-row')
+  check('a timeline is added as a lane', rows.length === 4)
+  check('written out as it is, which no Euclidean count could be',
+    (await page.$$eval('.rhythm-steps', (es) => es[3].getAttribute('aria-label'))).endsWith('x..x..x...x.x...'))
+  check('on the claves', (await page.$$eval('.rhythm-row select[aria-label$="pad"]', (ss) => ss[3].selectedOptions[0].textContent)) === 'Claves')
+  await (await page.$('.rhythm-row:nth-child(5) .rhythm-mute[aria-label^="Make lane"]'))?.click()
+  await wait(60)
+  const euclidean = await page.$$eval('.rhythm-steps', (es) => es[3].getAttribute('aria-label'))
+  check('E turns it into the nearest Euclidean rhythm', /x..x..x..x..x.../.test(euclidean.replace(/^.*: /, '')) || euclidean.includes('x..x..x..x..x...'), euclidean)
+
+  // ★ keeps a rhythm on the favourites shelf.
+  await (await page.$('#rhythm-entry-son-clave-3-2 .rhythm-star')).click()
+  await page.evaluate(() => [...document.querySelectorAll('.rhythm-chip')].find((c) => c.textContent === '★')?.click())
+  await (await page.$('.rhythm-search')).click({ clickCount: 3 })
+  await page.keyboard.press('Backspace')
+  await wait(80)
+  check('★ puts it on the favourites shelf', (await page.$$('.rhythm-entry')).length === 1 && !!(await page.$('#rhythm-entry-son-clave-3-2')))
+
+  // Loading took the lanes the rack had; going back brings them.
+  await (await page.$('.rhythm-search')).click({ clickCount: 3 })
+  await page.evaluate(() => [...document.querySelectorAll('.rhythm-chip')].find((c) => c.textContent === 'All')?.click())
+  await page.keyboard.type('house')
+  await wait(80)
+  const lanesBefore = (await page.$$('.rhythm-row')).length
+  await (await page.$('#rhythm-entry-house .rhythm-apply')).click()
+  await wait(60)
+  await (await page.$('.rhythm-back')).click()
+  await wait(60)
+  check('Back to what you had puts the lanes back', (await page.$$('.rhythm-row')).length === lanesBefore, `${(await page.$$('.rhythm-row')).length} of ${lanesBefore} (started with ${before})`)
   await closePanel('.rhythm')
 }
 

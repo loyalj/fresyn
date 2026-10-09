@@ -10,6 +10,11 @@ const CHANNELS = [1, 2, 3, 4, 5, 6, 7, 8]
 const SH_CHANNELS = [1, 2, 3, 4]
 const SEQ_STEPS = [1, 2, 3, 4, 5, 6, 7, 8]
 const MACRO_LANES = [1, 2, 3, 4]
+/** The Drawbar Organ's nine bars, by the pipe length each one plays. */
+const DRAWBARS = ["16'", "5⅓'", "8'", "4'", "2⅔'", "2'", "1⅗'", "1⅓'", "1'"]
+/** The Chord module's four notes. */
+const CHORD_NOTES = [1, 2, 3, 4]
+const ROOTS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 /** The Drum Kit's pads, numbered as its panel numbers them. */
 const KIT_PADS = Array.from({ length: 16 }, (_, i) => i + 1)
 /**
@@ -141,6 +146,57 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
       { id: 'detune', label: 'Detune', min: 0, max: 1, default: 0.35, unit: '', curve: 'lin' },
       { id: 'width', label: 'Width', min: 0, max: 1, default: 0.7, unit: '', curve: 'lin' },
       { id: 'fmAmount', label: 'FM Amt', min: -4, max: 4, default: 0, unit: 'oct', curve: 'lin' },
+      { id: 'level', label: 'Level', min: 0, max: 1, default: 0.8, unit: '', curve: 'lin' },
+    ],
+  },
+
+  organ: {
+    type: 'organ',
+    name: 'Drawbar Organ',
+    group: 'voice',
+    slug: 'org',
+    trigger: true,
+    inputs: [
+      { id: 'gate', label: 'Gate', block: 'play' },
+      { id: 'pitch', label: 'Pitch', block: 'play' },
+    ],
+    outputs: [{ id: 'out', label: 'Out' }],
+    params: [
+      // The 8' fundamental: every drawbar is a harmonic of this.
+      { id: 'pitch', label: 'Pitch', min: 20, max: 4000, default: 130.81, unit: 'Hz', curve: 'exp', tuned: true },
+      // In the order an organ lays them out, and DRAWBAR_RATIOS in the DSP.
+      // 888000000 to begin with: the first three out, the classic registration.
+      ...DRAWBARS.map((label, i) => ({
+        id: `bar${i + 1}`, label, min: 0, max: 8, default: i < 3 ? 8 : 0, unit: '#', curve: 'lin' as const,
+      })),
+      { id: 'perc', label: 'Perc', min: 0, max: 2, default: 0, unit: '', curve: 'lin', steps: ['off', '2nd', '3rd'] },
+      { id: 'percDecay', label: 'Perc Decay', min: 0.05, max: 2, default: 0.3, unit: 's', curve: 'exp' },
+      { id: 'click', label: 'Click', min: 0, max: 1, default: 0.3, unit: '', curve: 'lin' },
+      { id: 'level', label: 'Level', min: 0, max: 1, default: 0.8, unit: '', curve: 'lin' },
+    ],
+  },
+
+  shepard: {
+    type: 'shepard',
+    name: 'Shepard Tone',
+    group: 'voice',
+    slug: 'shp',
+    width: 'half',
+    // Added to Rate at half an octave a second per unit.
+    inputs: [{ id: 'rate', label: 'Rate' }],
+    outputs: [
+      { id: 'out', label: 'Out' },
+      // Where in the octave the glide is, 0 to 1.
+      { id: 'pos', label: 'Pos' },
+    ],
+    params: [
+      // Octaves a second; below zero it falls.
+      { id: 'rate', label: 'Rate', min: -1, max: 1, default: 0.15, unit: 'oct', curve: 'lin' },
+      { id: 'center', label: 'Center', min: 40, max: 4000, default: 400, unit: 'Hz', curve: 'exp' },
+      // How many octaves across the bell is at half its height.
+      { id: 'width', label: 'Width', min: 1, max: 6, default: 3, unit: '', curve: 'lin' },
+      { id: 'tone', label: 'Tone', min: 0, max: 1, default: 0, unit: '', curve: 'lin' },
+      { id: 'motion', label: 'Motion', min: 0, max: 1, default: 0, unit: '', curve: 'lin', steps: ['glide', 'steps'] },
       { id: 'level', label: 'Level', min: 0, max: 1, default: 0.8, unit: '', curve: 'lin' },
     ],
   },
@@ -527,6 +583,43 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     ],
   },
 
+  chord: {
+    type: 'chord',
+    name: 'Chord',
+    group: 'control',
+    slug: 'chd',
+    inputs: [
+      { id: 'pitch', label: 'Pitch' },
+      // Passed on to G1 to G4, Strum apart. With nothing here the pitches
+      // simply follow Pitch.
+      { id: 'gate', label: 'Gate' },
+    ],
+    // Read by position: the four pitches, then the four gates.
+    outputs: [
+      ...CHORD_NOTES.map((n) => ({ id: `p${n}`, label: `P${n}`, block: 'pitches' })),
+      ...CHORD_NOTES.map((n) => ({ id: `g${n}`, label: `G${n}`, block: 'gates' })),
+    ],
+    params: [
+      // The fixed chords in the order of CHORD_SHAPES in the DSP, then the two
+      // built from Root and Scale.
+      {
+        id: 'quality', label: 'Quality', min: 0, max: 11, default: 0, unit: '', curve: 'lin',
+        steps: ['maj', 'min', '7', 'maj7', 'min7', 'sus2', 'sus4', 'dim7', 'aug', '5', 'in key', 'key 7'],
+      },
+      { id: 'root', label: 'Root', min: 0, max: 11, default: 0, unit: '', curve: 'lin', steps: ROOTS },
+      // The song's scales, without the Quantizer's chromatic: thirds of a
+      // chromatic scale are not a chord.
+      {
+        id: 'scale', label: 'Scale', min: 0, max: 7, default: 0, unit: '', curve: 'lin',
+        steps: ['major', 'minor', 'harm', 'dorian', 'mixo', 'pent', 'pent m', 'blues'],
+      },
+      { id: 'inversion', label: 'Inversion', min: 0, max: 3, default: 0, unit: '#', curve: 'lin' },
+      { id: 'voicing', label: 'Voicing', min: 0, max: 2, default: 0, unit: '', curve: 'lin', steps: ['close', 'drop 2', 'open'] },
+      { id: 'strum', label: 'Strum', min: 0, max: 0.25, default: 0, unit: 's', curve: 'lin' },
+      { id: 'direction', label: 'Direction', min: 0, max: 1, default: 0, unit: '', curve: 'lin', steps: ['up', 'down'] },
+    ],
+  },
+
   burst: {
     type: 'burst',
     name: 'Burst',
@@ -823,6 +916,29 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     ],
   },
 
+  split: {
+    type: 'split',
+    name: 'Band Splitter',
+    group: 'effects',
+    slug: 'xo',
+    bypass: true,
+    inputs: [{ id: 'in', label: 'In' }],
+    outputs: [
+      { id: 'low', label: 'Low', block: 'bands' },
+      { id: 'mid', label: 'Mid', block: 'bands' },
+      { id: 'high', label: 'High', block: 'bands' },
+      // The three summed at their levels: what went in, when they are all at 1.
+      { id: 'out', label: 'Out' },
+    ],
+    params: [
+      { id: 'lowX', label: 'Low X', min: 40, max: 2000, default: 250, unit: 'Hz', curve: 'exp' },
+      { id: 'highX', label: 'High X', min: 300, max: 12000, default: 2500, unit: 'Hz', curve: 'exp' },
+      { id: 'low', label: 'Low', min: 0, max: 1.5, default: 1, unit: '', curve: 'lin' },
+      { id: 'mid', label: 'Mid', min: 0, max: 1.5, default: 1, unit: '', curve: 'lin' },
+      { id: 'high', label: 'High', min: 0, max: 1.5, default: 1, unit: '', curve: 'lin' },
+    ],
+  },
+
   drive: {
     type: 'drive',
     name: 'Drive',
@@ -1078,6 +1194,35 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     ],
   },
 
+  rotary: {
+    type: 'rotary',
+    name: 'Rotary Speaker',
+    group: 'effects',
+    slug: 'rot',
+    bypass: true,
+    // One cabinet for the whole chord, as an organ has.
+    shared: true,
+    inputs: [
+      { id: 'in', label: 'In' },
+      // High is fast, as the switch at fast is: the half-moon switch on a cable.
+      { id: 'fast', label: 'Fast' },
+    ],
+    outputs: [
+      { id: 'l', label: 'L' },
+      { id: 'r', label: 'R' },
+    ],
+    params: [
+      { id: 'speed', label: 'Speed', min: 0, max: 1, default: 0, unit: '', curve: 'lin', steps: ['slow', 'fast'] },
+      // The horn's; the drum takes two and a half times as long.
+      { id: 'ramp', label: 'Ramp', min: 0.2, max: 5, default: 1.2, unit: 's', curve: 'exp' },
+      { id: 'drive', label: 'Drive', min: 0, max: 1, default: 0.2, unit: '', curve: 'lin' },
+      // Drum at 0, horn at 1, both at full in the middle.
+      { id: 'balance', label: 'Balance', min: 0, max: 1, default: 0.5, unit: '', curve: 'lin' },
+      { id: 'width', label: 'Width', min: 0, max: 1, default: 0.7, unit: '', curve: 'lin' },
+      { id: 'mix', label: 'Mix', min: 0, max: 1, default: 1, unit: '', curve: 'lin' },
+    ],
+  },
+
   reverb: {
     type: 'reverb',
     name: 'Space',
@@ -1098,6 +1243,52 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
       { id: 'decay', label: 'Decay', min: 0.05, max: 20, default: 1.6, unit: 's', curve: 'exp' },
       { id: 'damping', label: 'Damp', min: 0, max: 1, default: 0.4, unit: '', curve: 'lin' },
       { id: 'mix', label: 'Mix', min: 0, max: 1, default: 0.3, unit: '', curve: 'lin' },
+    ],
+  },
+
+  spring: {
+    type: 'spring',
+    name: 'Spring Reverb',
+    group: 'effects',
+    slug: 'spr',
+    bypass: true,
+    shared: true,
+    width: 'half',
+    inputs: [{ id: 'in', label: 'In' }],
+    // A spring for each side, of different lengths.
+    outputs: [
+      { id: 'l', label: 'L' },
+      { id: 'r', label: 'R' },
+    ],
+    params: [
+      { id: 'decay', label: 'Decay', min: 0.3, max: 6, default: 2, unit: 's', curve: 'exp' },
+      { id: 'tension', label: 'Tension', min: 0, max: 1, default: 0.5, unit: '', curve: 'lin' },
+      { id: 'drip', label: 'Drip', min: 0, max: 1, default: 0.6, unit: '', curve: 'lin' },
+      { id: 'tone', label: 'Tone', min: 0, max: 1, default: 0.5, unit: '', curve: 'lin' },
+      { id: 'mix', label: 'Mix', min: 0, max: 1, default: 0.35, unit: '', curve: 'lin' },
+    ],
+  },
+
+  convolve: {
+    type: 'convolve',
+    name: 'Convolution',
+    group: 'effects',
+    slug: 'conv',
+    bypass: true,
+    shared: true,
+    inputs: [{ id: 'in', label: 'In' }],
+    // Stereo when the impulse is; a mono one plays the same on both.
+    outputs: [
+      { id: 'l', label: 'L' },
+      { id: 'r', label: 'R' },
+    ],
+    params: [
+      { id: 'mix', label: 'Mix', min: 0, max: 1, default: 0.35, unit: '', curve: 'lin' },
+      { id: 'predelay', label: 'Pre-delay', min: 0, max: 0.25, default: 0, unit: 's', curve: 'lin' },
+      // As much of the impulse as plays, faded out over its last quarter.
+      // Four seconds is all of it: CONVOLVE_MAX_S in the DSP.
+      { id: 'length', label: 'Length', min: 0.05, max: 4, default: 4, unit: 's', curve: 'exp' },
+      { id: 'reverse', label: 'Reverse', min: 0, max: 1, default: 0, unit: '', curve: 'lin', steps: ['forward', 'reverse'] },
     ],
   },
 
@@ -1266,7 +1457,7 @@ export type Signal = 'audio' | 'cv' | 'gate'
 /** Outputs that only ever carry on and off, whatever module they are on. */
 const GATE_OUTPUTS = new Set(['gate', 'trig', 'end', 'clk', 'x1', 'd2', 'd3', 'd4', 'd8'])
 /** Outputs of a sound-making module that carry control rather than sound. */
-const CONTROL_OUTPUTS = new Set(['env', 'pitch', 'vel', 'ramp', 'gr', 'cv'])
+const CONTROL_OUTPUTS = new Set(['env', 'pitch', 'vel', 'ramp', 'gr', 'cv', 'pos'])
 
 /**
  * Worked out from the catalogue rather than declared on every port: the
@@ -1278,7 +1469,7 @@ const CONTROL_OUTPUTS = new Set(['env', 'pitch', 'vel', 'ramp', 'gr', 'cv'])
 export function signalOf(type: string, port: string): Signal {
   const def = MODULE_DEFS[type]
   if (!def) return 'cv'
-  if (GATE_OUTPUTS.has(port) || /^clk\d$/.test(port)) return 'gate'
+  if (GATE_OUTPUTS.has(port) || /^clk\d$/.test(port) || (type === 'chord' && /^g\d$/.test(port))) return 'gate'
   if (CONTROL_OUTPUTS.has(port)) return 'cv'
   return def.group === 'voice' || def.group === 'effects' || def.group === 'output' ? 'audio' : 'cv'
 }

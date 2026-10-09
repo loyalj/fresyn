@@ -546,6 +546,80 @@ narrower; an Envelope into it starts each note tight and lets it bloom.
 
 ---
 
+### Drawbar Organ
+
+A tonewheel organ: nine sine tones at the pipe lengths an organ is
+registered in, mixed by drawbars. Play it from a Keyboard, as you would an
+Oscillator: Gate to Gate and Pitch to Pitch.
+
+- **Inputs:** Gate, Pitch (one octave per unit)
+- **Outputs:** Out
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Pitch | 20 Hz – 4.00 kHz | 131 Hz | The note at 8', the fundamental. Every drawbar is a harmonic of it |
+| 16' | 0 – 8 | 8 | The sub-octave, an octave under the note |
+| 5⅓' | 0 – 8 | 8 | The fifth over the note: the third harmonic of the sub |
+| 8' | 0 – 8 | 8 | The note itself |
+| 4' | 0 – 8 | 0 | An octave up |
+| 2⅔' | 0 – 8 | 0 | An octave and a fifth up |
+| 2' | 0 – 8 | 0 | Two octaves up |
+| 1⅗' | 0 – 8 | 0 | Two octaves and a major third up |
+| 1⅓' | 0 – 8 | 0 | Two octaves and a fifth up |
+| 1' | 0 – 8 | 0 | Three octaves up |
+| Perc | off / 2nd / 3rd | off | A decaying second or third harmonic struck at the start of each note |
+| Perc Decay | 50 ms – 2.00 s | 300 ms | How long the percussion takes to die away |
+| Click | 0.00 – 1.00 | 0.30 | The key click: a short burst of contact noise as each key goes down and comes up |
+| Level | 0.00 – 1.00 | 0.80 | Output volume |
+
+**Registrations are read as nine digits**, one per drawbar from 16' to 1'.
+Each step out is 3 dB louder, and 0 is silent. A few to start from:
+
+| Registration | What it is |
+| --- | --- |
+| 888000000 | The jazz organ, and where it starts |
+| 008000000 | A flute: the fundamental alone |
+| 888888888 | Everything out, the full gospel roar |
+| 800000008 | Hollow, with a whistle on top |
+
+**Perc and Click are what make it speak.** Percussion on the 3rd with a
+short decay is the classic jazz attack; Click at 0.50 or so puts the
+tonewheel's spit on every note. Neither is in a pipe organ: turn both off
+for one.
+
+**Through a Rotary Speaker is where an organ belongs.** Out to the Rotary
+Speaker's In, and its Speed switch flipped to fast for a chorus.
+
+---
+
+### Shepard Tone
+
+A sound that climbs, or falls, for ever. Ten tones an octave apart glide
+together, each loudest in the middle of the range and fading away at both
+ends, so as the top one fades out a new one fades in at the bottom. The ear
+follows the glide and never hears the hand-over.
+
+- **Inputs:** Rate (CV, half an octave a second per unit)
+- **Outputs:** Out, Pos (where in the octave it is, 0 to 1)
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Rate | −1.00 – +1.00 | +0.15 | How fast it moves, in octaves a second. Below zero it falls |
+| Center | 40 Hz – 4.00 kHz | 400 Hz | Where the bell of loudness is centred: the register it seems to be in |
+| Width | 1.00 – 6.00 | 3.00 | How many octaves wide the bell is. Narrow is a clear tone, wide a rich chord of octaves |
+| Tone | 0.00 – 1.00 | 0.00 | Adds the second and third harmonics to every tone, for something reedier than a sine |
+| Motion | glide / steps | glide | Glide climbs smoothly; steps climbs a semitone at a time, the endless staircase |
+| Level | 0.00 – 1.00 | 0.80 | Output volume |
+
+**Games use it for tension**: a boss's health running down, a timer, a fall
+that never lands. A Macro or a game's `setParam` on Rate makes it speed up as
+things get worse; at 0.00 it holds still on a chord of octaves.
+
+**Pos climbs with it.** Patch it somewhere to have a filter or a pan climb
+along, or into a Quantizer for a scale that never runs out.
+
+---
+
 ### Sampler
 
 Plays a sound file. Drop a WAV onto its panel, or click the panel to choose
@@ -1061,6 +1135,39 @@ over a long cycle and come back together on the downbeat.
 
 ---
 
+### Chord
+
+One note in, four out: the notes of a chord built on whatever pitch arrives.
+Patch four oscillators to P1–P4 and one key plays a whole chord.
+
+- **Inputs:** Pitch (one octave per unit, as a Keyboard puts out), Gate
+- **Outputs:** P1, P2, P3, P4 (the chord's pitches, lowest first), G1, G2, G3, G4 (the gate, strummed)
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Quality | maj / min / 7 / maj7 / min7 / sus2 / sus4 / dim7 / aug / 5 / in key / key 7 | maj | The chord. **in key** builds a triad from Root and Scale instead, and **key 7** adds the seventh |
+| Root | C – B | C | The key's root, for **in key** and **key 7** |
+| Scale | major / minor / harm / dorian / mixo / pent / pent m / blues | major | The key's scale, for **in key** and **key 7** |
+| Inversion | 0 – 3 | 0 | Moves that many of the lowest notes up an octave |
+| Voicing | close / drop 2 / open | close | Close packs the chord together; drop 2 takes the second note from the top down an octave; open lifts the second from the bottom up one |
+| Strum | 0 ms – 250 ms | 0 ms | How far apart the gates open, from G1 to G4 |
+| Direction | up / down | up | Which way the strum goes: lowest note first, or highest |
+
+**In key, every chord belongs to the song.** The pitch is moved to the
+nearest note of the scale and thirds of the scale are stacked on it, so a
+melody played into it comes out as chords of the key: C, D minor, E minor
+and so on up a C major scale. A triad doubles its root an octave up so all
+four outputs always have a note. Pitch 0 is C, as on the Quantizer.
+
+**Gate is passed on, Strum apart.** G1 opens with the gate, G2 a Strum later,
+and so on, and each closes the same Strum after the gate does. Patch each
+to its own envelope and the chord strikes like a hand across strings. Each
+P output keeps its pitch from when its own gate opened, so a note is never
+moved under its release. With nothing in Gate, the four pitches simply
+follow Pitch.
+
+---
+
 ### Burst
 
 One trigger in, a run of triggers out. Press it once and get five.
@@ -1506,6 +1613,35 @@ EQ is helping.
 
 ---
 
+### Band Splitter
+
+One signal into three bands -- low, mid and high -- that add back up to
+exactly what went in, so each can be treated on its own and mixed back.
+
+- **Inputs:** In
+- **Outputs:** Low, Mid, High, Out (all three summed at their levels)
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Low X | 40 Hz – 2.00 kHz | 250 Hz | Where the low band hands over to the mid |
+| High X | 300 Hz – 12.00 kHz | 2.50 kHz | Where the mid band hands over to the high. Never below Low X |
+| Low | 0.00 – 1.50 | 1.00 | The low band's level, at Low and in Out |
+| Mid | 0.00 – 1.50 | 1.00 | The mid band's level, at Mid and in Out |
+| High | 0.00 – 1.50 | 1.00 | The high band's level, at High and in Out |
+
+**The crossovers are Linkwitz-Riley**, 24 dB an octave, as a loudspeaker's
+are: each band is 6 dB down where it meets the next, and the three sum flat
+at every frequency. With all three levels at 1.00, Out is what went in.
+
+**Process a band and mix it back.** Mid to a Drive, Low and the driven Mid
+and High into a Mixer: grit on the middle without muddying the bass. Or
+send only High to a Space, for air without a washy low end.
+
+**Out alone is a DJ isolator**: turn a level to zero to take that band out
+entirely, and back up to bring it in.
+
+---
+
 ### Drive
 
 Push a signal into something that cannot pass all of it, and what comes out
@@ -1882,6 +2018,37 @@ something passing, the swoosh of a teleport.
 
 ---
 
+### Rotary Speaker
+
+A Leslie: a horn and a drum spinning in a cabinet, heard through a pair of
+microphones. The swirl of every rock and gospel organ, and of guitars and
+voices put through one.
+
+- **Inputs:** In, Fast (a gate: high is fast)
+- **Outputs:** L, R
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Speed | slow / fast | slow | Chorale or tremolo. A gate at Fast switches it too |
+| Ramp | 200 ms – 5.00 s | 1.20 s | How long the horn takes to change speed; the heavier drum takes two and a half times as long |
+| Drive | 0.00 – 1.00 | 0.20 | The cabinet's valve amplifier pushed: growl |
+| Balance | 0.00 – 1.00 | 0.50 | Drum at 0.00, horn at 1.00, both at full in the middle |
+| Width | 0.00 – 1.00 | 0.70 | How far apart the microphones are around the cabinet: how wide it is |
+| Mix | 0.00 – 1.00 | 1.00 | How much of the cabinet against what went in |
+
+**The highs go to the horn and the lows to the drum**, split at 800 Hz, and
+each spins at its own speed. As a rotor swings towards a microphone the
+sound gets louder and its pitch rises; swinging away, quieter and lower.
+
+**The change of speed is the sound.** Neither rotor jumps: flip Speed and
+the horn winds up over Ramp while the drum lags behind it. A Sequencer's
+gate or an LFO's square into Fast throws it between the two in time with the
+music. It always starts slow, as a real one does when it is switched on.
+
+**One serves the whole chord**, as a cabinet does an organ.
+
+---
+
 ### Space
 
 A reverb: four delay lines feeding each other back through a matrix, which is
@@ -1910,6 +2077,68 @@ an open field.
 **Put it last.** Reverb belongs after the filter and the VCA, on the way into
 the mixer — a room applied before the envelope shapes the sound will be cut
 off with it, which is the one arrangement that never sounds like a space.
+
+---
+
+### Spring Reverb
+
+The tank in a guitar amp or a dub mixing desk: two coiled springs with a
+transducer at each end. It does not make a room. It makes echoes that come
+back down the wire smeared into a chirp, and a hit on it goes "boing".
+
+- **Inputs:** In
+- **Outputs:** L, R
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Decay | 300 ms – 6.00 s | 2.00 s | How long the echoes ring on: they fall 60 dB in this time |
+| Tension | 0.00 – 1.00 | 0.50 | How taut the springs are: taut sends the echoes round sooner and tighter, slack later and looser |
+| Drip | 0.00 – 1.00 | 0.60 | How much each echo is smeared into a chirp, its lows arriving before its highs: the drip |
+| Tone | 0.00 – 1.00 | 0.50 | How bright the tank is |
+| Mix | 0.00 – 1.00 | 0.35 | How much of the tank against what went in |
+
+**Drums and stabs bring out the boing.** A snare or a short chord into it at
+Mix 0.50, Drip up and Decay long, is dub; a guitar-like pluck with Tension
+low is surf. Drip at 0.00 is a plain, metallic flutter echo.
+
+**Two springs of different lengths**, one for each side, so it is stereo
+whatever comes in.
+
+---
+
+### Convolution
+
+Any recording used as the space another sound plays in. Load a clap in a
+stairwell, a cathedral's impulse response, a speaker cabinet's, or a door
+slamming, and whatever reaches In comes out as though it had been played
+there.
+
+- **Inputs:** In
+- **Outputs:** L, R
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Mix | 0.00 – 1.00 | 0.35 | How much of the space against what went in |
+| Pre-delay | 0 ms – 250 ms | 0 ms | Holds the space back from the sound, for a bigger room or a clearer attack |
+| Length | 50 ms – 4.00 s | 4.00 s | How much of the impulse plays. Cut short, it fades out over the last quarter of what is kept |
+| Reverse | forward / reverse | forward | Plays the impulse backwards: a swell into every note |
+
+**Drop a file on its screen**, as on the Sampler: WAV, MP3, OGG or FLAC.
+Free impulse responses of real rooms and cabinets are easy to find, and
+anything at all works -- a glass struck, a footstep in a tunnel, a burst of
+noise through a filter. A stereo impulse plays each side its own; a mono one
+plays the same on both.
+
+**Every impulse is brought to the same loudness**, by its energy, so a quiet
+room and a loud cabinet sit at about the level the dry sound did. A cabinet
+or a short body wants Mix at 1.00; a room, somewhere near the default.
+
+**Up to four seconds of impulse plays**, and a longer one is cut there.
+Turning Length or Reverse rebuilds the space once the knob stops, over a
+quarter of a second. Everything through it, dry included, is 127 samples
+late (under 3 ms), because the start of the impulse is worked a block at a
+time. A four-second hall costs a few percent of the audio budget; with
+nothing reaching it, it rests and costs nothing.
 
 ---
 
@@ -3083,18 +3312,45 @@ sixteen four on the floor. **Rotate** starts it that many steps later;
 **Accent** makes that many of its hits louder, spread evenly among them; and
 **Chance** is how likely each unaccented hit is to be written — accented hits
 always are, and **Reroll** throws the dice again. Each lane has its own
-length, so a lane of five against one of sixteen drifts in and out of phase;
-tick **Bar** and a lane's steps are spread evenly over a bar whatever the
-grid, which is how three against four is made. **Step** sets the grid, from
-eighths to thirty-seconds, with triplets. Each lane plays a pad of the kit —
-**▶** hears it, **M** leaves the lane out, **×** removes it, **+ Lane** adds
-one — and the strip under it shows its cycle, accents brightest. Start from a
-groove in **Start from**, or build one. **Write into** fills the pattern open
-in the roll, round and round to its end, on the **Track** chosen — a Drum Kit
-track, or one played by a Trigger — as one step of undo, first taking away
-what was on those pads unless **Replace what is on these pads** is off. A
-groove's lanes find their pads by General MIDI note, so in a kit laid out
-another way a lane may say its pad is missing; pick another for it.
+length, so a lane of five against one of sixteen drifts in and out of phase.
+**Step** sets the grid, from eighths to thirty-seconds, with triplets, and a
+lane's **Grid** can step on its own — a triplet bell over sixteenth hats — or
+**Bar** spreads its steps evenly over a bar whatever their number, which is
+how three against four is made. Each lane plays a pad of the kit — **▶**
+hears it, **M** leaves the lane out, **×** removes it, **+ Lane** adds one —
+and the strip under it shows its cycle, accents brightest and ghost notes
+faintest. **Write into** fills the pattern open in the roll, round and round
+to its end, on the **Track** chosen — a Drum Kit track, or one played by a
+Trigger — as one step of undo, first taking away what was on those pads
+unless **Replace what is on these pads** is off.
+
+**The library** holds nearly three hundred rhythms to start from: **Browse**
+opens it above the lanes. A **timeline** is one line a tradition hangs
+everything on — son and rumba clave, the 12/8 bell, a doum-tek iqa', a
+flamenco compás, a tala's claps — and **+ Lane** adds it to your lanes. A
+**groove** is a whole part, a drum to a lane — rock, funk, boom bap, trap,
+house, drum & bass, one drop, dembow, a swing ride — and **Load** puts it in
+place of your lanes, while **+** adds its drums to them. **↶ Back to what you
+had** undoes a Load. Each row draws its rhythm, so it can be read before it
+is heard; **▶**, or **Space** on the row picked out with the arrow keys,
+plays it on the drum track, and **Enter** uses it. **Search** looks through
+names, places and meters — *clave*, *Brazil*, *7/8* — and Euclidean counts:
+a timeline that is one is labelled with it, **E(3,8)**, worked out from its
+steps. The chips choose a shelf: **★** for the rhythms you star, **Recent**
+for the ones you have used, or a tradition or a scene. **Timelines** and
+**Grooves** show one kind only.
+
+**Most of the world's rhythms are not Euclidean.** Son clave,
+x..x..x...x.x..., is no rotation of five in sixteen, so a library lane comes
+in **written out**: its steps, hits and accents are the pattern's, shown but
+not knobs, while Rotate, Chance and Grid still work on it. A lane that is a
+Euclidean rhythm, accents and all, comes in as one, so its knobs work on it
+as on any other. **E** on a written lane turns it into the Euclidean rhythm
+nearest it — as many hits in as many steps, at whichever rotation keeps the
+most of them — and from there it is yours to turn. Library rhythms are
+written for the pads of the standard kit; in a kit laid out another way each
+lane finds the pad nearest in sound — the clave a wood block, the surdo a tom
+— or says its pad is missing, and you pick one.
 
 ---
 

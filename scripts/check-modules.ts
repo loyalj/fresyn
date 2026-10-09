@@ -40,6 +40,20 @@ const FRAMES = 4096
 const LONG_RUN: Record<string, number> = { gran: SR }
 
 /**
+ * How many switch combinations are worth enumerating before falling back to
+ * moving one at a time.
+ *
+ * Declared up here, before the loops that run at load time: further down,
+ * where it used to sit, it was not yet set when they read it, and the cap
+ * silently never applied -- unnoticed until the Chord, whose five switches
+ * make 6,912 combinations. It is here because the product is what it is: two
+ * more switches on a module that already has a couple turns this check from
+ * seconds into minutes, and the person who adds them should get a slower
+ * check rather than a hung one.
+ */
+const COMBO_LIMIT = 48
+
+/**
  * The largest magnitude each module is designed to produce, given inputs no
  * bigger than full scale.
  *
@@ -102,8 +116,19 @@ const CEILING: Record<string, number> = {
   // at no detune they are one wave, in phase only where their random starts
   // happen to agree, so the worst case is all seven overshooting at once.
   unison: 3.5,
+  // Nine sines brought down to 0.22 of their sum, with the percussion and
+  // the click on top: all nine drawbars out, every peak landing together and
+  // the key clicking at once is under three.
+  organ: 2.9,
+  // Ten tones whose weights' powers sum to a quarter, so their sum is at most
+  // the root of ten over two, and Tone adds up to 0.83 of that again. Pos is
+  // 0 to 1.
+  shepard: 3,
   // Every output is a gate.
   clkdiv: 1,
+  // The pitches are the input plus at most two octaves of chord, an octave
+  // of inversion and one of voicing; the gates are 0 or 1.
+  chord: 4.1,
   // The trapezoidal low-pass at its highest Res peaks five times up at its
   // corner, and the VCA side only attenuates.
   lpg: 5.5,
@@ -124,6 +149,9 @@ const CEILING: Record<string, number> = {
   // bell both boosting the same frequency, a full-scale tone there comes out
   // 24 dB up -- sixteen times -- which is what it was asked for.
   eq: 17,
+  // Four second-order sections in a row ring a little at each corner, and
+  // the levels go to 1.5: each band, and their sum, stays under three.
+  split: 3,
   // Linear, and unity at each band's centre before the makeup gain: a sine
   // sitting exactly on the first formant comes out 4.5 times as loud, and
   // nothing a rack feeds it can land on two bands at full level at once.
@@ -152,7 +180,17 @@ const CEILING: Record<string, number> = {
   // Half dry and half wet at most of each, and the wet side is its input
   // plus a feedback that saturates at 0.95 -- so a little over two.
   chorus: 2.5,
+  // A tanh brought down by the root of the drive, split by a low-pass that
+  // overshoots, and each rotor at up to root two in the balance.
+  rotary: 3,
   reverb: 1.4,
+  // The tank is soft-limited before the all-passes, which only move phase,
+  // and the damping and the line only take away: the wet side stays near
+  // four, and the dry side is whatever came in.
+  spring: 5,
+  // The wet side is rounded off under four, however the impulse rings, and
+  // the dry side is what came in: Mix crossfades between the two.
+  convolve: 4.1,
   // Wet only, and the loop saturates.
   res: 1.1,
   // Level 1 plus CV 1 at an amount of 2.
@@ -531,17 +569,6 @@ console.log('\nevery parameter reaches the DSP')
   }
 }
 
-/**
- * How many switch combinations are worth enumerating before falling back to
- * moving one at a time.
- *
- * Nothing in the catalogue comes near this today -- the widest is four
- * positions on one switch. It is here because the product is what it is: two
- * more switches on a module that already has a couple turns this check from
- * seconds into minutes, and the person who adds them should get a slower
- * check rather than a hung one.
- */
-const COMBO_LIMIT = 48
 
 /** Each combination of the module's switch positions, capped to stay quick. */
 /**

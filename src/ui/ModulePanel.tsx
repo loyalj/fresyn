@@ -117,7 +117,7 @@ export function ModulePanel({
         />
       )
     }
-    if (def.type === 'sampler') {
+    if (def.type === 'sampler' || def.type === 'convolve') {
       return (
         <SamplerFace
           def={def}

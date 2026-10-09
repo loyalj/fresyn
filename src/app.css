@@ -5406,7 +5406,7 @@ button.playlist-bar:hover { border-color: var(--rule); color: var(--ink); }
 
 .rhythm-lane {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) repeat(5, 50px) 26px 42px;
+  grid-template-columns: minmax(0, 1fr) repeat(5, 44px) 56px 60px;
   align-items: center;
   gap: 4px;
 }
@@ -5482,6 +5482,189 @@ button.playlist-bar:hover { border-color: var(--rule); color: var(--ink); }
 .rhythm-steps span.hit { background: rgb(var(--accent-rgb) / 0.55); box-shadow: none; }
 .rhythm-steps span.hit.chance { background: rgb(var(--accent-rgb) / 0.3); }
 .rhythm-steps span.accent { background: var(--accent); box-shadow: none; }
+.rhythm-steps span.ghost { background: rgb(var(--accent-rgb) / 0.25); box-shadow: none; }
+.rhythm-steps span.ghost.chance { background: rgb(var(--accent-rgb) / 0.15); }
+
+/* A written-out lane's steps, hits and accents: the pattern's, not knobs. */
+.rhythm-fixed {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-dim);
+}
+
+.rhythm-grid { font: inherit; font-size: 11px; min-width: 0; padding: 1px 2px; }
+
+.rhythm-actions { gap: 2px; }
+
+.rhythm-back {
+  font: inherit;
+  margin-right: 8px;
+  padding: 0;
+  color: var(--accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.rhythm-back:hover { text-decoration: underline; }
+
+/* --- the rhythm library ----------------------------------------------- */
+
+.rhythm-library {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rhythm-library-bar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.rhythm-search {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 4px 6px;
+  color: var(--ink);
+  background: var(--well);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+}
+.rhythm-search:focus { outline: none; border-color: var(--accent-line); }
+
+.rhythm-kinds { display: flex; }
+.rhythm-kinds button,
+.rhythm-chip {
+  font: inherit;
+  font-size: 10px;
+  padding: 3px 7px;
+  color: var(--ink-dim);
+  background: var(--control);
+  border: 1px solid var(--panel-edge);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.rhythm-kinds button + button { border-left: none; }
+.rhythm-kinds button:first-child { border-radius: 2px 0 0 2px; }
+.rhythm-kinds button:last-child { border-radius: 0 2px 2px 0; }
+.rhythm-kinds button:hover,
+.rhythm-chip:hover { color: var(--ink); }
+.rhythm-kinds button.on,
+.rhythm-chip.on { color: var(--on-accent); background: var(--accent); border-color: var(--accent); }
+
+.rhythm-shelves {
+  display: flex;
+  gap: 3px;
+  overflow-x: auto;
+  padding-bottom: 3px;
+  scrollbar-width: thin;
+}
+.rhythm-chip { flex: none; }
+.rhythm-chip { border-radius: 10px; }
+
+.rhythm-library-list {
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  background: var(--well);
+}
+.rhythm-library-list:focus { outline: none; border-color: var(--accent-line); }
+
+.rhythm-entry {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 140px auto auto;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--hairline);
+  cursor: default;
+}
+.rhythm-entry:last-child { border-bottom: none; }
+.rhythm-entry:hover { background: rgb(var(--accent-rgb) / 0.05); }
+.rhythm-entry.active { background: rgb(var(--accent-rgb) / 0.14); }
+
+.rhythm-hit.on { color: var(--on-accent); background: var(--accent); border-color: var(--accent); }
+
+.rhythm-entry-text { min-width: 0; }
+.rhythm-entry-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink);
+}
+.rhythm-entry-name > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rhythm-entry-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--ink-dim);
+}
+
+.rhythm-badge {
+  flex: none;
+  font-size: 9px;
+  padding: 0 4px;
+  color: var(--accent);
+  border: 1px solid var(--accent-line);
+  border-radius: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rhythm-mini {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+}
+.rhythm-mini-lane {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 1px;
+  height: 9px;
+}
+.rhythm-mini.stacked .rhythm-mini-lane { height: 4px; }
+.rhythm-mini-lane span { background: var(--hairline); border-radius: 1px; }
+.rhythm-mini-lane span.hit { background: rgb(var(--accent-rgb) / 0.6); }
+.rhythm-mini-lane span.ghost { background: rgb(var(--accent-rgb) / 0.3); }
+.rhythm-mini-lane span.accent { background: var(--accent); }
+
+.rhythm-star {
+  font: inherit;
+  padding: 0 2px;
+  color: var(--ink-faint);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.rhythm-star:hover { color: var(--ink-dim); }
+.rhythm-star.on { color: var(--accent); }
+
+.rhythm-entry-actions { display: flex; gap: 3px; }
+.rhythm-entry-actions button {
+  font: inherit;
+  font-size: 10px;
+  padding: 2px 6px;
+  color: var(--ink-dim);
+  background: var(--control);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.rhythm-entry-actions button:hover:not(:disabled) { color: var(--ink); }
+.rhythm-entry-actions button:disabled { opacity: 0.4; cursor: default; }
+
+.rhythm-library-empty { margin: 0; padding: 12px; text-align: center; }
+.rhythm-library-detail { margin: 0; min-height: 2.6em; }
+
+@media (max-width: 480px) {
+  .rhythm-entry { grid-template-columns: auto minmax(0, 1fr) auto auto; }
+  .rhythm-entry .rhythm-mini { display: none; }
+}
 
 
 /* --- MIDI controllers ------------------------------------------------- */
