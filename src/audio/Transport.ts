@@ -4,6 +4,7 @@ import { releasedBySwing } from '../song/schedule'
 import { tempoMap } from '../song/timeline'
 import { fill, playheadTick, type Cursor, type Loop } from '../song/transport'
 import type { Song } from '../song/types'
+import type { Taps } from '../song/route'
 import type { AudioEngine } from './AudioEngine'
 
 /**
@@ -48,6 +49,8 @@ export class Transport {
    * describes the song.
    */
   private fresh = true
+  /** The racks' Track Ins, so the tracks they hear are played even when muted. */
+  private taps: Taps = new Map()
   private cursor: Cursor = { tick: 0, frame: 0 }
   private playing = false
   /** The song ran off its end; stop once the speakers have caught up. */
@@ -102,6 +105,11 @@ export class Transport {
    * of it along the way. It changes what every frame already queued means,
    * so those have to go.
    */
+  /** Which tracks each rack hears through a Track In: heard from the next window on. */
+  setTaps(taps: Taps) {
+    this.taps = taps
+  }
+
   setSong(song: Song) {
     const tempoChanged = song.tempo !== this.song.tempo || song.tempos !== this.song.tempos
     // A swing moved while it plays can carry the end of a note already
@@ -113,7 +121,8 @@ export class Transport {
         : []
     // Lanes drawn or clips moved while it plays: heard from the end of what
     // is already queued, as a note added is.
-    if (song.patterns !== this.song.patterns || song.playlist !== this.song.playlist) this.fresh = true
+    // And a track muted or soloed: its sounds are picked up or let go of.
+    if (song.patterns !== this.song.patterns || song.playlist !== this.song.playlist || song.tracks !== this.song.tracks) this.fresh = true
     this.song = song
     if (tempoChanged) this.resync()
     else if (released.length) {
@@ -309,7 +318,7 @@ export class Transport {
     const until = frame + LOOKAHEAD_S * this.engine.sampleRate
     if (this.cursor.frame >= until) return
 
-    const out = fill(this.song, this.engine.sampleRate, this.cursor, until, this.loop, this.fresh)
+    const out = fill(this.song, this.engine.sampleRate, this.cursor, until, this.loop, this.fresh, this.taps)
     this.fresh = false
     this.cursor = out.cursor
     if (out.ended) this.ended = true

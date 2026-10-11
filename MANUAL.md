@@ -922,6 +922,150 @@ Density Amt and the fire flares and settles.
 
 ---
 
+### Bubble
+
+Bubbles in water: rain on a pond, a boiling pot, a potion, lava, a swamp, a
+drain. Each bubble is a short ringing note whose pitch is set by its size and
+glides upward as it rises to the surface.
+
+- **Inputs:** Trig, Rate
+- **Outputs:** Out
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Rate | 0.10 Hz – 200 Hz | 6.00 Hz | How many bubbles a second, on average. The gaps are random |
+| Size | 0.30 – 20.00 | 3.00 | The bubbles' radius in millimetres. Small is a high tick, big a low glug |
+| Spread | 0.00 – 1.00 | 0.50 | How much the sizes vary. At zero every bubble is the same note |
+| Rise | 0.00 – 1.00 | 0.40 | How far each bubble's pitch climbs as it rings |
+| Level | 0.00 – 1.00 | 0.80 | Volume |
+| Rate Amt | −5.00 – +5.00 | +0.00 | How far the Rate jack moves Rate, in octaves per volt |
+
+A three millimetre bubble rings near 1.1 kHz. Small bubbles die in a few
+milliseconds and big ones ring longer, as in water. **A rising edge at Trig
+makes one bubble**, besides the random ones: turn Rate right down and patch
+Dust's Trig in for rain, or a Clock for a drip.
+
+**Rise is what makes it water.** At zero each bubble is a plain sine blip;
+turned up, the upward glide is the sound of water.
+
+### Friction
+
+Something dragged across something else that grips and lets go: a bow on a
+string, a creaking door, a squeaky hinge, a wet finger round a glass, a tyre.
+The tone comes from sticking and slipping, not from an oscillator, so it only
+sounds while the bow is moving.
+
+- **Inputs:** Gate, Speed, Pitch
+- **Outputs:** Out
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Pitch | 15 Hz – 2.00 kHz | 110 Hz | The string's length: its note |
+| Pressure | 0.00 – 1.00 | 0.50 | How hard the bow presses. More grips harder and lets go more roughly |
+| Speed | 0.00 – 1.00 | 0.50 | How fast the bow moves. At zero it is silent |
+| Position | 0.00 – 1.00 | 0.20 | Where on the string it is bowed: near the end is thin, further in fuller |
+| Rough | 0.00 – 1.00 | 0.00 | Shakes the bow so the grip catches unevenly |
+| Level | 0.00 – 1.00 | 0.80 | Volume |
+
+**Gate** bows while it is high and lets go when it falls; with nothing
+patched there it bows for ever. **Speed** adds to the Speed knob, so an
+envelope there is a bow stroke and a slow LFO a door swinging. **Pitch** is a
+volt per octave.
+
+High and steady, it is a cello or a glass. **For a creak, take Pitch down
+low** (20 to 60 Hz), Pressure up, Speed creeping, and some Rough: the note
+breaks up into the irregular groan of a hinge.
+
+### Scrape
+
+One thing moving across another: a crate dragged over boards, gravel
+underfoot, a blade drawn from its sheath, a barrel rolling. It is silent at a
+standstill and denser, louder and brighter the faster it goes.
+
+- **Inputs:** Speed
+- **Outputs:** Out
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Speed | 0.00 – 1.00 | 0.50 | How fast it moves. At zero, silence |
+| Rough | 0.00 – 1.00 | 0.40 | Fine and even (sand, a smooth blade) to coarse and knocking (stones) |
+| Tone | 80 Hz – 8.00 kHz | 900 Hz | The pitch of the thing being moved |
+| Ring | 0.00 – 1.00 | 0.30 | How much it rings: dry wood to a metal drum |
+| Mode | scrape / roll | scrape | Roll adds a thump and a swell once a revolution |
+| Level | 0.00 – 1.00 | 0.80 | Volume |
+
+**Drive Speed from somewhere.** The jack adds to the knob: an envelope is a
+crate shoved and coming to rest, and a game's own speed is a cart.
+
+In **roll** mode it turns three times a second at full speed, and slower as
+Speed comes down, so pushing harder rolls faster.
+
+---
+
+### Engine
+
+A combustion engine: a car, a generator, a boat, a mech, a chainsaw. Each
+cylinder fires once every two turns, and each bang goes down an exhaust pipe
+and out through a muffler.
+
+- **Inputs:** RPM, Load
+- **Outputs:** Out
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| RPM | 300 rpm – 12000 rpm | 900 rpm | How fast it turns |
+| Cylinders | 1 – 12 | 4 | How many bangs each two turns. More is smoother and higher |
+| Load | 0.00 – 1.00 | 0.30 | The throttle: harder, brighter, noisier bangs, and the muffler opens up |
+| Misfire | 0.00 – 1.00 | 0.00 | How many bangs are skipped, at random: a cough, a bad plug |
+| Exhaust | 40 Hz – 2.00 kHz | 180 Hz | The note the pipe rings at. Low is a big bore, high a moped |
+| Rough | 0.00 – 1.00 | 0.15 | Shakes the timing and strength of every bang |
+| Level | 0.00 – 1.00 | 0.80 | Volume |
+| RPM Amt | −2.00 – +2.00 | +1.00 | How far the RPM jack moves RPM, in octaves per volt |
+
+RPM and Cylinders together set the bangs a second: 900 rpm on four cylinders
+is thirty, a burble; 6000 on eight is four hundred, a scream. No two
+cylinders are quite alike, which gives an idle its lope even with Rough at
+zero.
+
+**Rev it from somewhere.** The RPM jack is a volt per octave, so an envelope
+there is a rev and a game's own speed is a car. A game can also turn the RPM
+knob itself with `setParam`. **Load** has a jack too: lift off the throttle and
+the same revs go soft and dull, the sound of an engine slowing a car.
+
+---
+
+### Chip
+
+The NES sound chip, with the quirks that make it sound like one: the voice of
+a generation of game music and sound effects.
+
+- **Inputs:** Gate, Pitch
+- **Outputs:** Out
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Wave | 12.5% / 25% / 50% / tri / noise / metal | 25% | Which of the chip's channels it is |
+| Pitch | 28 Hz – 4.19 kHz | 220 Hz | The note, as near as the chip can play it |
+| Sweep | −8.00 – +8.00 | +0.00 | Bends the pitch from each gate, in octaves a second |
+| Decay | 0 ms – 2.00 s | 0 ms | Sixteen steps down to silence across this long. At 0 it holds |
+| Level | 0.00 – 1.00 | 0.60 | Volume, in the chip's sixteen steps |
+
+The three **pulse** widths are the chip's own: 12.5% is thin and nasal, 25%
+the classic lead, 50% hollow. The **triangle** is built from 32 steps, which
+gives it a grit a clean triangle doesn't have. **Noise** is a 15-bit shift
+register; Pitch picks one of its sixteen speeds. **Metal** is its short mode, a
+93-step loop of noise that repeats, so it rings with a pitch of its own: the
+clank behind a thousand explosions and coins.
+
+Pitch goes through the chip's own divider, so every note is one the hardware
+could play: in tune in the middle and drifting flat at the top, as it did.
+**Sweep** up is a jump or a power-up; down, a fall or a laser.
+
+**Gate** starts a note (and Sweep and Decay with it); nothing patched there and
+it plays for ever. **Pitch** is a volt per octave, so a Keyboard plays it.
+
+---
+
 ### LFO
 
 An oscillator too slow to hear, used as CV to make something wobble.
@@ -1165,6 +1309,54 @@ to its own envelope and the chord strikes like a hand across strings. Each
 P output keeps its pitch from when its own gate opened, so a note is never
 moved under its release. With nothing in Gate, the four pitches simply
 follow Pitch.
+
+---
+
+### Round Robin
+
+Hands each trigger to the next of four outputs: the game-audio trick that
+keeps the tenth footstep from sounding like the ninth.
+
+- **Inputs:** Trig, Reset
+- **Outputs:** 1, 2, 3, 4, Index
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Count | 2 – 4 | 4 | How many outputs it uses |
+| Mode | cycle / random / shuffle | cycle | In turn; at random but never the same twice running; or shuffled |
+
+Put a slightly different sound on each output: four Samplers with four
+recordings, or four racks with their knobs nudged apart. Every gate at Trig
+then goes to one of them. **Shuffle** uses each once before any comes round
+again. The gate passes through for as long as it is held, so an envelope on
+the far side sees all of it.
+
+**Index** says which output has the gate, from 0 to 1. Patched to a pitch or a
+filter, it shifts each hit a little even through one sound. **Reset** sends
+the next gate to output 1.
+
+### Bouncing Ball
+
+A ball dropped: impacts that come faster and softer until it settles. Coins,
+ping-pong, a dropped can, shell casings, debris after a blast.
+
+- **Inputs:** Drop
+- **Outputs:** Gate, Vel, Height, End
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Fall | 20 ms – 2.00 s | 400 ms | How long it takes to hit the ground the first time |
+| Bounce | 0.10 – 0.95 | 0.60 | How much of its speed comes back each bounce |
+| Spread | 0.00 – 1.00 | 0.00 | Jitters each bounce, for a stone tumbling rather than a ball |
+
+**The button, or a rising edge at Drop,** lets go of it. Each gap is Bounce
+times the last and each hit Bounce times as hard, which is the accelerating
+rattle of a real bounce.
+
+**Gate** pulses on every impact. Patch it to an envelope or a Drum Kit pad.
+**Vel** holds how hard the last hit was, from 0 to 1: into a VCA it makes each
+bounce quieter. **Height** is where the ball is, 0 on the ground and 1 where it
+was dropped from. **End** pulses once it has come to rest.
 
 ---
 
@@ -1415,6 +1607,71 @@ holding a VCA part-open.
 **Use Sum to combine two modulations** — an envelope plus an LFO, say. The
 Mixer is for audio and has pan controls on every channel, which is the wrong
 shape for adding two control signals together.
+
+---
+
+### Spring Mass
+
+A weight on a spring, pulled towards whatever arrives at In. Where Slew glides
+to a new value, this overshoots it, swings back and wobbles before it
+settles: a jelly, a cartoon boing, a needle bouncing on its stop, a pitch that
+lands with a wobble.
+
+- **Inputs:** In, Kick
+- **Outputs:** Out, Vel
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Freq | 0.10 Hz – 40 Hz | 3.00 Hz | How fast it swings |
+| Damping | 0.01 – 1.00 | 0.12 | How soon it stops. At 1.00 it arrives without overshooting |
+| Kick | −5.00 – 5.00 | 1.00 | How far a rising edge at Kick flicks it |
+
+**Kick needs nothing at In**: a trigger there flicks the weight, and it boings
+back to rest. **Vel** is how fast it is moving, the same size as Out. Into an
+oscillator's pitch, a Spring Mass is a boing; after a Sequencer, every note
+lands with a wobble.
+
+### Expression
+
+A formula, typed on the panel and worked out on every sample, with a graph of
+it underneath like a graphing calculator's.
+
+- **Inputs:** X, Y, Reset
+- **Outputs:** Out
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Mode | math / bytebeat | math | What the formula is for: a voltage, or a bytebeat |
+| A | 0.00 – 1.00 | 1.00 | A value the formula can read as a |
+| B | 0.00 – 1.00 | 0.00 | A value the formula can read as b |
+| Rate | 1.00 kHz – 48.00 kHz | 8.00 kHz | How fast t counts in bytebeat mode |
+
+**Type a formula and press Enter.** It is checked as you type: a mistake is
+named under the field, and the rack keeps the last formula that worked until
+the new one does. Esc puts the field back. A new Expression starts on
+`sin(pi * x) * a + b`, a wavefolder on X.
+
+A formula can read **x** and **y** (the jacks), **a** and **b** (the knobs),
+and **t**: seconds since the last rising edge at Reset, or in bytebeat mode
+a whole number counting up at Rate. It can use `+ - * / %`, `**` for a
+power, comparisons, `?:`, `&& || !`, and the bitwise operators `& | ^ ~ << >>`
+(`^` is exclusive or, as in bytebeat formulas). Functions: `sin cos tan asin
+acos atan atan2 sinh cosh tanh sqrt cbrt abs floor ceil round trunc fract sign
+exp log log2 log10 min max pow hypot mod clamp mix step`, plus `saw tri sq`,
+waves with a period of one, and `noise()`. Constants: `pi`, `tau`, `e`.
+
+**Math mode** puts out the answer, held within ±10. A few to try:
+`saw(t * 2) * a` is an LFO of any shape, `x > y` is a comparator,
+`tanh(x * 5)` a hard drive, `max(x, y)` the louder of two.
+
+**Bytebeat mode** works out the formula at Rate and plays its low eight bits
+as the sample: `t*(t>>5|t>>8)` is the classic. Patch a Trigger to Reset to
+start it from the top on a note.
+
+**The graph** draws a formula of x against x from −2 to 2, with y, t, a and b
+as they are now, and a dot where the input is. A formula of t alone is drawn
+against the last two seconds, and bytebeat against the last 1024 ticks. The
+scale steps between ±1, 2, 5 and 10 to fit.
 
 ---
 
@@ -1680,6 +1937,28 @@ definition. The harmonics that do the work are unaffected by taking it out.
 
 ---
 
+### Subharmonic
+
+New notes one and two octaves under whatever comes in: the floor under an
+explosion, a kick, an engine. They follow the input's level and die with it.
+
+- **Inputs:** In
+- **Outputs:** Out, Sub
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Track | 40 Hz – 600 Hz | 150 Hz | Where it listens for the note, and how smooth the octaves down are |
+| −1 Oct | 0.00 – 1.00 | 0.70 | The octave below |
+| −2 Oct | 0.00 – 1.00 | 0.00 | Two octaves below |
+| Dry | 0.00 – 1.00 | 1.00 | The input itself, in Out |
+
+**Out** is the input with the octaves under it; **Sub** is the octaves on
+their own, for a channel of their own. Set **Track** above the lowest note
+and below its first overtone. Too high, and it counts the overtones and
+stutters.
+
+---
+
 ### Wavefolder
 
 Past the rails the signal turns back on itself, again and again, so a sine
@@ -1752,6 +2031,31 @@ a carrier.
 rather than a ring modulator, because a carrier below hearing moves the
 sidebands too little to separate from the original. Somewhere around 20–80 Hz
 is where one turns into the other.
+
+---
+
+### Howl
+
+Feedback on purpose: a microphone too near its speaker, a guitar leaned on an
+amp, machinery screaming. Past a Feedback of one it howls on its own, from
+whatever comes in or from the faint hiss of Air.
+
+- **Inputs:** In, Pitch, Fdbk
+- **Outputs:** Out
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Pitch | 50 Hz – 5.00 kHz | 900 Hz | Where it howls |
+| Feedback | 0.00 – 1.50 | 0.90 | How much goes round. Below 1 it rings and dies; above, it howls |
+| Focus | 0.00 – 1.00 | 0.50 | Wide wanders and squeals; narrow locks onto one note |
+| Drift | 0.00 – 1.00 | 0.20 | Moves the loop slowly, as a hand moving the mic would |
+| Air | 0.00 – 1.00 | 0.30 | A live mic's hiss, so it can start with nothing at In |
+| Mix | 0.00 – 1.00 | 1.00 | Dry to howl |
+| Fdbk Amt | −1.00 – 1.00 | 0.50 | How far the Fdbk jack moves Feedback |
+
+A soft limiter in the loop holds it, the way a real amplifier running out of
+headroom does, so it never goes past full scale. **An envelope into Fdbk** is
+a squeal that swells and is pulled back.
 
 ---
 
@@ -1979,6 +2283,56 @@ that has to land exactly with another can be nudged in the roll.
 
 ---
 
+### Reverse
+
+Sound played backwards, a slice at a time: a rewind, a reversed cymbal, a
+spell drawing breath before it is cast.
+
+- **Inputs:** In
+- **Outputs:** Out, Wet
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Length | 50 ms – 2.00 s | 400 ms | How long each reversed slice is |
+| Swell | 0.00 – 1.00 | 0.50 | Leans each slice towards its end, so it rises into the hit |
+| Feedback | 0.00 – 0.90 | 0.00 | Sends the reversed sound round again |
+| Mix | 0.00 – 1.00 | 0.50 | Dry to reversed, in Out |
+
+Every Length it takes the slice just heard and plays it back to front, so a
+note's tail arrives first and its attack last. The reversed sound trails the
+dry by up to two Lengths, because nothing can be played backwards before it
+has finished. **Wet** is the reversed sound alone.
+
+---
+
+### Doppler
+
+A sound going past: a car, a jet, an arrow, a bee, a whoosh. The pitch is high
+coming in and drops as it passes, it is loudest up close, and it crosses from
+left to right.
+
+- **Inputs:** In, Trig, Pos
+- **Outputs:** L, R
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Speed | 1.0 m/s – 300 m/s | 30 m/s | How fast it goes. A car is about 30, a jet 250 |
+| Distance | 1.0 m – 100 m | 6.0 m | How close it comes |
+| Range | 10 m – 300 m | 80 m | How far off it starts and ends |
+| Air | 0.00 – 1.00 | 0.50 | How much the air dulls it far away |
+
+The sound travels along a straight line that passes Distance from you.
+Everything else follows from that: the delay as the sound crosses the air (the
+Doppler shift is the delay changing), the level falling with distance, the top
+coming off far away, and the pan.
+
+**Unpatched, it goes past again and again.** A rising edge at **Trig** sends it
+past once, from the start. Or patch **Pos**, −1 to 1 along the line: a game's
+own position for the thing drives it, and the shift comes from how fast Pos
+moves. Speed then does nothing.
+
+---
+
 ### Chorus
 
 Chorus, flanger and phaser in one module. Each makes a copy of the sound,
@@ -2106,6 +2460,29 @@ whatever comes in.
 
 ---
 
+### Shimmer
+
+A reverb whose tail climbs: heavenly pads, magic, the moment an item is
+picked up. Each time round, some of the tail is shifted up by Interval and fed
+back in, so octaves stack up out of the note and fade into the room.
+
+- **Inputs:** In
+- **Outputs:** L, R
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Size | 0.00 – 1.00 | 0.70 | How big the room is |
+| Decay | 300 ms – 20.00 s | 5.00 s | How long the tail takes to die away |
+| Shimmer | 0.00 – 1.00 | 0.50 | How much of the tail is shifted and fed back |
+| Interval | −12 / +5 / +7 / +12 / +19 / +24 | +12 | How far each pass is shifted, in semitones |
+| Damp | 0.00 – 1.00 | 0.40 | Takes the top off, so the stack does not turn to glass |
+| Mix | 0.00 – 1.00 | 0.40 | Dry to wet |
+
+At **+12** each pass is an octave up; **+7** stacks fifths; **−12** sinks
+instead of climbing. With Shimmer at zero it is a plain, big reverb.
+
+---
+
 ### Convolution
 
 Any recording used as the space another sound plays in. Load a clap in a
@@ -2200,6 +2577,120 @@ It works out as `gain = Level + (CV × CV Amt)`.
 opens it. If a patch has gone quiet, this is the first knob to check.
 
 An Envelope into CV is what turns a continuous drone into a note.
+
+---
+
+### Bus In
+
+What the song routes to this track: every track whose output is set to it in
+the Mix view, and every send turned up to it, summed in stereo after their
+faders. **A rack with a Bus In is a bus**, and other tracks can be routed to
+it.
+
+- **Outputs:** L, R
+- **Inputs:** none
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Level | 0.00 – 2.00 | 1.00 | How loud the feed comes in |
+
+Left unpatched, it goes straight to the speakers, so a new bus passes what it
+is fed through unchanged: a fader for a group of tracks. Patch L and R into
+effects and on into a Mixer, and everything routed here goes through them: one
+compressor gluing the drums together, one tape machine on every synth, a
+filter that sweeps the whole band.
+
+Everything after it is an ordinary rack, so its knobs can be automated, moved
+by an LFO or a Macro, or turned by a game. In a rack on its own, or on a track
+nothing is routed to, it is silent.
+
+---
+
+### Clips
+
+The song's **sounds** on this track: every audio clip the playlist puts here,
+at the file's own speed. **A rack with Clips in it is an audio track** —
+**+ Audio** under the track list adds one, and dropping a file on the
+playlist makes one when the track on the bench is not.
+
+- **Outputs:** L, R
+- **Inputs:** none
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Level | 0.00 – 2.00 | 1.00 | How loud the clips come in |
+
+Left unpatched, it goes straight to the speakers. Patch L and R through
+effects into a Mixer and every clip on the track goes through them: an EQ and
+a compressor on a voice-over, a filter swept across a loop, a Compressor keyed
+by a Track In so the dialogue ducks the music.
+
+Clips that overlap play together, up to eight at once. Each one comes in and
+goes out over 3 ms, so a clip started part way through a file, or cut short,
+does not click. In a rack on its own nothing is played to it, and it is
+silent.
+
+---
+
+### Track In
+
+Another track's audio, straight out of its rack: what a **sidechain** listens
+to. Pick the track from the menu on its panel.
+
+- **Outputs:** L, R
+- **Inputs:** none
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Level | 0.00 – 2.00 | 1.00 | How loud the other track comes in |
+
+**Patch L into a Compressor's Key** and this track ducks under that one: the
+bass pumping under the kick, a pad that gets out of the way of the vocal, an
+engine that dips under every gunshot. Through an **Envelope Follower** it is
+a control voltage instead — a filter that opens with the hi-hats.
+
+It hears the other rack **before its channel**: before its fader, its pan and
+its mute. So turning the kick down does not change how hard the bass pumps,
+and a **muted** track still keys it — a ghost kick that is never heard. A
+muted track that a Track In hears still has its notes played for that reason,
+and so does one silenced by a solo elsewhere, as long as the rack listening
+to it is heard.
+
+Unlike a Bus In it plays nothing on its own: left unpatched it does nothing,
+since what it hears is there to key something, not to be played twice. A
+track that would make a loop — one that already hears this track, or is fed
+by it — is greyed out in the menu, and the Mix view will not route this track
+into anything that track's audio reaches. In a rack on its own, pointed at
+nothing, or at a track since removed, it is silent.
+
+---
+
+### Loop Seam
+
+Turns whatever reaches it into a seamless loop: ambience, a drone, an engine
+at idle, ready to repeat in a game with no click and no gap.
+
+- **Inputs:** L, R, Rec
+- **Outputs:** L, R
+
+| Knob | Range | Default | What it does |
+| --- | --- | --- | --- |
+| Length | 250 ms – 20.00 s | 4.00 s | How long the loop is |
+| Fade | 10 ms – 2.00 s | 500 ms | How long the crossfade that hides the seam is. At most half of Length |
+
+It records Length of its input, plus Fade, and from then on plays the recording
+round and round. The first Fade of every pass blends in from the sound just
+past the end, so the end of a pass leads straight into the start of the next.
+While it records, the input passes through. A rising edge at **Rec**, or a turn
+of Length or Fade, records again. R takes L when nothing is patched to it.
+
+**Render a rack with a Loop Seam in it and you get one loop**, exactly Length
+long, with no fade on the end and nothing trimmed, so the file repeats
+seamlessly. The render's own length setting is ignored. Like a Mixer, a Loop
+Seam with nothing patched after it goes straight to the speakers.
+
+Give it a long Fade for a wash like rain or wind, and a short one for anything
+with a pulse.
 
 ---
 
@@ -2589,6 +3080,40 @@ has its own **Hide**, which closes it without removing it, and **Remove lane**,
 which takes it out of the pattern (Ctrl+Z brings it back). Drag a lane's
 bottom edge to make it taller or shorter.
 
+### Sounds: audio on the timeline
+
+A **sound** is an audio file in the playlist: a stinger, a line of
+voice-over, a drum loop, an ambience bed. **Drop a file on a lane** in the
+Song view and it becomes a sound and a clip of it, starting where it landed.
+It plays on the track on the bench if that is an audio track, and on a new
+audio track named for the file if it is not. **+ Audio**, under the track
+list, adds an empty audio track: a rack holding a **Clips** module, which
+goes straight to the speakers until effects are patched after it.
+
+A sound sits in the playlist's list beside the patterns, marked ∿. Pick it
+and a click on a lane paints another clip of it — the roll keeps writing
+into the pattern it had, since a sound has no notes. Its clips are clips like
+any other: drag to move, drag an edge to trim, Ctrl+click to split, drag the
+end out to repeat it, mute it from its ▾ menu. A clip is drawn as the file's
+waveform. Double-click one to put its track on the bench.
+
+**Sounds play at their own speed.** A clip starts its file on its first tick
+and stops it at its end. However fast the song is, the file is never sped up
+or slowed down, so a voice-over is never chipmunked and a stinger hits as it
+was made. The sound's length is the file's length at the tempo where it was
+dropped. A clip drawn out past that starts the file again each time round,
+so a loop made at the song's tempo repeats seamlessly. One made at another
+tempo drifts against the bars: trim it to fit.
+
+Pressing Play part way through a clip starts its file from that point, not
+from the start: a voice-over begun before the playhead is heard from where
+the playhead is. Overlapping clips on one track all sound, up to eight at
+once. A muted track's sounds are silent. Removing an audio track removes its
+sounds and their clips, as removing a track removes its notes.
+
+A sound's file goes into the project when it is saved, as a Sampler's does,
+and plays the same live, in a bounce, in a stem and in a game.
+
 ### Sections
 
 **Sections are the named parts of the song** — Intro, Verse, Chorus — on
@@ -2866,6 +3391,76 @@ something would.
 **A strip nobody has touched changes nothing.** A song mixed before the desk
 existed sounds exactly as it did.
 
+#### Buses
+
+A **bus** is a track that other tracks feed: put effects on it once and they
+apply to everything routed there. **+ Bus**, at the end of the strips or
+under the track list, adds one: a track whose rack is a **Bus In**. Any track
+whose rack has a Bus In is a bus.
+
+There are two ways to feed a bus, and a track can use both:
+
+- **Output.** The menu under a strip says where that channel goes: **→
+  Master**, or **→** a bus in its place. Route all the drums to a Drum bus
+  and its fader is the level of the whole kit.
+- **Sends.** Each bus gets a knob on every other strip, under its EQ: how
+  much of that track goes to the bus as well, as with Space and Delay. A
+  send is post-fader and stereo.
+
+A bus can feed another bus. A choice that would make a loop, a bus feeding
+something that feeds it, is greyed out. Sends to buses are not automatable
+yet.
+
+**Solo follows the routing.** Soloing a track keeps the buses it feeds, so it
+is heard through its effects. Soloing a bus keeps the tracks feeding it, but
+only through the bus: their own way to the master and their Space and Delay
+sends go quiet. **Muting a bus silences everything routed to it.** A muted
+track feeds nothing.
+
+**Stems.** A track's stem is the track before any bus: it goes through its
+strip as if it were routed to the master. A bus gets a stem of its own, its
+effects on everything that feeds it.
+
+#### The master rack
+
+The **master rack** is a rack the whole mix goes through on its way to the
+master bus: every channel, and the Space and Delay returns, before the master
+EQ, balance, level and limiter. Use it for whatever belongs on the finished
+mix: a glue compressor, a tape machine, a filter swept over everything for a
+pause menu, a Macro a game turns as the scene darkens.
+
+**+ Rack**, under the master strip in the Mix view, adds one and puts it on
+the bench. It starts as a **Bus In**, which passes the mix straight through,
+so adding it changes nothing until something is patched after it: Bus In L and
+R through effects into a Mixer, as on a bus. While the song has one, the
+button reads **Rack**, and the master rack is listed as **Master** above the
+tracks and in the rack's own menu. **×** beside either takes it away again.
+
+It is a rack and not a track. It has no fader, mute, solo or routing — the
+master strip already does all of that — and plays no notes, so the roll has
+nothing to write while it is on the bench. Its knobs can still be automated
+in a pattern's lanes and moved by a MIDI controller, and a **Track In** in it
+can hear any track. A song without one sounds exactly as it did.
+
+It is part of the master bus, so it is heard live, in a bounce and in a game,
+and left out of stems along with the EQ and the limiter.
+
+#### Sidechain
+
+A rack can listen to another track with a **Track In**: pick the track on its
+panel and patch it into a **Compressor's Key**, and this track ducks whenever
+that one plays. For the classic pump, put a Track In hearing the kick on the
+bass track, patch Track In L to the Compressor's Key with the bass going
+through In, and set Ratio high with a Release of 100–300 ms.
+
+The Track In hears the other track's rack before its strip, so its fader and
+mute make no difference: mute the kick and the bass still pumps. A track a
+Track In hears is played whenever the rack that hears it is, solo or no solo.
+A choice that would make a loop — a track hearing one that hears it, or
+routed into a bus that the track it hears feeds — is greyed out, in the Track
+In's menu and in the Mix view alike. Live play, a bounce, a stem and a game
+all hear the same thing.
+
 ### Mapping a controller
 
 Any controller with knobs, sliders or buttons can move the knobs, faders and
@@ -3098,7 +3693,9 @@ game cannot put a module anywhere its panel could not. The change is heard
 from the next block, and the module's own smoothing glides it there, so
 setting it every frame does not click. It returns `false` for a track or knob
 that is not there. `getParam` reads one back, and `paramsOf('Lead')` lists
-every knob a track has.
+every knob a track has. The master rack's knobs are reached as `'master'`
+(or `'Master'`), unless a track has that name:
+`player.setParam('master', 'lpf1.cutoff', 600)` for a muffled pause menu.
 
 **The game wins over the song's automation.** A knob the song automates is
 the game's from the moment `setParam` touches it: the automation stands
@@ -3164,6 +3761,21 @@ A note can land on the music: `frameOf('16th')` — or `'32nd'`, `'8th'`,
 `'beat'`, `'bar'` — is the frame of the next line of the song's grid, to pass
 as `{ at }`. A note the game is holding is kept through a section change or
 a change of tempo, so it is always let go of when asked.
+
+**Playing a sound from the game** — a stinger, a line of dialogue — is
+`playSound`, by the sound's name. It plays through its audio track's rack,
+from the start of the file to its end, whether or not the sound is placed in
+the playlist. The song's loops and section changes leave it alone:
+
+```js
+music.playSound('Victory', { when: 'bar' })      // a stinger on the next bar line
+const line = music.playSound('Guard 3')          // dialogue, now
+music.stopSound(line)                            // skipped: faded out in 3 ms
+```
+
+`when` takes what `frameOf` does; `{ at }` is an exact frame. `playSound`
+returns null for a sound the song does not have, or one whose track has no
+Clips module.
 
 **Mixing from the game**: `setTrackGain(track, gain)` multiplies a track's
 fader, which is how layers come in as a level clears; `setTrackPan` and
@@ -3247,25 +3859,40 @@ half. Timing starts at the song's tempo and time signature and keeps its own
 after that, so trying numbers never changes the song; **Use song's** catches
 it up again.
 
-**Metronome** is a click on its own. **Start** it, or press **Space** while its
-panel has the focus. Set the tempo by typing it, with **−5 −1 +1 +5**, or by
-tapping **Tap**; the time signature; **Clicks** — the beat alone, or two,
-three (triplets) or four to the beat, the extra ones quieter; one of three
-sounds; and the volume. The first beat of each bar is a different click
-unless **Accent the first beat** is off, and the lamps light as each click is
-heard. It plays through the same device as the rack but not through the rack
-or the song's desk, so it is never in a bounce. Closing its panel stops it.
+**Metronome** is a click on its own, laid out as a stage metronome with a
+backlit LCD. **Start** it, or press **Space** while its panel has the focus.
+Set the tempo with the **Tempo** jog wheel, handled like any knob — drag up
+for faster, **Shift** for tenths, and the mouse wheel and arrow keys move it a
+BPM a click, **Page Up** and **Page Down** five — by hitting the **Tap** pad three times or more, or by clicking the
+BPM on the glass and typing it. The **Beats** and **Note** knobs set the time
+signature; **Clicks** gives the beat alone, or two, three (triplets) or four to
+the beat, the extra ones quieter; the **Sound** switch picks Click, Wood or
+Beep; and **Volume** is the level. The first beat of each bar is a different
+click while **Accent** is lit, and its lamp is the other colour. The lamps over
+the glass light as each click is heard, and the glass shows the beat, the
+tempo, the time signature and everything set. **From song** takes the tempo
+and time signature the song starts with. It plays through the same device as
+the rack but not through the rack or the song's desk, so it is never in a
+bounce. Closing its panel stops it.
 
-**Notes & frequencies** turns a note into a frequency and back. Type a note
-(`A4`, `C#3`, `Bb2`), a MIDI number (`60`), or a frequency (`440 Hz`, `1.2
-kHz`; a plain number above 127 is hertz) and it shows the nearest note and
-how many cents off it is, the frequency, the MIDI number, the period, and the
-frequency the note would be exactly in tune. **▶** plays it. Below are the
-twelve notes of its octave (click one to look at it), a transposition — the
-note so many semitones away, and the Speed a Sampler plays at to get there —
-and its first twelve harmonics with the note each is nearest, which is where a
-Resonator or a Formant rings. **A4 is** sets the reference for music tuned
-somewhere other than 440. Click any value to copy it.
+**Notes & frequencies** turns a note into a frequency and back: a tuner and a
+frequency counter in one case. Turn the **Tune** knob, or click its readout and
+type a note (`A4`, `C#3`, `Bb2`), a MIDI number (`60`, `midi 60.5`), or a
+frequency (`440 Hz`, `1.2 kHz`; a plain number above 127 is hertz). It covers
+MIDI's range, C-1 to G9 (8.18 Hz to 12.5 kHz), in semitones, so equal turns
+are equal intervals, and it lands between notes as freely as on them. The
+display shows the nearest note, how many cents off it is — on a row of lamps as
+well, the middle one lit when it is in tune — the frequency, the MIDI number,
+the period, and the frequency the note would be exactly in tune. The
+**Octave** knob moves it an octave a click, and a keyboard of that octave
+sits below. Its keys play while held: the lit key is the pitch on the display
+and sounds exactly that, cents and all, and any other key moves there and
+sounds its note in tune. Then the **Transpose** knob — the note so many semitones away,
+and the Speed a Sampler plays at to get there — and its first twelve
+harmonics as columns of lamps, each leaning the way its nearest note is off;
+click one to read its frequency and note, which is where a Resonator or a
+Formant rings. The **Ref A4** knob sets the reference for music tuned
+somewhere other than 440. Click any reading on the display to copy it.
 
 **Scales & chords** lays a key out three ways. Pick a **Key** and a
 **Scale**: its notes light up on a two-octave keyboard, spelled the way the
@@ -4806,6 +5433,772 @@ lane starts, where it ends, and how it gets there.
 > knob by hand instead: now the charge sits wherever you leave it, which is
 > how you would play it from a game — see
 > [Playing a project in a game](#playing-a-project-in-a-game).
+
+---
+
+### Tutorial 23 — Boiling potion
+
+**What you will learn:** the **Bubble**: how many, how big, and the upward
+glide that makes a sine blip sound like water.
+
+#### Patch
+
+1. Start from the [tutorial rack](#load-the-tutorial-rack).
+2. Add a **Bubble**.
+3. On the back, patch one cable:
+
+- `bub1 · Out` → `lpf1 · In` — *replaces the oscillator's cable*
+
+#### Set
+
+| Module | Knob | Value |
+| --- | --- | --- |
+| bub1 | Rate | 30 Hz |
+| bub1 | Size | 5.00 |
+| bub1 | Spread | 0.70 |
+| bub1 | Rise | 0.60 |
+| bub1 | Level | 0.90 |
+| lpf1 | Cutoff | 3.00 kHz |
+| lpf1 | Res | 0.10 |
+| env1 | Attack | 300 ms |
+| env1 | Sustain | 1.00 |
+| env1 | Release | 400 ms |
+
+Hold **Space** for two seconds, then let go.
+
+**Dozens of separate bubbles, each its own note.** Rate is how many arrive a
+second on average, thirty here, at random moments, so it never sounds like a
+clock. Every bubble is a short sine whose pitch comes from its size: Size is
+the radius in millimetres, and Spread lets each one be bigger or smaller than
+that. The envelope opens the VCA while Space is down and closes it after, so
+the pot comes to the boil and goes off it.
+
+**Rise is what makes it water.** A bubble's pitch climbs as it nears the
+surface; turn Rise to 0.00 and the same bubbles become electronic blips.
+
+**Size is the note.** Turn it to 15 and the pot drops to a slow, low glug: a
+cauldron of something thick. Round 1, it fizzes.
+
+> **Try:** add a **Dust**, patch `dust1 · Trig` → `bub1 · Trig`, and turn
+> `bub1 · Rate` right down to 0.10 Hz. Now every click of the Dust makes a
+> bubble, and Dust's Density is the rain falling on a pond.
+
+---
+
+### Tutorial 24 — Creaking door
+
+**What you will learn:** **Friction**: a bow dragged across a string, and how
+a low pitch, heavy pressure and a slow push turn the note into a groan.
+
+#### Patch
+
+1. Start from the [tutorial rack](#load-the-tutorial-rack).
+2. Add a **Friction**.
+3. On the back, patch three cables:
+
+- `gate1 · Gate` → `fric1 · Gate`
+- `env1 · Out` → `fric1 · Speed`
+- `fric1 · Out` → `lpf1 · In` — *replaces the oscillator's cable*
+
+#### Set
+
+| Module | Knob | Value |
+| --- | --- | --- |
+| fric1 | Pitch | 35 Hz |
+| fric1 | Pressure | 0.90 |
+| fric1 | Speed | 0.00 |
+| fric1 | Position | 0.08 |
+| fric1 | Rough | 0.70 |
+| fric1 | Level | 0.90 |
+| lpf1 | Cutoff | 2.50 kHz |
+| lpf1 | Res | 0.20 |
+| lpf1 | CV Amt | +0.00 |
+| env1 | Attack | 1.20 s |
+| env1 | Decay | 300 ms |
+| env1 | Sustain | 0.60 |
+| env1 | Release | 400 ms |
+
+Hold **Space** for two seconds: the door swings open.
+
+**It is silent until the push builds.** Speed is at zero, so the bow is still;
+the envelope into the Speed jack is the hand on the door, rising over a second
+and a bit. Friction makes no sound of its own: the bow grips the string, drags
+it, slips, and grips again, and that sticking and slipping is the whole tone.
+A still bow makes nothing.
+
+**Low and pressed hard, it groans.** At 35 Hz the string is long and slack,
+and Pressure at 0.90 makes it grip hard and let go roughly, so each slip
+comes a little early or late: a groan rather than a note. **Rough** shakes the
+bow on top of that, so the grip catches unevenly, the way a dry hinge does.
+
+> **Try:** set Pitch to 440 Hz, Pressure to 0.50 and Rough to 0.00. The same
+> module holds a steady note: a bowed string, or a finger round a wine glass.
+
+---
+
+### Tutorial 25 — Crate drag
+
+**What you will learn:** **Scrape**: a surface that only sounds while
+something moves across it, and an envelope as the speed of a shove.
+
+#### Patch
+
+1. Start from the [tutorial rack](#load-the-tutorial-rack).
+2. Add a **Scrape**.
+3. On the back, patch two cables:
+
+- `env1 · Out` → `scr1 · Speed`
+- `scr1 · Out` → `lpf1 · In` — *replaces the oscillator's cable*
+
+#### Set
+
+| Module | Knob | Value |
+| --- | --- | --- |
+| scr1 | Speed | 0.00 |
+| scr1 | Rough | 0.50 |
+| scr1 | Tone | 300 Hz |
+| scr1 | Ring | 0.40 |
+| scr1 | Level | 0.90 |
+| lpf1 | Cutoff | 1.20 kHz |
+| lpf1 | CV Amt | +2.00 |
+| env1 | Attack | 30 ms |
+| env1 | Decay | 1.20 s |
+| env1 | Sustain | 0.00 |
+| env1 | Release | 300 ms |
+
+Hold **Space** for a second and a half.
+
+**The shove, then the crate grinding to a halt.** The envelope's quick attack
+is the push, and its long decay is the crate slowing down. That one falling
+value does three things at once: through the Speed jack it makes the scrape
+sparser and darker, through the filter's CV it closes the filter, and through
+the VCA it brings the level down. At the start it is a bright, dense grind;
+by the end, a few slow knocks.
+
+**Rough is the floor.** At 0.50 it is boards with some grit on them. Turn it
+down for a smooth floor that hisses, and up for stones that knock. **Tone and
+Ring** are the crate itself: low and a little resonant for a wooden box.
+
+> **Try:** set `scr1 · Mode` to **roll**. Now it is a barrel: a thump once a
+> turn, coming faster the harder it is pushed, slowing as the envelope falls.
+
+---
+
+### Tutorial 26 — Motorbike rev
+
+**What you will learn:** the **Engine**: RPM and Cylinders as bangs a second,
+and revving it through its RPM jack.
+
+#### Patch
+
+1. Start from the [tutorial rack](#load-the-tutorial-rack).
+2. Add an **Engine**.
+3. On the back, patch two cables:
+
+- `env1 · Out` → `eng1 · RPM`
+- `eng1 · Out` → `lpf1 · In` — *replaces the oscillator's cable*
+
+#### Set
+
+| Module | Knob | Value |
+| --- | --- | --- |
+| eng1 | RPM | 1500 rpm |
+| eng1 | Cylinders | 2 |
+| eng1 | Load | 0.60 |
+| eng1 | Exhaust | 220 Hz |
+| eng1 | Rough | 0.20 |
+| eng1 | Level | 0.90 |
+| eng1 | RPM Amt | +2.00 |
+| lpf1 | Cutoff | 6.00 kHz |
+| lpf1 | Res | 0.10 |
+| lpf1 | CV Amt | +0.00 |
+| vca1 | Level | 0.50 |
+| vca1 | CV Amt | 0.50 |
+| env1 | Attack | 600 ms |
+| env1 | Decay | 500 ms |
+| env1 | Sustain | 0.40 |
+| env1 | Release | 600 ms |
+
+You will hear it idling straight away. Hold **Space** for two seconds, then let
+go.
+
+**It idles at 25 bangs a second.** Each cylinder fires once every two turns,
+so 1500 rpm on two cylinders is 1500 ÷ 60 × 2 ÷ 2 = 25: a lumpy twin. VCA
+Level at 0.50 holds the VCA half open with nothing pressed, which is why it
+runs on its own.
+
+**Space revs it.** RPM Amt at +2.00 means the envelope's full swing is two
+octaves of revs, so the attack takes it to 6000 rpm, a hundred bangs a second.
+The sustain holds it partway up, and letting go drops it back to idle. The
+envelope also pushes the VCA the other half of the way, so it gets louder as
+it revs.
+
+**Load is the throttle.** At 0.60 the bangs are hard and the muffler is open.
+Turn it down and the same revs go soft and dull: the engine coasting.
+
+> **Try:** set Cylinders to 8 and Exhaust to 120 Hz for a V8's burble at the
+> same revs, or a single cylinder at 300 Hz for a moped.
+
+---
+
+### Tutorial 27 — Car pass-by
+
+**What you will learn:** **Doppler**: a sound moved along a road past you, and
+the pitch drop that comes from nothing but distance and the speed of sound.
+
+#### Patch
+
+1. Start from the [tutorial rack](#load-the-tutorial-rack).
+2. Add an **Engine**, then a **Doppler**.
+3. On the back, patch four cables:
+
+- `eng1 · Out` → `dop1 · In`
+- `gate1 · Gate` → `dop1 · Trig`
+- `dop1 · L` → `mix1 · 1` — *replaces the VCA's cable*
+- `dop1 · R` → `mix1 · 2`
+
+#### Set
+
+| Module | Knob | Value |
+| --- | --- | --- |
+| eng1 | RPM | 3000 rpm |
+| eng1 | Cylinders | 4 |
+| eng1 | Load | 0.70 |
+| eng1 | Level | 0.90 |
+| dop1 | Speed | 35 m/s |
+| dop1 | Distance | 8.0 m |
+| dop1 | Range | 120 m |
+| dop1 | Air | 0.60 |
+| mix1 | Pan 1 | -1.00 |
+| mix1 | Pan 2 | 1.00 |
+| mix1 | Lvl 2 | 0.80 |
+
+Press **Space** and wait seven seconds.
+
+**The car comes in on the left and leaves on the right.** Space sends it from
+120 m up the road, past you at 8 m, to 120 m the other way, at 35 m/s (about
+125 km/h). It is faint at first, loudest as it passes, and dull again as it
+goes, because Air takes the top off with distance.
+
+**The pitch drops as it passes, and nothing sets that but the geometry.** The
+sound takes time to cross the air to you. As the car approaches, that time
+shrinks and the engine's hundred bangs a second arrive squeezed together,
+higher. As it leaves, the time grows and they arrive stretched out, lower.
+That changing delay is the Doppler shift.
+
+> **Try:** set Speed to 250 m/s and Distance to 30 m for a jet passing high
+> overhead, or take the cable out of Trig: with nothing there the car goes
+> past again and again.
+
+---
+
+### Tutorial 28 — Deep boom
+
+**What you will learn:** the **Subharmonic**: octaves added under a sound, so
+an explosion has a floor.
+
+#### Patch
+
+1. Start from the [tutorial rack](#load-the-tutorial-rack).
+2. Add a **Subharmonic**.
+3. On the back, patch three cables:
+
+- `noise1 · Out` → `lpf1 · In` — *replaces the oscillator's cable*
+- `lpf1 · Out` → `sub1 · In`
+- `sub1 · Out` → `vca1 · In` — *replaces the filter's cable*
+
+#### Set
+
+| Module | Knob | Value |
+| --- | --- | --- |
+| noise1 | Color | pink |
+| lpf1 | Cutoff | 250 Hz |
+| lpf1 | Res | 0.20 |
+| lpf1 | CV Amt | +3.00 |
+| env1 | Attack | 2 ms |
+| env1 | Decay | 1.50 s |
+| env1 | Release | 500 ms |
+| sub1 | Track | 120 Hz |
+| sub1 | −1 Oct | 1.00 |
+| sub1 | −2 Oct | 0.60 |
+
+Press **Space**.
+
+**A distant boom, with something under it.** Pink noise through a dark filter
+that the envelope flings open and lets fall is the explosion. The Subharmonic
+listens to it, finds its lowest note under Track, and adds one and two
+octaves below: content under 60 Hz that the noise alone barely has. It
+follows the boom's level and dies with it.
+
+**Turn −1 Oct and −2 Oct down to hear what they add.** The boom is still
+there, but thinner: a crack rather than a thud. On a big speaker the
+difference is felt as much as heard.
+
+> **Try:** put the Subharmonic under a kick drum or the Engine instead, with
+> Track set just above the lowest note.
+
+---
+
+### Tutorial 29 — Rewind spell
+
+**What you will learn:** **Reverse**: a sound played back to front, and Swell
+leaning it into its attack.
+
+#### Patch
+
+1. Start from the [tutorial rack](#load-the-tutorial-rack).
+2. Add a **Reverse**.
+3. On the back, patch two cables:
+
+- `vca1 · Out` → `rev1 · In`
+- `rev1 · Out` → `mix1 · 1` — *replaces the VCA's cable*
+
+#### Set
+
+| Module | Knob | Value |
+| --- | --- | --- |
+| osc1 | Pitch | 220 Hz |
+| lpf1 | Cutoff | 600 Hz |
+| lpf1 | Res | 0.50 |
+| lpf1 | CV Amt | +4.00 |
+| env1 | Decay | 400 ms |
+| rev1 | Length | 600 ms |
+| rev1 | Swell | 0.70 |
+| rev1 | Feedback | 0.30 |
+| rev1 | Mix | 0.80 |
+
+Tap **Space**.
+
+**First the pluck, then the pluck sucked in backwards.** The pluck is the
+tutorial rack doing what it does: a saw through a filter the envelope snaps
+open. Reverse takes each 600 ms slice it hears and plays it back to front, so
+the pluck's tail arrives first and its attack last: the sound swells up into
+the hit instead of starting there. It trails the dry pluck, because nothing
+can be played backwards until it has finished.
+
+**Swell** leans each slice towards its end, so the reversed sound rises out
+of nothing. **Feedback** sends the reversed sound round again, so a fainter
+echo of it comes back a slice later.
+
+**Turn Mix to 0.00** and only the pluck is left.
+
+> **Try:** put a Reverse after the **Space** reverb of any rack for the classic
+> reverse-reverb swell before a hit.
+
+---
+
+### Tutorial 30 — Item get
+
+**What you will learn:** **Shimmer**: a reverb with a pitch shifter in its
+loop, so the tail climbs.
+
+#### Patch
+
+1. Start from the [tutorial rack](#load-the-tutorial-rack).
+2. Add a **Shimmer**.
+3. On the back, patch three cables:
+
+- `vca1 · Out` → `shim1 · In`
+- `shim1 · L` → `mix1 · 1` — *replaces the VCA's cable*
+- `shim1 · R` → `mix1 · 2`
+
+#### Set
+
+| Module | Knob | Value |
+| --- | --- | --- |
+| osc1 | Pitch | 880 Hz |
+| osc1 | Wave | sine |
+| lpf1 | Cutoff | 8.00 kHz |
+| env1 | Decay | 600 ms |
+| shim1 | Size | 0.80 |
+| shim1 | Decay | 6.00 s |
+| shim1 | Shimmer | 0.60 |
+| shim1 | Mix | 0.70 |
+| mix1 | Pan 1 | -1.00 |
+| mix1 | Pan 2 | 1.00 |
+| mix1 | Lvl 2 | 0.80 |
+
+Tap **Space** and listen to the tail.
+
+**A chime, then an octave above it, then another.** Each time the tail goes
+round the reverb, Shimmer's share of it is shifted up by Interval, an octave at
+its starting **+12**, and fed back in. So an octave climbs out of the note,
+then another out of that, fading into a big room over Decay's six seconds.
+The two sides of the tail differ, so it fills the stereo field.
+
+**Turn Shimmer to 0.00** and it is a plain big reverb: the chime and its room,
+with nothing climbing.
+
+> **Try:** set Interval to **+7** to stack fifths, or **−12** to sink into a
+> dark drone instead of rising.
+
+---
+
+### Tutorial 31 — Mic squeal
+
+**What you will learn:** **Howl**: feedback on purpose, and an envelope
+pushing it past the point where it takes off.
+
+#### Patch
+
+1. Start from the [tutorial rack](#load-the-tutorial-rack).
+2. Add a **Howl**.
+3. On the back, patch two cables:
+
+- `env1 · Out` → `howl1 · Fdbk`
+- `howl1 · Out` → `vca1 · In` — *replaces the filter's cable*
+
+#### Set
+
+| Module | Knob | Value |
+| --- | --- | --- |
+| howl1 | Pitch | 1.20 kHz |
+| howl1 | Feedback | 0.80 |
+| howl1 | Focus | 0.70 |
+| howl1 | Drift | 0.30 |
+| howl1 | Air | 0.50 |
+| howl1 | Fdbk Amt | 0.60 |
+| vca1 | CV Amt | 0.80 |
+| env1 | Attack | 800 ms |
+| env1 | Decay | 200 ms |
+| env1 | Sustain | 0.80 |
+| env1 | Release | 600 ms |
+
+Hold **Space** for two seconds, then let go.
+
+**It swells up out of the hiss.** Nothing comes in at In; **Air** is the faint
+hiss of a live microphone, and the loop feeds it back round. Feedback at 0.80
+is under one, so on its own each pass is quieter than the last and nothing
+builds. The envelope into the Fdbk jack adds up to 0.60, which takes the loop
+past one, and from there each pass is louder: the whine takes off near Pitch,
+1.2 kHz, and the soft limiter in the loop holds it, as a real amplifier
+running out of room does. Let go, the loop drops back under one, and it dies.
+
+**Turn Fdbk Amt to 0.00** and it never takes off: only the hiss, opened and
+closed by the VCA.
+
+**Focus** locks the whine onto one note. Turn it down and it wanders between
+several and squeals. **Drift** moves it slowly, like a hand moving the mic.
+
+---
+
+### Tutorial 32 — Boing
+
+**What you will learn:** the **Spring Mass**: a value that overshoots and
+wobbles, here as an oscillator's pitch.
+
+#### Patch
+
+1. Start from the [tutorial rack](#load-the-tutorial-rack).
+2. Add a **Spring Mass**.
+3. On the back, patch two cables:
+
+- `gate1 · Gate` → `mass1 · Kick`
+- `mass1 · Out` → `osc1 · FM`
+
+#### Set
+
+| Module | Knob | Value |
+| --- | --- | --- |
+| osc1 | Pitch | 220 Hz |
+| osc1 | Wave | tri |
+| osc1 | FM Amt | +1.00 |
+| lpf1 | Cutoff | 5.00 kHz |
+| env1 | Decay | 900 ms |
+| mass1 | Freq | 6.00 Hz |
+| mass1 | Damping | 0.08 |
+| mass1 | Kick | 1.00 |
+
+Tap **Space**.
+
+**Boing.** Each press flicks the weight on the spring. It swings up about an
+octave, through the middle, down about an octave, and back, six times a
+second (Freq), each swing a little smaller, until it settles. With FM Amt at
++1.00 its output is the oscillator's pitch in octaves, so the swing is heard
+as the pitch going round and round.
+
+**Damping is how soon it stops.** At 0.08 it rings for a while. At 1.00 it
+never overshoots and the boing is gone. **Freq** is the spring's stiffness:
+slower is a big wobbly spring, faster a tight one.
+
+> **Try:** take the Kick cable out and patch a Sequencer's pitch into
+> `mass1 · In` instead, with the Spring Mass between it and the oscillator:
+> every new note lands with a wobble.
+
+---
+
+### Tutorial 33 — Dropped coin
+
+**What you will learn:** the **Bouncing Ball**: impacts that come sooner and
+softer until they stop, striking a resonator.
+
+#### Patch
+
+1. Start from the [tutorial rack](#load-the-tutorial-rack).
+2. Add a **Bouncing Ball**, then a **Resonator**.
+3. On the back, patch four cables:
+
+- `gate1 · Gate` → `ball1 · Drop`
+- `ball1 · Gate` → `res1 · In`
+- `res1 · Out` → `vca1 · In` — *replaces the filter's cable*
+- `ball1 · Vel` → `vca1 · CV` — *replaces the envelope's cable*
+
+#### Set
+
+| Module | Knob | Value |
+| --- | --- | --- |
+| ball1 | Fall | 250 ms |
+| ball1 | Bounce | 0.55 |
+| ball1 | Spread | 0.20 |
+| res1 | Pitch | 2.40 kHz |
+| res1 | Decay | 120 ms |
+| res1 | Damp | 0.20 |
+
+Press **Space**.
+
+**The coin lands a quarter of a second later and rattles to a stop.** Fall is
+how long the first drop takes. Each bounce comes back with Bounce, a little
+over half, of the speed it hit with, so each gap is shorter than the last and
+the hits run together into the accelerating rattle a real coin makes.
+
+**Each hit is softer, too.** `ball1 · Gate` pulses on every impact and strikes
+the Resonator, which rings like a small piece of metal. `ball1 · Vel` holds
+how hard the last impact was, from 0 to 1, and it is now what opens the VCA,
+so every bounce is quieter than the one before. **Spread** jitters each
+bounce, so the coin tumbles rather than bouncing like a perfect ball.
+
+> **Try:** set Fall to 1.00 s and Bounce to 0.80 for a ping-pong ball, with
+> the Resonator down at 900 Hz.
+
+---
+
+### Tutorial 34 — Footsteps
+
+**What you will learn:** **Round Robin**: handing each trigger on in turn, and
+its Index output making every hit a little different.
+
+#### Patch
+
+1. Start from the [tutorial rack](#load-the-tutorial-rack).
+2. Add a **Burst**, then a **Round Robin**.
+3. On the back, patch five cables:
+
+- `gate1 · Gate` → `brst1 · Trig`
+- `brst1 · Gate` → `env1 · Gate` — *replaces the Trigger's cable*
+- `brst1 · Gate` → `rr1 · Trig`
+- `noise1 · Out` → `lpf1 · In` — *replaces the oscillator's cable*
+- `rr1 · Index` → `lpf1 · CV` — *replaces the envelope's cable*
+
+#### Set
+
+| Module | Knob | Value |
+| --- | --- | --- |
+| brst1 | Count | 8 |
+| brst1 | Rate | 2.00 Hz |
+| rr1 | Mode | shuffle |
+| lpf1 | Cutoff | 500 Hz |
+| lpf1 | Res | 0.30 |
+| lpf1 | CV Amt | +2.00 |
+| env1 | Attack | 5 ms |
+| env1 | Decay | 120 ms |
+| env1 | Release | 50 ms |
+
+Press **Space** once.
+
+**One press, eight steps.** The Burst turns the press into eight gates, two a
+second: someone walking. Each gate strikes the envelope, which makes a short
+crunch of noise through the filter: a step on gravel.
+
+**No two in a row are alike.** The same gates go to the Round Robin, which
+hands each one to the next of its four outputs. Nothing is patched to those
+yet; what matters here is **Index**, which says which output has the gate,
+from 0 to 1. Patched to the filter's CV, it moves the cutoff for every step,
+so each step is a slightly different crunch. **Shuffle** picks the outputs in
+a shuffled order that uses all four before any repeats, and never the same one
+twice running, so the walk never falls into a pattern you can hear.
+
+> **Try:** this is the trick for real recordings too. Load four footstep
+> recordings into four **Samplers**, patch `rr1 · 1` to `rr1 · 4` into their
+> Gates, and every step plays a different one.
+
+---
+
+### Tutorial 35 — 8-bit jump
+
+**What you will learn:** the **Chip**: the NES's pulse wave, Sweep bending it
+from a gate, and its stepped Decay.
+
+#### Patch
+
+1. Start from the [tutorial rack](#load-the-tutorial-rack).
+2. Add a **Chip**.
+3. On the back, patch two cables:
+
+- `gate1 · Gate` → `chip1 · Gate`
+- `chip1 · Out` → `mix1 · 1` — *replaces the VCA's cable*
+
+#### Set
+
+| Module | Knob | Value |
+| --- | --- | --- |
+| chip1 | Wave | 25% |
+| chip1 | Pitch | 330 Hz |
+| chip1 | Sweep | +3.00 |
+| chip1 | Decay | 350 ms |
+| chip1 | Level | 0.80 |
+
+Press **Space** and hold it a moment.
+
+**The jump from a thousand platformers.** The 25% pulse is the classic NES
+lead. Sweep at +3.00 bends the pitch up three octaves a second from the
+moment the gate opens, and Decay steps the level down to nothing in a third of
+a second, in the chip's sixteen steps rather than a smooth fade. The Chip plays
+only while its gate is high, so let go early and the jump is cut short.
+
+> **Try:** for the landing, set Wave to **metal**, Pitch to 100 Hz, Sweep to
+> 0.00 and Decay to 150 ms: the short, clanking noise of the chip's other
+> channel.
+
+---
+
+### Tutorial 36 — Waveshaper by formula
+
+**What you will learn:** the **Expression** in math mode: typing a curve,
+reading it off the graph, and a knob inside the formula.
+
+#### Patch
+
+1. Start from the [tutorial rack](#load-the-tutorial-rack).
+2. Add an **Expression**.
+3. On the back, patch two cables:
+
+- `osc1 · Out` → `expr1 · X`
+- `expr1 · Out` → `lpf1 · In` — *replaces the oscillator's cable*
+
+4. In the Expression's formula field, type `sin(pi * x * (1 + 4 * a))` and
+   press **Enter**.
+
+#### Set
+
+| Module | Knob | Value |
+| --- | --- | --- |
+| osc1 | Pitch | 110 Hz |
+| osc1 | Wave | sine |
+| expr1 | A | 0.50 |
+| lpf1 | Cutoff | 6.00 kHz |
+| lpf1 | CV Amt | +0.00 |
+| env1 | Decay | 800 ms |
+
+Press **Space**.
+
+**A sine bent into a buzz.** The oscillator's sine goes into X, and the
+Expression puts out `sin(pi * x * (1 + 4 * a))` of it: a sine of a sine. When
+X swings from −1 to 1, the formula's sine goes round several times, so the
+wave folds over on itself and gains harmonics the plain sine doesn't have. The
+graph under the field shows the curve: X along the bottom, the answer up the
+side, and a dot where the input is right now.
+
+**A is a drive knob, because the formula says so.** It multiplies how far
+round the sine goes; turn A to 1.00 and the curve on the graph gets more
+wiggles and the buzz gets brighter. Change the formula to `x` and the
+Expression passes the sine straight through.
+
+> **Try:** `tanh(x * 8 * a)` is a hard drive, `x * x * x` a gentle one, and
+> `x > 0 ? x : 0` a half-wave rectifier. Watch the graph change as you type.
+
+---
+
+### Tutorial 37 — Bytebeat
+
+**What you will learn:** the **Expression** in bytebeat mode: music from a
+single line of arithmetic, and Reset to start it from the top.
+
+#### Patch
+
+1. Start from the [tutorial rack](#load-the-tutorial-rack).
+2. Add an **Expression**.
+3. On the back, patch two cables:
+
+- `gate1 · Gate` → `expr1 · Reset`
+- `expr1 · Out` → `vca1 · In` — *replaces the filter's cable*
+
+4. In the Expression's formula field, type `t*(t>>5|t>>8)` and press **Enter**.
+
+#### Set
+
+| Module | Knob | Value |
+| --- | --- | --- |
+| expr1 | Mode | bytebeat |
+| vca1 | CV Amt | 0.60 |
+| env1 | Attack | 5 ms |
+| env1 | Sustain | 1.00 |
+| env1 | Release | 200 ms |
+
+Hold **Space**.
+
+**One line of arithmetic, and it is music of a sort.** In bytebeat mode, t
+counts up 8000 times a second (Rate), and the low eight bits of the answer
+are the sample: 0 to 255, mapped onto the speaker's range. `t*(t>>5|t>>8)` is
+the classic: the shifts make slower patterns inside faster ones, so it turns
+into a gritty, evolving melody of its own. The Expression works it out exactly,
+from t = 0.
+
+**Space restarts it.** A rising edge at Reset puts t back to zero, so every
+press starts the tune from the top, which is how a bytebeat becomes a sound
+effect rather than a stream.
+
+> **Try:** `t*(t>>9|t>>13)&255` and `(t>>6|t|t>>(t>>16))*10+((t>>11)&7)` are
+> two more from the old collections. Paste them in as they are; `^` means
+> exclusive or here, as it does in theirs.
+
+---
+
+### Tutorial 38 — Seamless wind
+
+**What you will learn:** the **Loop Seam**: turning a sound into a loop that
+repeats with no seam, and a render exactly one loop long.
+
+#### Patch
+
+1. Start from the [tutorial rack](#load-the-tutorial-rack).
+2. Add a **Loop Seam**.
+3. On the back, patch five cables:
+
+- `noise1 · Out` → `lpf1 · In` — *replaces the oscillator's cable*
+- `lfo1 · Out` → `lpf1 · CV` — *replaces the envelope's cable*
+- `lpf1 · Out` → `loop1 · L`
+- `loop1 · L` → `mix1 · 1` — *replaces the VCA's cable*
+- `gate1 · Gate` → `loop1 · Rec`
+
+#### Set
+
+| Module | Knob | Value |
+| --- | --- | --- |
+| noise1 | Color | pink |
+| lfo1 | Rate | 0.30 Hz |
+| lpf1 | Cutoff | 600 Hz |
+| lpf1 | Res | 0.60 |
+| lpf1 | Mode | bp |
+| lpf1 | CV Amt | +1.50 |
+| loop1 | Length | 4.00 s |
+| loop1 | Fade | 1.00 s |
+
+Listen for five seconds, then render it.
+
+**Wind first, then the same four seconds round and round.** Pink noise through
+a band-pass that the LFO sweeps slowly is the wind. The Loop Seam records four
+seconds of it (Length) plus one more (Fade), and from then on plays the
+recording as a loop. The first second of every pass blends in from the sound
+just past the end of the recording, so the end of one pass runs straight into
+the start of the next: no click, no gap.
+
+**Render it, and the file is exactly one loop.** A rack with a Loop Seam in it
+renders one pass, four seconds to the sample, with no fade on the end and
+nothing trimmed, so it repeats seamlessly in a game. **Space** records again,
+for a different four seconds of wind.
+
+> **Try:** put the Loop Seam after the boiling potion, or the engine at idle,
+> for a background loop of either.
 
 ---
 

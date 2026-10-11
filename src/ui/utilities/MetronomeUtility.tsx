@@ -4,7 +4,11 @@ import { TEMPO_MAX, TEMPO_MIN } from '../../song/types'
 import type { UtilityProps } from '../../utilities'
 import { CLICK_SOUNDS, ClickCounter, type Click, type ClickSound, type MetronomeSettings } from '../../utilities/metronome'
 import { TapTempo } from '../../utilities/timing'
-import { NumberField } from '../NumberField'
+import type { ParamSpec } from '../../patch/param'
+import { Knob } from '../Knob'
+import { JogWheel } from '../bench/JogWheel'
+import { Segments } from '../bench/Segments'
+import { SlideSwitch } from '../bench/SlideSwitch'
 import { usePanelKey } from '../UtilityPanel'
 
 /** How far ahead of the audio clicks are scheduled while the page is in front, in seconds. */
@@ -20,17 +24,23 @@ const LOOK_MS = 25
 const LEAD_IN = 0.08
 
 const UNITS = [1, 2, 4, 8, 16, 32]
+/** The Clicks selector's positions: clicks a beat, its name, and the mark the glass shows for it. */
 const SUBDIVISIONS = [
-  [1, 'Beats'],
-  [2, '2 per beat'],
-  [3, 'Triplets'],
-  [4, '4 per beat'],
+  [1, 'Beats', '♩'],
+  [2, '2 per beat', '♫'],
+  [3, 'Triplets', '♫³'],
+  [4, '4 per beat', '♬'],
 ] as const
-const SOUNDS: [ClickSound, string][] = [
+const SOUNDS = [
   ['click', 'Click'],
   ['wood', 'Wood'],
   ['beep', 'Beep'],
-]
+] as const satisfies readonly (readonly [ClickSound, string])[]
+
+const BEATS: ParamSpec = { id: 'beats', label: 'Beats', min: 1, max: 32, default: 4, unit: '#', curve: 'lin' }
+const NOTE: ParamSpec = { id: 'unit', label: 'Note', min: 0, max: UNITS.length - 1, default: 2, unit: '', curve: 'lin', steps: UNITS.map(String) }
+const CLICKS: ParamSpec = { id: 'clicks', label: 'Clicks', min: 0, max: SUBDIVISIONS.length - 1, default: 0, unit: '', curve: 'lin', steps: SUBDIVISIONS.map(([, name]) => name) }
+const VOLUME: ParamSpec = { id: 'volume', label: 'Volume', min: 0, max: 1, default: 0.7, unit: '', curve: 'lin' }
 
 function initial(props: UtilityProps): MetronomePrefs {
   return {
@@ -112,58 +122,23 @@ export function MetronomeUtility(props: UtilityProps) {
   })
 
   const tapper = useRef(new TapTempo())
-  const nudge = (by: number) => set({ bpm: clampTempo(Math.round((state.bpm + by) * 10) / 10) })
+  /** The tempo being typed into the glass, or null while it is only shown. */
+  const [entry, setEntry] = useState<string | null>(null)
+  const commitEntry = (text: string) => {
+    const bpm = Number(text.trim())
+    setEntry(null)
+    if (text.trim() !== '' && Number.isFinite(bpm)) set({ bpm: clampTempo(Math.round(bpm * 10) / 10) })
+  }
+
+  const subdivision = Math.max(0, SUBDIVISIONS.findIndex(([n]) => n === state.subdivision))
+  const unitAt = Math.max(0, UNITS.indexOf(state.unit))
+  const bpmText = state.bpm.toFixed(1)
 
   return (
     <div className="metronome">
-      <div className="metronome-top">
-        <button
-          type="button"
-          className={`metronome-go${running ? ' on' : ''}`}
-          aria-pressed={running}
-          onClick={toggle}
-          title="Start or stop (Space, while this panel has the focus)"
-        >
-          {running ? 'Stop' : waking ? 'Starting…' : 'Start'}
-        </button>
-        <div className="metronome-tempo">
-          <button type="button" aria-label="5 slower" onClick={() => nudge(-5)}>
-            −5
-          </button>
-          <button type="button" aria-label="1 slower" onClick={() => nudge(-1)}>
-            −1
-          </button>
-          <NumberField
-            className="metronome-bpm"
-            value={state.bpm}
-            min={TEMPO_MIN}
-            max={TEMPO_MAX}
-            step={0.1}
-            label="Tempo, quarter notes a minute"
-            onChange={(bpm) => set({ bpm })}
-          />
-          <button type="button" aria-label="1 faster" onClick={() => nudge(1)}>
-            +1
-          </button>
-          <button type="button" aria-label="5 faster" onClick={() => nudge(5)}>
-            +5
-          </button>
-          <button
-            type="button"
-            className="metronome-tap"
-            title="Tap the tempo in"
-            onPointerDown={(e) => {
-              if (e.button !== 0) return
-              const r = tapper.current.tap(e.timeStamp / 1000)
-              if (r && r.taps >= 3) set({ bpm: clampTempo(Math.round(r.bpm * 10) / 10) })
-            }}
-          >
-            Tap
-          </button>
-        </div>
-      </div>
-
-      <div className="metronome-lamps" aria-hidden="true">
+      {/* The beat lamps, on the case over the glass: one a beat, the first a
+          colour of its own while it is accented. */}
+      <div className="metro-leds" aria-hidden="true">
         {Array.from({ length: state.beats }, (_, b) => (
           <span
             key={b}
@@ -172,70 +147,148 @@ export function MetronomeUtility(props: UtilityProps) {
           />
         ))}
       </div>
-      {failed && <p className="metronome-note">The audio device would not start: see Edit, Audio settings.</p>}
 
-      <div className="timing-row">
-        <div className="timing-field">
-          <span>Time</span>
-          <span className="timing-sig">
-            <NumberField value={state.beats} min={1} max={32} label="Beats in a bar" onChange={(beats) => set({ beats })} />
-            <span aria-hidden="true">/</span>
-            <select value={state.unit} aria-label="Note a beat is" onChange={(e) => set({ unit: Number(e.target.value) })}>
-              {UNITS.map((u) => (
-                <option key={u} value={u}>
-                  {u}
-                </option>
-              ))}
-            </select>
-          </span>
+      <div className="bench-glass lcd metro-lcd">
+        <div className="metro-lcd-main">
+          <div className="metro-lcd-beat">
+            <Segments text={lit ? String(lit.beat + 1) : ''} digits={2} size={30} points={false} />
+            <span className="annun on">Beat</span>
+          </div>
+
+          <div className="metro-lcd-tempo">
+            {entry === null ? (
+              <button
+                type="button"
+                className="glass-read metronome-bpm"
+                title="The tempo, in quarter notes a minute. Click to type it."
+                onClick={() => setEntry(bpmText)}
+              >
+                <Segments text={bpmText} digits={4} size={46} />
+              </button>
+            ) : (
+              <input
+                className="metronome-bpm-entry"
+                autoFocus
+                value={entry}
+                aria-label="Tempo, quarter notes a minute"
+                onFocus={(e) => e.currentTarget.select()}
+                onChange={(e) => setEntry(e.target.value)}
+                onBlur={(e) => commitEntry(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') commitEntry(e.currentTarget.value)
+                  else if (e.key === 'Escape') {
+                    e.stopPropagation()
+                    setEntry(null)
+                  }
+                }}
+              />
+            )}
+            <span className="annun on">BPM</span>
+          </div>
+
+          <div className="metro-lcd-time" aria-label={`Time signature ${state.beats}/${state.unit}`}>
+            <span className="metro-lcd-sig" aria-hidden="true">
+              <Segments text={String(state.beats)} size={22} points={false} spoken={false} />
+              <i className="metro-lcd-slash" />
+              <Segments text={String(state.unit)} size={22} points={false} spoken={false} />
+            </span>
+            <span className="annun on">Time</span>
+          </div>
         </div>
-        <label className="timing-field">
-          <span>Clicks</span>
-          <select value={state.subdivision} onChange={(e) => set({ subdivision: Number(e.target.value) })}>
-            {SUBDIVISIONS.map(([n, label]) => (
-              <option key={n} value={n}>
-                {label}
-              </option>
+
+        {/* The status line along the foot of the glass: every mark printed,
+            the ones that apply dark. */}
+        <div className="metro-lcd-status" aria-hidden="true">
+          <span className="metro-lcd-marks">
+            {SUBDIVISIONS.map(([n, name, mark]) => (
+              <span key={n} className={`annun mark${n === state.subdivision ? ' on' : ''}`} title={name}>
+                {mark}
+              </span>
             ))}
-          </select>
-        </label>
-        <label className="timing-field">
-          <span>Sound</span>
-          <select value={state.sound} onChange={(e) => set({ sound: e.target.value as ClickSound })}>
-            {SOUNDS.map(([id, label]) => (
-              <option key={id} value={id}>
-                {label}
-              </option>
+          </span>
+          <span className="metro-lcd-marks">
+            {SOUNDS.map(([id, name]) => (
+              <span key={id} className={`annun${id === state.sound ? ' on' : ''}`}>
+                {name}
+              </span>
             ))}
-          </select>
-        </label>
+          </span>
+          <span className={`annun${state.accent ? ' on' : ''}`}>Accent</span>
+          <span className={`annun${running ? ' on' : ''}`}>▶ Run</span>
+        </div>
       </div>
-      <div className="timing-row">
-        <label className="metronome-check">
-          <input type="checkbox" checked={state.accent} onChange={(e) => set({ accent: e.target.checked })} />
-          Accent the first beat
-        </label>
-        <label className="metronome-volume">
-          <span>Volume</span>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={state.volume}
-            aria-label="Volume"
-            onChange={(e) => set({ volume: Number(e.target.value) })}
-          />
-        </label>
+
+      <div className="metro-jog">
+        <JogWheel
+          label="Tempo"
+          value={state.bpm}
+          min={TEMPO_MIN}
+          max={TEMPO_MAX}
+          step={1}
+          coarse={5}
+          valueText={`${bpmText} BPM`}
+          onChange={(bpm) => set({ bpm })}
+        />
+        <span className="bench-legend">Tempo</span>
+      </div>
+
+      <div className="metro-panel">
+        <Knob spec={BEATS} value={state.beats} step={1} format={(v) => String(Math.round(v))} onChange={(beats) => set({ beats: Math.round(beats) })} />
+        <Knob spec={NOTE} value={unitAt} step={1} onChange={(i) => set({ unit: UNITS[Math.round(i)] })} />
+        <Knob spec={CLICKS} value={subdivision} step={1} onChange={(i) => set({ subdivision: SUBDIVISIONS[Math.round(i)][0] })} />
+        <div className="metro-sound">
+          <SlideSwitch label="Sound" options={SOUNDS} value={state.sound} onChange={(sound) => set({ sound })} />
+          <span className="bench-legend">Sound</span>
+        </div>
+        <Knob spec={VOLUME} value={state.volume} format={(v) => `${Math.round(v * 100)}%`} onChange={(volume) => set({ volume })} />
+        <div className="metro-latches">
+          <button
+            type="button"
+            className={`bench-button small metro-accent${state.accent ? ' on' : ''}`}
+            aria-pressed={state.accent}
+            title="A different click on the first beat of each bar"
+            onClick={() => set({ accent: !state.accent })}
+          >
+            <span className="bench-lamp" />
+            Accent
+          </button>
+          <button
+            type="button"
+            className="bench-button small metro-song"
+            title="The tempo and time signature the song starts with"
+            onClick={() => set({ bpm: props.song.tempo, beats: props.song.meter?.beats ?? 4, unit: props.song.meter?.unit ?? 4 })}
+          >
+            From song
+          </button>
+        </div>
+      </div>
+
+      <div className="metro-transport">
         <button
           type="button"
-          className="timing-song"
-          title="The tempo and time signature the song starts with"
-          onClick={() => set({ bpm: props.song.tempo, beats: props.song.meter?.beats ?? 4, unit: props.song.meter?.unit ?? 4 })}
+          className={`bench-button metronome-go${running ? ' on' : ''}`}
+          aria-pressed={running}
+          onClick={toggle}
+          title="Start or stop (Space, while this panel has the focus)"
         >
-          Use song's
+          <span className="bench-lamp" />
+          <span className="metronome-go-text">{running ? 'Stop' : waking ? 'Starting…' : 'Start'}</span>
+        </button>
+        <button
+          type="button"
+          className="metro-tap"
+          title="Tap the tempo in: three taps or more"
+          onPointerDown={(e) => {
+            if (e.button !== 0) return
+            const r = tapper.current.tap(e.timeStamp / 1000)
+            if (r && r.taps >= 3) set({ bpm: clampTempo(Math.round(r.bpm * 10) / 10) })
+          }}
+        >
+          Tap
         </button>
       </div>
+
+      {failed && <p className="metronome-note">The audio device would not start: see Edit, Audio settings.</p>}
     </div>
   )
 }

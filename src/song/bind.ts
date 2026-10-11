@@ -5,7 +5,7 @@ import { kitSlots, padModuleId, padTarget } from '../patch/kit'
 import type { Patch, PatchModule } from '../patch/types'
 import type { AutomationBinding } from './automation'
 import type { SongEvent } from './schedule'
-import type { AutomationEvent } from './transport'
+import type { AutomationEvent, SoundEvent } from './transport'
 
 /**
  * Which module in a patch a track's notes are played on, and how.
@@ -171,14 +171,32 @@ export function automationEngineEvents(
   return out
 }
 
-/** A window's notes and automation together, for one schedule. */
+/** A window's notes, sounds and automation together, for one schedule. */
 export function windowEvents(
-  fill: { events: readonly SongEvent[]; automation: readonly AutomationEvent[] },
+  fill: { events: readonly SongEvent[]; automation: readonly AutomationEvent[]; sounds?: readonly SoundEvent[] },
   targets: ReadonlyMap<string, NoteTarget>,
   bindings: ReadonlyMap<string, AutomationBinding>,
 ): TrackEvent[] {
   const notes = engineEventsByTrack(fill.events, targets)
-  return fill.automation.length ? [...automationEngineEvents(fill.automation, bindings), ...notes] : notes
+  const sounds = fill.sounds?.length ? soundEngineEvents(fill.sounds) : []
+  return fill.automation.length || sounds.length
+    ? [...automationEngineEvents(fill.automation, bindings), ...sounds, ...notes]
+    : notes
+}
+
+/**
+ * A window's sounds as the engine takes them. No target to look up: the
+ * rack plays them on whatever in it plays sounds -- its Clips module -- and a
+ * track with none drops them.
+ */
+export function soundEngineEvents(sounds: readonly SoundEvent[]): TrackEvent[] {
+  return sounds.map((e): TrackEvent =>
+    e.kind === 'play'
+      ? { frame: e.frame, track: e.track, kind: 'sound', key: e.key, sample: e.sample, from: e.from }
+      : e.kind === 'stop'
+        ? { frame: e.frame, track: e.track, kind: 'soundStop', key: e.key }
+        : { frame: e.frame, track: e.track, kind: 'soundSync', voices: e.voices },
+  )
 }
 
 export function engineEventsByTrack(

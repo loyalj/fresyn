@@ -1,6 +1,6 @@
 import { cleanTimings } from './timing'
 import { cleanLanes } from './automation'
-import { MIN_VELOCITY, minPatternLength, type AutomationLane, type Folder, type Placement, type Section, type Song, type Track } from './types'
+import { MASTER_RACK, MIN_VELOCITY, minPatternLength, type AutomationLane, type Folder, type Placement, type Section, type Song, type Track } from './types'
 
 /**
  * The invariants a song holds however it arrived.
@@ -29,7 +29,8 @@ export function normalizeSong(input: Song): Song {
   const tracks: Track[] = []
   const trackIds = new Set<string>()
   for (const t of song.tracks) {
-    if (!safeId(t.id) || trackIds.has(t.id)) continue
+    // Never the master rack's id: it names a rack that is not a track.
+    if (!safeId(t.id) || t.id === MASTER_RACK || trackIds.has(t.id)) continue
     trackIds.add(t.id)
     tracks.push(t)
   }
@@ -56,7 +57,15 @@ export function normalizeSong(input: Song): Song {
   const patternIds = new Set<string>()
   for (const p of song.patterns) {
     if (!safeId(p.id) || patternIds.has(p.id)) continue
+    // A sound plays on one track: with that track gone it is gone, and its
+    // clips with it, as a removed track's notes are.
+    if (p.audio && !trackIds.has(p.audio.track)) continue
     patternIds.add(p.id)
+    if (p.audio) {
+      const { automation: _, ...sound } = p
+      patterns.push({ ...sound, length: Math.max(shortest, whole(p.length)), notes: [] })
+      continue
+    }
     patterns.push({
       ...p,
       length: Math.max(shortest, whole(p.length)),

@@ -143,6 +143,10 @@ export function formatValue(spec: ParamSpec, value: number): string {
   // "4.00 steps" reads as though there were something in between.
   if (spec.unit === '#') return `${Math.round(value)}`
   if (spec.unit === 'x') return `${value.toFixed(2)}x`
+  // Revolutions a minute: a speed nobody reads to two decimal places.
+  if (spec.unit === 'rpm') return `${Math.round(value)} rpm`
+  // Distances and speeds, for things moving through a space.
+  if (spec.unit === 'm' || spec.unit === 'm/s') return `${value < 10 ? value.toFixed(1) : value.toFixed(0)} ${spec.unit}`
   if (spec.unit === 'vowel') return formatVowel(value)
   // Signed, as octaves are: a threshold is below zero and a makeup gain is
   // above it, and the sign is the first thing you want to see on either.
@@ -170,6 +174,8 @@ export function stepFor(spec: ParamSpec, value: number): number {
   }
   if (spec.unit === 's') return v < 1 ? 0.001 : 0.01 // 1 ms, or 0.01 s
   if (spec.unit === 'dB') return 0.1
+  if (spec.unit === 'rpm') return 1
+  if (spec.unit === 'm' || spec.unit === 'm/s') return Math.abs(value) < 10 ? 0.1 : 1
   return 0.01
 }
 
@@ -207,6 +213,7 @@ const SUFFIX: Record<string, { unit: string; scale: number }> = {
   db: { unit: 'dB', scale: 1 },
   oct: { unit: 'oct', scale: 1 },
   '#': { unit: '#', scale: 1 },
+  rpm: { unit: 'rpm', scale: 1 },
 }
 
 /**
@@ -236,6 +243,9 @@ export function unitName(spec: ParamSpec): string {
   if (spec.unit === 's') return 'a time'
   if (spec.unit === 'oct') return 'an amount in octaves'
   if (spec.unit === 'x') return 'a multiplier'
+  if (spec.unit === 'rpm') return 'a speed in rpm'
+  if (spec.unit === 'm') return 'a distance in metres'
+  if (spec.unit === 'm/s') return 'a speed in metres a second'
   if (spec.unit === 'dB') return 'a level in decibels'
   if (spec.unit === '#') return 'a whole number'
   if (spec.unit === 'vowel') return 'a vowel or a number'

@@ -29,6 +29,23 @@ import { SvfModule, svfResponse } from '../src/dsp/modules/Svf'
 import type { DspModule } from '../src/dsp/modules/types'
 import { WavefoldModule } from '../src/dsp/modules/Wavefold'
 import { OscModule } from '../src/dsp/modules/Osc'
+import { BubbleModule } from '../src/dsp/modules/Bubble'
+import { EngineModule } from '../src/dsp/modules/Engine'
+import { BounceModule } from '../src/dsp/modules/Bounce'
+import { ChipModule } from '../src/dsp/modules/Chip'
+import { DopplerModule } from '../src/dsp/modules/Doppler'
+import { LoopSeamModule, seamFrames } from '../src/dsp/modules/LoopSeam'
+import { RoundRobinModule } from '../src/dsp/modules/RoundRobin'
+import { ExpressionModule } from '../src/dsp/modules/Expression'
+import { FrictionModule } from '../src/dsp/modules/Friction'
+import { HowlModule } from '../src/dsp/modules/Howl'
+import { ReverseModule } from '../src/dsp/modules/Reverse'
+import { ScrapeModule } from '../src/dsp/modules/Scrape'
+import { ShimmerModule } from '../src/dsp/modules/Shimmer'
+import { SpringMassModule } from '../src/dsp/modules/SpringMass'
+import { SubharmonicModule } from '../src/dsp/modules/Subharmonic'
+import { compileExpr, EXPR_VARS, ExprMachine, type ExprProgram } from '../src/dsp/Expr'
+import { horizontalOf } from '../src/ui/exprDraw'
 import { MODULE_DEFS } from '../src/patch/defs'
 import { compile } from '../src/patch/compile'
 import { fft } from '../src/ui/fft'
@@ -4362,6 +4379,459 @@ console.log('\ndeterminism')
     }
   }
   check('identical patches render identical samples', same)
+}
+
+// --- the ninth batch: bubble, friction, scrape, expression, subharmonic,
+// reverse, shimmer, howl, spring mass ------------------------------------
+
+/** A module on the bench with its def's defaults, any overridden, and its own random stream. */
+function benched(mod: DspModule, type: string, overrides: Record<string, number> = {}, unpatched: number[] = []) {
+  const def = MODULE_DEFS[type]
+  mod.seedFrom(7, `${type}1`)
+  const b = bench(mod, def.inputs.length, def.outputs.length, def.params.map((p) => overrides[p.id] ?? p.default))
+  // The bench patches every jack; these are left empty, as a module sees a
+  // jack with nothing in it.
+  for (const k of unpatched) mod.ins[k] = 0
+  return b
+}
+
+/** Run a benched module for `n` samples, `ins(i)` its inputs, collecting output `port`. */
+function drive(b: ReturnType<typeof bench>, n: number, ins: (i: number) => number[] = () => [], port = 0) {
+  const out = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
+    const first = b.step(...ins(i))
+    out[i] = port === 0 ? first : b.out(port)
+  }
+  return out
+}
+
+const rmsIn = (b: Float32Array, from = 0, to = b.length) => {
+  let s = 0
+  for (let i = from; i < to; i++) s += b[i] * b[i]
+  return Math.sqrt(s / Math.max(1, to - from))
+}
+
+/** Frequency from upward zero crossings between `from` and `to`, interpolated. */
+function crossingHz(b: Float32Array, from = 0, to = b.length) {
+  const at: number[] = []
+  for (let i = Math.max(1, from); i < to; i++) if (b[i - 1] < 0 && b[i] >= 0) at.push(i - 1 + -b[i - 1] / (b[i] - b[i - 1]))
+  if (at.length < 2) return 0
+  return ((at.length - 1) * SR) / (at[at.length - 1] - at[0])
+}
+
+console.log('\nexpression: the language')
+{
+  const value = (src: string, vars: Partial<Record<'x' | 'y' | 't' | 'a' | 'b', number>> = {}) => {
+    const c = compileExpr(src)
+    if (!c.ok) return `error: ${c.error}`
+    const m = new ExprMachine(c.program)
+    EXPR_VARS.forEach((v, i) => (m.vars[i] = vars[v] ?? 0))
+    return m.run()
+  }
+  check('arithmetic binds as JavaScript does', value('1 + 2 * 3 - 4 / 2') === 5)
+  check('** groups to the right', value('2 ** 3 ** 2') === 512)
+  check('and a sign on its left goes outside it', value('-2 ** 2') === -4)
+  check('^ is exclusive or, as bytebeat expects', value('5 ^ 3') === 6)
+  check('the bitwise operators work on integers', value('(7 & 3) | (1 << 4)') === 19 && value('-1 >>> 28') === 15)
+  const t = 12345
+  check('a bytebeat one-liner computes what JavaScript computes', value('t*(t>>5|t>>8)', { t }) === t * ((t >> 5) | (t >> 8)))
+  check('?: picks a branch', value('x > 0 ? 1 : -1', { x: 0.5 }) === 1 && value('x > 0 ? 1 : -1', { x: -0.5 }) === -1)
+  check('variables and constants read', value('a * pi + b', { a: 2, b: 1 }) === 2 * Math.PI + 1)
+  check('functions take their values', value('max(x, y)', { x: 1, y: 3 }) === 3 && value('clamp(5, 0, 1)') === 1)
+  check('saw, tri and sq have a period of one', value('saw(0.25)') === -0.5 && value('tri(0)') === 0 && value('tri(0.25)') === 1 && value('sq(0.75)') === -1)
+  check('dividing by nothing is silence, not infinity', value('1 / 0') === 0 && value('sqrt(-1)') === 0)
+  check('hex numbers read', value('0xff') === 255)
+  const err = (src: string) => {
+    const c = compileExpr(src)
+    return c.ok ? '' : c.error
+  }
+  check('a missing bracket is named', err('(1 + 2').includes(')'))
+  check('so is an unknown name', err('foo + 1').includes('foo'))
+  check('and a function without brackets', err('sin x').includes('brackets'))
+  check('and the wrong number of values', err('min(1)').includes('takes 2'))
+  check('and an empty formula', err('   ') !== '')
+  check('a formula knows what it reads', (() => {
+    const c = compileExpr('sin(pi * x) + t')
+    return c.ok && c.program.uses[0] && !c.program.uses[1] && c.program.uses[2]
+  })())
+  check('the graph runs a formula of x against x, and one of t alone against t', horizontalOf({ program: (compileExpr('x * t') as { program: ExprProgram }).program, bytebeat: false }) === 'x'
+    && horizontalOf({ program: (compileExpr('sin(t)') as { program: ExprProgram }).program, bytebeat: false }) === 't')
+}
+
+console.log('\nexpression: the module')
+{
+  const fresh = (overrides: Record<string, number> = {}, text = '') => {
+    const mod = new ExpressionModule(ctx)
+    mod.setText(text)
+    return benched(mod, 'expr', overrides)
+  }
+  const def = fresh()
+  check('the starting formula is a wavefolder on X with A on it', Math.abs(def.step(0.5) - Math.sin(Math.PI * 0.5)) < 1e-6)
+  check('and B added', Math.abs(fresh({ a: 0.5, b: 0.25 }).step(0.5) - (0.5 + 0.25)) < 1e-6)
+  const clock = fresh({}, 't')
+  const ramp = drive(clock, 480)
+  check('t counts seconds', Math.abs(ramp[479] - 479 / SR) < 1e-9)
+  const reset = drive(clock, 10, (i) => [0, 0, i === 4 ? 1 : 0])
+  check('and a rising edge at Reset starts it again', reset[4] === 0 && reset[3] > 0.009)
+  check('a formula that does not compile is silence', fresh({}, 'sin(').step(0.5) === 0)
+  const limited = fresh({}, 'x * 1000')
+  check('a math answer is held within ten', limited.step(1) === 10 && limited.step(-1) === -10)
+
+  const beat = drive(fresh({ mode: 1, rate: 8000 }, 't'), 4800)
+  const expected = (k: number) => ((Math.floor((k * 8000) / SR) | 0) & 255) / 127.5 - 1
+  check('bytebeat counts t at Rate and plays the low byte', [0, 6, 600, 4799].every((k) => Math.abs(beat[k] - expected(k)) < 1e-6), `${beat[600]} vs ${expected(600)}`)
+  const one = drive(fresh({ mode: 1, rate: 8000 }, 't*(t>>5|t>>8)'), 48000)
+  check('a one-liner makes a sound', rmsIn(one) > 0.2, rmsIn(one).toFixed(3))
+}
+
+console.log('\nbubble')
+{
+  const one = drive(benched(new BubbleModule(ctx), 'bubble', { rate: 0.1, spread: 0, rise: 0 }), SR / 10, (i) => [i < 10 ? 1 : 0])
+  check('a trigger makes a bubble', rmsIn(one, 0, 480) > 0.05, rmsIn(one, 0, 480).toFixed(3))
+  check('which dies away', rmsIn(one, 3000, 4800) < rmsIn(one, 0, 480) / 50)
+  // 3 mm rings at 3.26 / 0.003 = 1087 Hz.
+  const hz = crossingHz(one, 0, 240)
+  check('a 3 mm bubble rings near 1.1 kHz', Math.abs(hz - 1087) < 60, `${hz.toFixed(0)} Hz`)
+  const big = crossingHz(drive(benched(new BubbleModule(ctx), 'bubble', { rate: 0.1, spread: 0, rise: 0, size: 12 }), 2400, (i) => [i < 10 ? 1 : 0]), 0, 1200)
+  check('a bigger one lower', big < hz / 3, `${big.toFixed(0)} Hz`)
+  const rising = drive(benched(new BubbleModule(ctx), 'bubble', { rate: 0.1, spread: 0, rise: 1, size: 8 }), 2400, (i) => [i < 10 ? 1 : 0])
+  const early = crossingHz(rising, 0, 200)
+  const late = crossingHz(rising, 300, 900)
+  check('Rise glides it upward as it goes', late > early * 1.05, `${early.toFixed(0)} to ${late.toFixed(0)} Hz`)
+  const rain = drive(benched(new BubbleModule(ctx), 'bubble', { rate: 100 }), SR)
+  let onsets = 0
+  for (let i = 1; i < rain.length; i++) if (Math.abs(rain[i]) > 0.15 && Math.abs(rain[i - 1]) <= 0.15) onsets++
+  check('at a high rate it streams bubbles of its own', rmsIn(rain) > 0.05 && onsets > 50, `${onsets} onsets`)
+}
+
+/** The strongest period between 40 Hz and 2 kHz, by autocorrelation: a tone's pitch, however many times its wave crosses zero. */
+function pitchOf(b: Float32Array, from: number, to: number) {
+  const corr = (lag: number) => {
+    let s = 0
+    for (let i = from; i + lag < to; i++) s += b[i] * b[i + lag]
+    return s
+  }
+  const lo = Math.floor(SR / 2000)
+  const hi = Math.ceil(SR / 40)
+  const c = new Float64Array(hi + 2)
+  let top = 0
+  for (let lag = lo; lag <= hi + 1; lag++) top = Math.max(top, (c[lag] = corr(lag)))
+  // The first peak nearly as high as the highest: a lag twice the period
+  // correlates about as well as the period itself, and the period is the answer.
+  let bestLag = 0
+  for (let lag = lo + 1; lag <= hi && !bestLag; lag++) {
+    if (c[lag] >= c[lag - 1] && c[lag] >= c[lag + 1] && c[lag] > top * 0.9) bestLag = lag
+  }
+  if (!bestLag) return 0
+  // Refined between samples with a parabola through the peak's neighbours.
+  const l = c[bestLag - 1]
+  const m = c[bestLag]
+  const r = c[bestLag + 1]
+  const shift = (l - r) / (2 * (l - 2 * m + r) || 1)
+  return SR / (bestLag + shift)
+}
+
+console.log('\nfriction')
+{
+  // On the bench every jack counts as patched, so the gate is held high by hand.
+  const bowing = () => [1]
+  const bowed = drive(benched(new FrictionModule(ctx), 'friction'), SR, bowing)
+  const hz = pitchOf(bowed, SR / 2, SR / 2 + 8192)
+  check('a bowed string sounds its Pitch', Math.abs(hz / 110 - 1) < 0.02, `${hz.toFixed(1)} Hz`)
+  check('and is a steady tone', rmsIn(bowed, SR / 2) > 0.1, rmsIn(bowed, SR / 2).toFixed(3))
+  const still = drive(benched(new FrictionModule(ctx), 'friction', { speed: 0 }), SR / 4, bowing)
+  check('a still bow is silent', rmsIn(still) < 1e-4)
+  const gated = drive(benched(new FrictionModule(ctx), 'friction'), SR / 2, (i) => [i < SR / 4 ? 1 : 0])
+  check('a gate bows while it is high, and lets go', rmsIn(gated, SR / 8, SR / 4) > 0.1 && rmsIn(gated, (SR * 3) / 8, SR / 2) < rmsIn(gated, SR / 8, SR / 4) / 10)
+  const high = pitchOf(drive(benched(new FrictionModule(ctx), 'friction', { pitch: 440 }), SR, bowing), SR / 2, SR / 2 + 8192)
+  check('Pitch moves it', Math.abs(high / 440 - 1) < 0.02, `${high.toFixed(1)} Hz`)
+}
+
+console.log('\nscrape')
+{
+  const at = (speed: number, extra: Record<string, number> = {}) => drive(benched(new ScrapeModule(ctx), 'scrape', { speed, ...extra }), SR)
+  check('standing still it is silent', rmsIn(at(0)) === 0)
+  const slow = at(0.15)
+  const fast = at(1)
+  check('faster is louder', rmsIn(fast) > rmsIn(slow) * 2, `${rmsIn(slow).toFixed(3)} to ${rmsIn(fast).toFixed(3)}`)
+  check('and brighter', crossingHz(fast) > crossingHz(slow), `${crossingHz(slow).toFixed(0)} to ${crossingHz(fast).toFixed(0)} crossings a second`)
+  // Rolling: an envelope that swells and thumps three times a second at full speed.
+  const envAt = (b: Float32Array, hz: number) => {
+    const frame = SR / 100
+    let re = 0
+    let im = 0
+    for (let f = 0; f < b.length / frame; f++) {
+      const e = rmsIn(b, f * frame, (f + 1) * frame)
+      re += e * Math.cos((2 * Math.PI * hz * f) / 100)
+      im += e * Math.sin((2 * Math.PI * hz * f) / 100)
+    }
+    return Math.hypot(re, im)
+  }
+  const roll = drive(benched(new ScrapeModule(ctx), 'scrape', { speed: 1, mode: 1 }), SR * 2)
+  check('Roll turns: its level swells once a revolution', envAt(roll, 3) > envAt(roll, 7) * 3 && envAt(roll, 3) > envAt(fast, 3) * 3, `${envAt(roll, 3).toFixed(2)} at 3 Hz, ${envAt(roll, 7).toFixed(2)} at 7`)
+  const coarse = at(1, { rough: 1 })
+  const peakOf = (b: Float32Array) => b.reduce((m, v) => Math.max(m, Math.abs(v)), 0)
+  check('a rough surface knocks harder than a fine one', peakOf(coarse) / rmsIn(coarse) > peakOf(at(1, { rough: 0 })) / rmsIn(at(1, { rough: 0 })), `crest ${(peakOf(coarse) / rmsIn(coarse)).toFixed(1)}`)
+}
+
+console.log('\nsubharmonic')
+{
+  const tone = (hz: number) => (i: number) => [0.8 * Math.sin((2 * Math.PI * hz * i) / SR)]
+  const sub = drive(benched(new SubharmonicModule(ctx), 'sub'), SR, tone(100), 1)
+  const tail = sub.subarray(SR / 2)
+  check('-1 Oct sounds an octave under the input', powerAt(tail, 50) > powerAt(tail, 100) * 4, `${powerAt(tail, 50).toFixed(3)} at 50 Hz, ${powerAt(tail, 100).toFixed(3)} at 100`)
+  const two = drive(benched(new SubharmonicModule(ctx), 'sub', { sub1: 0, sub2: 1 }), SR, tone(100), 1).subarray(SR / 2)
+  check('and -2 Oct two octaves under', powerAt(two, 25) > powerAt(two, 50) * 4 && powerAt(two, 25) > powerAt(two, 100) * 4, `${powerAt(two, 25).toFixed(3)} at 25 Hz`)
+  const quiet = drive(benched(new SubharmonicModule(ctx), 'sub'), SR / 2, (i) => [i < SR / 4 ? 0.8 * Math.sin((2 * Math.PI * 100 * i) / SR) : 0], 1)
+  check('it follows the input down to silence', rmsIn(quiet, (SR * 3) / 8, SR / 2) < rmsIn(quiet, SR / 8, SR / 4) / 20)
+  const dry = drive(benched(new SubharmonicModule(ctx), 'sub', { sub1: 0, sub2: 0 }), 4800, tone(100))
+  check('with the octaves down, Out is the input', dry.every((v, i) => Math.abs(v - tone(100)(i)[0]) < 1e-6))
+}
+
+console.log('\nreverse')
+{
+  // A pluck: a sharp start, then dying away. Backwards it is a swell.
+  const pluck = (i: number) => [i < SR ? Math.exp(-i / (SR * 0.08)) * Math.sin((2 * Math.PI * 440 * i) / SR) * 0.8 : 0]
+  const wet = drive(benched(new ReverseModule(ctx), 'reverse', { length: 0.5, swell: 0, mix: 1 }), SR * 1.5, pluck, 1)
+  const env = (b: Float32Array, f: number) => rmsIn(b, f * 480, (f + 1) * 480)
+  let peak = 0
+  let peakAt = 0
+  let onset = -1
+  const frames = Math.floor(wet.length / 480)
+  for (let f = 0; f < frames; f++) if (env(wet, f) > peak) [peak, peakAt] = [env(wet, f), f]
+  for (let f = 0; f < frames && onset < 0; f++) if (env(wet, f) > peak * 0.1) onset = f
+  check('a pluck played backwards swells up to its attack', peakAt - onset > 10, `${(peakAt - onset) * 10} ms from onset to peak`)
+  const dry = drive(benched(new ReverseModule(ctx), 'reverse', { mix: 0 }), 4800, pluck)
+  check('Mix at zero is the dry sound', dry.every((v, i) => Math.abs(v - pluck(i)[0]) < 1e-6))
+  const fed = drive(benched(new ReverseModule(ctx), 'reverse', { length: 0.2, feedback: 0.8, mix: 1 }), SR * 2, (i) => [i < 2400 ? pluck(i)[0] : 0], 1)
+  const once = drive(benched(new ReverseModule(ctx), 'reverse', { length: 0.2, feedback: 0, mix: 1 }), SR * 2, (i) => [i < 2400 ? pluck(i)[0] : 0], 1)
+  check('Feedback sends it round again', rmsIn(fed, SR, SR * 2) > rmsIn(once, SR, SR * 2) * 10 + 1e-4, `${rmsIn(fed, SR, SR * 2).toFixed(4)} vs ${rmsIn(once, SR, SR * 2).toFixed(4)}`)
+}
+
+console.log('\nshimmer')
+{
+  const burst = (i: number) => [i < SR / 4 ? 0.5 * Math.sin((2 * Math.PI * 220 * i) / SR) : 0]
+  const tail = (shimmer: number, interval = 3) => {
+    const b = drive(benched(new ShimmerModule(ctx), 'shimmer', { shimmer, interval, mix: 1, decay: 6 }), SR * 2, burst)
+    return b.subarray(SR, SR * 2)
+  }
+  const plain = tail(0)
+  const shim = tail(1)
+  const up = (b: Float32Array) => powerAt(b, 440) / (powerAt(b, 220) + 1e-9)
+  check('the tail climbs an octave', up(shim) > up(plain) * 3, `${up(plain).toFixed(3)} to ${up(shim).toFixed(3)} at 440 against 220`)
+  const down = tail(1, 0)
+  const under = (b: Float32Array) => powerAt(b, 110) / (powerAt(b, 220) + 1e-9)
+  check('or falls one, at −12', under(down) > under(plain) * 3, `${under(plain).toFixed(3)} to ${under(down).toFixed(3)} at 110 against 220`)
+  check('and it is a reverb: still ringing a second after the sound stopped', rmsIn(plain) > 0.005, rmsIn(plain).toFixed(4))
+  // Shifted feedback is not independent of what it is fed back beside, and
+  // once let the loop climb past a gain of one: the tail swelled into a
+  // roar and stayed. At full Shimmer it must still die away at Decay.
+  const full = drive(benched(new ShimmerModule(ctx), 'shimmer', { shimmer: 1, decay: 2, mix: 1 }), SR * 6, burst)
+  check('even at full Shimmer the tail dies away at Decay', rmsIn(full, SR * 5, SR * 6) < rmsIn(full, SR / 2, SR) / 100 && full.every((v) => Math.abs(v) < 1),
+    `${rmsIn(full, SR / 2, SR).toFixed(4)} then ${rmsIn(full, SR * 5, SR * 6).toExponential(1)}`)
+}
+
+console.log('\nhowl')
+{
+  const howl = drive(benched(new HowlModule(ctx), 'howl', { feedback: 1.3, focus: 1, drift: 0 }), SR)
+  check('past a feedback of one it howls with nothing at In', rmsIn(howl, SR / 2) > 0.2, rmsIn(howl, SR / 2).toFixed(3))
+  const hz = crossingHz(howl, SR / 2)
+  check('near its Pitch', Math.abs(hz / 900 - 1) < 0.15, `${hz.toFixed(0)} Hz`)
+  const tame = drive(benched(new HowlModule(ctx), 'howl', { feedback: 0.5 }), SR)
+  check('below one it stays quiet', rmsIn(tame, SR / 2) < 0.02, rmsIn(tame, SR / 2).toFixed(4))
+  const loud = drive(benched(new HowlModule(ctx), 'howl', { feedback: 1.5, focus: 0 }), SR)
+  check('and the limiter holds it under full scale', loud.every((v) => Math.abs(v) <= 1))
+}
+
+console.log('\nspring mass')
+{
+  const step = (damping: number) => drive(benched(new SpringMassModule(ctx), 'mass', { freq: 4, damping }), SR * 2, () => [1])
+  const bouncy = step(0.1)
+  const peak = bouncy.reduce((m, v) => Math.max(m, v), 0)
+  check('it overshoots a step', peak > 1.5, `peaks at ${peak.toFixed(2)}`)
+  check('and settles on it', Math.abs(bouncy[bouncy.length - 1] - 1) < 0.02, bouncy[bouncy.length - 1].toFixed(3))
+  const centred = bouncy.map((v) => v - 1)
+  const hz = crossingHz(centred, 0, SR)
+  check('swinging at its Freq', Math.abs(hz / 4 - 1) < 0.05, `${hz.toFixed(2)} Hz`)
+  const critical = step(1)
+  check('at a damping of one it arrives without overshooting', critical.every((v) => v <= 1.0001))
+  const kicked = drive(benched(new SpringMassModule(ctx), 'mass', { freq: 4, damping: 0.05, kick: 2 }), SR, (i) => [0, i === 10 ? 1 : 0])
+  const swing = kicked.reduce((m, v) => Math.max(m, Math.abs(v)), 0)
+  check('a kick swings it about as far as Kick', swing > 1.6 && swing < 2.1, swing.toFixed(2))
+  check('and Vel says how fast it is moving', (() => {
+    const b = benched(new SpringMassModule(ctx), 'mass', { freq: 4, damping: 0.05, kick: 2 })
+    b.step(0, 1)
+    return b.out(1) > 1.5
+  })())
+}
+
+console.log('\nengine')
+{
+  const run = (overrides: Record<string, number>, rpmCv = 0) =>
+    drive(benched(new EngineModule(ctx), 'engine', { rough: 0, ...overrides }), SR, () => [rpmCv, 0])
+  // One cylinder fires once every two turns: 6000 rpm is fifty bangs a second.
+  const single = pitchOf(run({ rpm: 6000, cylinders: 1 }), SR / 2, SR / 2 + 8192)
+  check('one cylinder bangs once every two turns', Math.abs(single / 50 - 1) < 0.03, `${single.toFixed(1)} a second at 6000 rpm`)
+  const faster = pitchOf(run({ rpm: 12000, cylinders: 1 }), SR / 2, SR / 2 + 8192)
+  check('twice the revs, twice the bangs', Math.abs(faster / 100 - 1) < 0.03, `${faster.toFixed(1)} a second`)
+  const revved = pitchOf(run({ rpm: 3000, cylinders: 1 }, 1), SR / 2, SR / 2 + 8192)
+  check('a volt at RPM is an octave up', Math.abs(revved / 50 - 1) < 0.03, `${revved.toFixed(1)} a second`)
+  // Four cylinders at 3000 rpm bang a hundred times a second, where one
+  // bangs twenty-five: the hundred is the strong line.
+  const lines = (b: Float32Array) => powerAt(b.subarray(SR / 2), 100) / (powerAt(b.subarray(SR / 2), 25) + 1e-9)
+  const four = run({ rpm: 3000, cylinders: 4 })
+  const one = run({ rpm: 3000, cylinders: 1 })
+  check('more cylinders, more bangs a turn', lines(four) > lines(one) * 3, `${lines(one).toFixed(2)} to ${lines(four).toFixed(2)} at 100 against 25 Hz`)
+  const idle = run({ load: 0 })
+  const open = run({ load: 1 })
+  check('opening the throttle is louder', rmsIn(open) > rmsIn(idle) * 1.5, `${rmsIn(idle).toFixed(3)} to ${rmsIn(open).toFixed(3)}`)
+  check('and brighter', crossingHz(open) > crossingHz(idle), `${crossingHz(idle).toFixed(0)} to ${crossingHz(open).toFixed(0)} crossings a second`)
+  const dead = run({ misfire: 1 })
+  check('every bang a misfire, and only the valves tick', rmsIn(dead) < rmsIn(run({})) / 10, rmsIn(dead).toFixed(4))
+  const coughing = run({ misfire: 0.5 })
+  check('half of them, and it coughs', rmsIn(coughing) < rmsIn(run({})) * 0.9 && rmsIn(coughing) > rmsIn(dead) * 2)
+}
+
+console.log('\nround robin')
+{
+  /** Which output each trigger went to, for a train of short gates. */
+  const route = (overrides: Record<string, number>, hits: number, resetAt = -1) => {
+    const b = benched(new RoundRobinModule(ctx), 'robin', overrides)
+    const went: number[] = []
+    for (let h = 0; h < hits; h++) {
+      for (let i = 0; i < 40; i++) {
+        b.step(i < 20 ? 1 : 0, h === resetAt && i === 30 ? 1 : 0)
+        if (i === 10) went.push([0, 1, 2, 3].findIndex((k) => b.out(k) === 1))
+      }
+    }
+    return went
+  }
+  check('Cycle hands each gate to the next output', route({ mode: 0 }, 8).join() === '0,1,2,3,0,1,2,3')
+  check('round as many as Count says', route({ mode: 0, count: 3 }, 6).join() === '0,1,2,0,1,2')
+  check('Reset sends the next one to the first again', route({ mode: 0 }, 4, 1).join() === '0,1,0,1')
+  const random = route({ mode: 1 }, 400)
+  check('Random never picks the same one twice running', random.every((k, i) => i === 0 || k !== random[i - 1]))
+  check('and uses them all', [0, 1, 2, 3].every((k) => random.filter((x) => x === k).length > 60))
+  const bag = route({ mode: 2 }, 400)
+  check('Shuffle uses every output once before any comes round again', [...Array(100).keys()].every((g) => new Set(bag.slice(g * 4, g * 4 + 4)).size === 4))
+  check('and never repeats across the turn of the bag', bag.every((k, i) => i === 0 || k !== bag[i - 1]))
+  const b = benched(new RoundRobinModule(ctx), 'robin', { mode: 0 })
+  let held = 0
+  for (let i = 0; i < 100; i++) {
+    b.step(i < 60 ? 1 : 0, 0)
+    if (b.out(0) === 1) held++
+  }
+  check('the gate passes for as long as it is held', held === 60, `${held} of 60`)
+  b.step(1, 0)
+  check('and Index says which output has it', Math.abs(b.out(4) - 1 / 3) < 1e-6, b.out(4).toFixed(3))
+}
+
+console.log('\nchip')
+{
+  const play = (overrides: Record<string, number>, n = SR / 2, gate: (i: number) => number = () => 1) =>
+    drive(benched(new ChipModule(ctx), 'chip', overrides), n, (i) => [gate(i), 0])
+  const lead = play({ wave: 1, pitch: 110, level: 1 })
+  const highShare = lead.filter((v) => v > 0.5).length / lead.filter((v) => Math.abs(v) > 0.5).length
+  check('a 25% pulse is high a quarter of the time', Math.abs(highShare - 0.25) < 0.01, highShare.toFixed(3))
+  // 220 Hz goes through the divider as timer 507: 1789773 / (16 x 508).
+  const hz = crossingHz(play({ wave: 2, pitch: 220 }))
+  check('a note is the nearest the chip can play', Math.abs(hz - 1789773 / (16 * 508)) < 0.3, `${hz.toFixed(2)} Hz`)
+  const top = crossingHz(play({ wave: 2, pitch: 4186 }))
+  check('and drifts out of tune at the top, as it did', Math.abs(top - 1789773 / (16 * 27)) < 10 && top < 4186 - 30, `${top.toFixed(0)} Hz for 4186`)
+  check('Level has sixteen steps', same(play({ wave: 2, level: 0.5 }), play({ wave: 2, level: 0.52 })) && !same(play({ wave: 2, level: 0.5 }), play({ wave: 2, level: 0.6 })))
+  check('the triangle is built from steps', distinctValues(play({ wave: 3, pitch: 110, level: 1 })) <= 16, `${distinctValues(play({ wave: 3, pitch: 110, level: 1 }))} levels`)
+  // Metal loops its noise every 93 steps; at this pitch a step is every
+  // 254 clocks, so the loop is 93 x 254 / (1789773 / 48000) samples.
+  const loopAt = (93 * 254) / (1789773 / SR)
+  const periodic = (b: Float32Array) => {
+    let best = 0
+    for (let lag = Math.floor(loopAt) - 3; lag <= Math.ceil(loopAt) + 3; lag++) {
+      let s = 0
+      let n = 0
+      for (let i = 0; i + lag < b.length; i++) {
+        s += b[i] * b[i + lag]
+        n += b[i] * b[i]
+      }
+      best = Math.max(best, s / n)
+    }
+    return best
+  }
+  const metal = periodic(play({ wave: 5, pitch: 205 }))
+  const hiss = periodic(play({ wave: 4, pitch: 205 }))
+  check('Metal is a loop of noise that repeats; Noise does not', metal > 0.6 && hiss < 0.2, `${metal.toFixed(2)} and ${hiss.toFixed(2)}`)
+  const swept = play({ wave: 2, pitch: 220, sweep: 2 }, SR)
+  check('Sweep bends the pitch from the gate', crossingHz(swept, SR / 2, SR) > crossingHz(swept, 0, SR / 8) * 1.8)
+  const decayed = play({ wave: 2, decay: 0.2 }, SR / 2)
+  check('Decay steps it down to nothing', rmsIn(decayed, 0, 2400) > 0.3 && rmsIn(decayed, 12000, 24000) === 0)
+  check('a gate held low is silence', rmsIn(play({}, 4800, () => 0)) === 0)
+}
+
+console.log('\ndoppler')
+{
+  const tone = (i: number) => 0.5 * Math.sin((2 * Math.PI * 1000 * i) / SR)
+  // Pos empty, so Trig sends it past.
+  const pass = drive(benched(new DopplerModule(ctx), 'doppler', { speed: 50, distance: 5, range: 80, air: 0 }, [2]), SR * 3.2, (i) => [tone(i), i < 10 ? 1 : 0, 0])
+  const right = drive(benched(new DopplerModule(ctx), 'doppler', { speed: 50, distance: 5, range: 80, air: 0 }, [2]), SR * 3.2, (i) => [tone(i), i < 10 ? 1 : 0, 0], 1)
+  // Half a second in it is about 55 m off and closing at 50 m/s.
+  const coming = crossingHz(pass, SR * 0.5, SR * 0.8)
+  const going = crossingHz(pass, SR * 2.5, SR * 2.8)
+  const up = 343 / (343 - 50 * 0.99)
+  const down = 343 / (343 + 50 * 0.99)
+  check('coming in it is higher, by the Doppler shift', Math.abs(coming / 1000 - up) < 0.02, `${coming.toFixed(0)} Hz, ${(1000 * up).toFixed(0)} expected`)
+  check('and going away lower', Math.abs(going / 1000 - down) < 0.02, `${going.toFixed(0)} Hz, ${(1000 * down).toFixed(0)} expected`)
+  const near = rmsIn(pass, SR * 1.5, SR * 1.7) + rmsIn(right, SR * 1.5, SR * 1.7)
+  const far = rmsIn(pass, SR * 0.2, SR * 0.4) + rmsIn(right, SR * 0.2, SR * 0.4)
+  check('loudest as it passes', near > far * 4, `${far.toFixed(3)} far, ${near.toFixed(3)} near`)
+  check('and it crosses from left to right', rmsIn(pass, SR * 0.4, SR * 0.7) > rmsIn(right, SR * 0.4, SR * 0.7) * 3 && rmsIn(right, SR * 2.5, SR * 2.8) > rmsIn(pass, SR * 2.5, SR * 2.8) * 3)
+  const held = drive(benched(new DopplerModule(ctx), 'doppler', { air: 0 }), SR, (i) => [tone(i), 0, 0])
+  check('held still by Pos, there is no shift', Math.abs(crossingHz(held, SR / 2) - 1000) < 1, `${crossingHz(held, SR / 2).toFixed(1)} Hz`)
+}
+
+console.log('\nbouncing ball')
+{
+  const b = benched(new BounceModule(ctx), 'bounce', { fall: 0.4, bounce: 0.6 })
+  const hits: number[] = []
+  const vels: number[] = []
+  let ended = -1
+  let topHeight = 0
+  let was = 0
+  for (let i = 0; i < SR * 3; i++) {
+    const g = b.step(i < 10 ? 1 : 0)
+    if (i === 5) topHeight = b.out(2)
+    if (g === 1 && was === 0) {
+      hits.push(i)
+      vels.push(b.out(1))
+    }
+    was = g
+    if (b.out(3) === 1 && ended < 0) ended = i
+  }
+  check('it lands Fall after it is dropped', Math.abs(hits[0] / SR - 0.4) < 0.002, `${(hits[0] / SR).toFixed(3)} s`)
+  const gaps = hits.slice(1).map((h, k) => h - hits[k])
+  check('the first hop is twice the fall at Bounce of the speed', Math.abs(gaps[0] / SR - 2 * 0.4 * 0.6) < 0.002, `${(gaps[0] / SR).toFixed(3)} s`)
+  check('and each gap is Bounce times the last', gaps.slice(1, 6).every((g, k) => Math.abs(g / gaps[k] - 0.6) < 0.01))
+  check('each hit Bounce times as hard', vels.slice(1, 6).every((v, k) => Math.abs(v / vels[k] - 0.6) < 1e-6))
+  check('until it comes to rest, and End says so', ended > hits[hits.length - 1] - 1 && hits.length > 5 && hits.length < 30, `${hits.length} bounces`)
+  check('Height starts at the top', topHeight > 0.99)
+}
+
+console.log('\nloop seam')
+{
+  // A slow wave that does not fit the loop a whole number of times, so a
+  // plain loop would jump at the seam.
+  const slow = (i: number) => Math.sin((2 * Math.PI * 3.7 * i) / SR) * 0.8
+  const L = 0.5
+  const F = 0.1
+  const { loop, cross } = seamFrames(L, F, SR)
+  const out = drive(benched(new LoopSeamModule(ctx), 'seam', { length: L, fade: F }), loop * 4 + cross, (i) => [slow(i), 0, 0])
+  check('while it records, the input passes through', [0, 1000, loop + cross - 1].every((i) => Math.abs(out[i] - slow(i)) < 1e-6))
+  const second = loop * 2 + cross
+  check('then it repeats every Length', [0, 777, loop - 1].every((k) => Math.abs(out[second + k] - out[second + loop + k]) < 1e-6))
+  let step = 0
+  for (let i = second + 1; i < second + loop; i++) step = Math.max(step, Math.abs(out[i] - out[i - 1]))
+  const seamJump = Math.abs(out[second + loop] - out[second + loop - 1])
+  check('with no jump at the seam', seamJump < step * 2, `${seamJump.toFixed(5)} at the seam, ${step.toFixed(5)} anywhere else`)
+  const raw = Math.abs(slow(loop) - slow(0))
+  check('where a plain loop would have jumped', raw > step * 50, raw.toFixed(3))
 }
 
 console.log(failures === 0 ? '\nall clear' : `\n${failures} check(s) failed`)

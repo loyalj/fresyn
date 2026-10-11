@@ -6,6 +6,7 @@ import { addRecorded } from '../song/record'
 import { loadPrefs, savePrefs } from '../patch/storage'
 import type { NoteTarget } from '../song/bind'
 import type { Tuning } from '../song/tuning'
+import type { Taps } from '../song/route'
 import {
   contextNotes,
   firstPlacement,
@@ -18,6 +19,7 @@ import {
 } from '../song/edit'
 import { barsIn, patternBars } from '../song/timeline'
 import {
+  MASTER_RACK,
   PPQ,
   SWING_MAX,
   SWING_MIN,
@@ -93,6 +95,23 @@ interface Props {
   trackId: string
   onSelectTrack: (id: string) => void
   onAddTrack: () => void
+  /** A new track that is a bus: a rack holding a Bus In. */
+  onAddBus: () => void
+  /** The tracks whose racks have a Bus In, which channels can be routed to. */
+  buses: ReadonlySet<string>
+  /** The tracks whose racks have a Clips module: the audio tracks, which play sounds. */
+  audioTracks: ReadonlySet<string>
+  /** A new audio track: a rack holding a Clips module. */
+  onAddAudio: () => void
+  /** Whether the song has a master rack: the rack the whole mix goes through. */
+  hasMaster: boolean
+  /** Put the master rack on the bench, making it if there is none. */
+  onOpenMaster: () => void
+  onRemoveMaster: () => void
+  /** An audio file dropped on the playlist: a sound, and a clip of it where it landed. */
+  onDropAudio: (file: File, tick: number, lane: number) => void
+  /** The tracks each rack hears through a Track In, which a route must not loop through. */
+  taps: Taps
   onRemoveTrack: (id: string) => void
   onTrack: (id: string, change: Partial<Omit<Track, 'id'>>, key?: string) => void
   patternId: string
@@ -167,6 +186,15 @@ export const SongDock = memo(function SongDock({
   trackId,
   onSelectTrack,
   onAddTrack,
+  onAddBus,
+  buses,
+  audioTracks,
+  onAddAudio,
+  onDropAudio,
+  hasMaster,
+  onOpenMaster,
+  onRemoveMaster,
+  taps,
   onRemoveTrack,
   onTrack,
   patternId,
@@ -563,7 +591,8 @@ export const SongDock = memo(function SongDock({
                   else onSelectPattern(e.target.value)
                 }}
               >
-                {song.patterns.map((p) => (
+                {/* Patterns of notes: a sound has nothing to write. */}
+                {song.patterns.filter((p) => !p.audio).map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}
                   </option>
@@ -679,6 +708,13 @@ export const SongDock = memo(function SongDock({
               onSolo={(id) => onEdit((s) => soloTrack(s, id))}
               engine={engine}
               showHidden={showHidden}
+              buses={buses}
+              taps={taps}
+              onAddBus={onAddBus}
+              hasMaster={hasMaster}
+              masterOpen={trackId === MASTER_RACK}
+              onOpenMaster={onOpenMaster}
+              onRemoveMaster={onRemoveMaster}
             />
           ) : (
           <>
@@ -692,6 +728,12 @@ export const SongDock = memo(function SongDock({
             targets={targets}
             onSelect={onSelectTrack}
             onAdd={onAddTrack}
+            onAddBus={onAddBus}
+            onAddAudio={onAddAudio}
+            audioTracks={audioTracks}
+            hasMaster={hasMaster}
+            onOpenMaster={onOpenMaster}
+            onRemoveMaster={onRemoveMaster}
             onRemove={onRemoveTrack}
             onChange={onTrack}
             onSolo={(id) => onEdit((s) => soloTrack(s, id))}
@@ -701,7 +743,12 @@ export const SongDock = memo(function SongDock({
           />
           )}
 
-          {parts && (view === 'roll' && pattern ? (
+          {/* The master rack plays no notes: nothing for the roll to write. */}
+          {parts && view === 'roll' && trackId === MASTER_RACK ? (
+            <div className="roll-master">
+              The master rack plays no notes: it is the whole mix on its way to the master bus. Pick a track to write into.
+            </div>
+          ) : parts && (view === 'roll' && pattern ? (
             <parts.PianoRoll
               notes={mine}
               ghosts={ghosts}
@@ -750,6 +797,8 @@ export const SongDock = memo(function SongDock({
                 onSelectPattern(id)
                 show('roll')
               }}
+              onSelectTrack={onSelectTrack}
+              onDropAudio={onDropAudio}
               section={section}
               onSection={onSection}
               transport={transport}

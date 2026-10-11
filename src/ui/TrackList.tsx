@@ -11,7 +11,7 @@ import {
   tracksMatching,
   updateFolder,
 } from '../song/folder'
-import type { Folder, Song, Track } from '../song/types'
+import { MASTER_RACK, type Folder, type Song, type Track } from '../song/types'
 import { ContextMenu, type MenuItem } from './Menu'
 import { nextHue } from './palette'
 import { NameField } from './NameField'
@@ -23,6 +23,15 @@ interface Props {
   targets: ReadonlyMap<string, NoteTarget>
   onSelect: (id: string) => void
   onAdd: () => void
+  onAddBus: () => void
+  /** A new audio track, for sounds to play on. */
+  onAddAudio: () => void
+  /** Whether the song has a master rack, listed above the tracks while it does. */
+  hasMaster: boolean
+  onOpenMaster: () => void
+  onRemoveMaster: () => void
+  /** The tracks whose racks have a Clips module, which play sounds rather than notes. */
+  audioTracks: ReadonlySet<string>
   onRemove: (id: string) => void
   onChange: (id: string, change: Partial<Omit<Track, 'id'>>, key?: string) => void
   /**
@@ -81,6 +90,12 @@ export function TrackList({
   targets,
   onSelect,
   onAdd,
+  onAddBus,
+  onAddAudio,
+  audioTracks,
+  hasMaster,
+  onOpenMaster,
+  onRemoveMaster,
   onRemove,
   onChange,
   onSolo,
@@ -324,7 +339,13 @@ export function TrackList({
         {/* Said here rather than only on the transport bar, because with
             several tracks the one that cannot be played is not necessarily
             the one you are looking at. */}
-        {!target && <span className="track-warn" title="No Keyboard or Trigger in this rack">!</span>}
+        {audioTracks.has(track.id) ? (
+          <span className="track-kind" title="An audio track: its Clips module plays the sounds put on it in the playlist">
+            A
+          </span>
+        ) : (
+          !target && <span className="track-warn" title="No Keyboard or Trigger in this rack">!</span>
+        )}
         {target?.kind === 'trigger' && (
           <span className="track-kind" title="No Keyboard: every note fires the Trigger">
             T
@@ -511,6 +532,18 @@ export function TrackList({
       </div>
 
       <div className="tracks-rows">
+        {/* The master rack, above every track: not one of them, but a rack
+            to put on the bench like one. */}
+        {hasMaster && (
+          <div className={`track track-master${selected === MASTER_RACK ? ' on' : ''}`}>
+            <button className="track-master-name" onClick={onOpenMaster} title="The rack the whole mix goes through, before the master bus" type="button">
+              Master
+            </button>
+            <button className="track-remove" onClick={onRemoveMaster} title="Take the master rack away" aria-label="Remove master rack" type="button">
+              ×
+            </button>
+          </div>
+        )}
         {rows.map((row, i) =>
           row.kind === 'track'
             ? trackRow(row.track, row.pinnedBand)
@@ -524,6 +557,12 @@ export function TrackList({
       <div className="tracks-foot">
         <button className="track-add" onClick={onAdd} type="button">
           + Track
+        </button>
+        <button className="track-add" onClick={onAddBus} title="A track to route other tracks to, and put effects on" type="button">
+          + Bus
+        </button>
+        <button className="track-add" onClick={onAddAudio} title="A track for sounds: drop audio files on the playlist to play on it" type="button">
+          + Audio
         </button>
         <button
           className="track-add"

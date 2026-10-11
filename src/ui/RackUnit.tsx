@@ -41,6 +41,8 @@ export interface RackActions {
   setParams: (id: string, changes: Record<string, number>) => void
   /** What a Sampler plays, or nothing. */
   sample: (id: string, file: File | null) => void
+  /** A module's text -- an Expression's formula -- set, or emptied back to its start. */
+  text: (id: string, text: string) => void
   /** A Drum Kit's pad loaded from the library by instrument id, or emptied. */
   kitLoad: (id: string, slot: number, instrument: string | null) => void
   /** A pad renamed, or moved to another note. */
@@ -193,6 +195,7 @@ function UnitFaces({
     [actions, moduleId],
   )
   const onSample = useCallback((file: File | null) => actions.sample(moduleId, file), [actions, moduleId])
+  const onText = useCallback((text: string) => actions.text(moduleId, text), [actions, moduleId])
   const kit = useMemo(
     () =>
       def.type === 'kit'
@@ -281,6 +284,8 @@ function UnitFaces({
             onChanges={onChanges}
             sample={module.sample}
             onSample={onSample}
+            text={module.text}
+            onText={onText}
             tuning={tuning}
             kit={kit}
           />

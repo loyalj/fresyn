@@ -49,6 +49,11 @@ export class DelayLine {
     return this.buf[i] + (this.buf[j] - this.buf[i]) * frac
   }
 
+  /** Every sample of the line set to one value, as though it had been holding it for ever. */
+  fill(x: number) {
+    this.buf.fill(x)
+  }
+
   push(x: number) {
     this.buf[this.write] = x
     this.write++

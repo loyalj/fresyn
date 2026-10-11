@@ -18,7 +18,7 @@
  * Run with: npm run check:song
  */
 import { GraphEngine, type EngineEvent } from '../src/dsp/GraphEngine'
-import { SongEngine } from '../src/dsp/SongEngine'
+import { MASTER_RACK, SongEngine } from '../src/dsp/SongEngine'
 import { compile } from '../src/patch/compile'
 import type { Cable, Patch, PatchModule } from '../src/patch/types'
 import { engineEvents, kitRow, noteTarget } from '../src/song/bind'
@@ -44,6 +44,7 @@ import {
   soloTrack,
 } from '../src/song/edit'
 import { fromStoredProject, toStoredProject } from '../src/song/project'
+import { canHear, canRoute, routeTo, setSend, tapsOf, unrouteFrom } from '../src/song/route'
 import { addFolder, heardTracks, moveToFolder, removeFolder, soloFolder, tracksMatching, updateFolder } from '../src/song/folder'
 import { addClip, duplicateClips, moveClips, removeClips, splitClip, trimClip } from '../src/song/clip'
 import {
@@ -131,7 +132,7 @@ import {
 import { describeEdit } from '../src/hooks/describeEdit'
 import { defaultPatch } from '../src/patch/defaultPatch'
 import { initialValues as rackValues } from '../src/patch/edit'
-import { barTicks, beatTicks, benchSong, minPatternLength, PITCH_RANGE, PPQ, type Song } from '../src/song/types'
+import { barTicks, beatTicks, benchSong, DEFAULT_CONSOLE, minPatternLength, PITCH_RANGE, PPQ, type Placement, type Song } from '../src/song/types'
 import { defOf } from '../src/patch/defs'
 /** The Keyboard's own reach, for the checks about what happens at an edge. */
 const TWO_OCTAVES = { low: 0, high: 24 }
@@ -3595,6 +3596,506 @@ console.log('\nMIDI files brought in')
   const back = readImport(parseMidiFile(songToMidi(s, { noteOf: (track, row) => (track === s.tracks[1].id ? row + 12 : row + rowZero(tuningOf(made.racks[track]))) })) as MidiFile)
   check('a song exported and brought back has the same notes', JSON.stringify(back.parts.map((p) => p.notes.map((n) => [n.tick, n.length, n.note]))) === JSON.stringify(imp.parts.map((p) => p.notes.map((n) => [n.tick, n.length, n.note]))),
     JSON.stringify(back.parts.map((p) => p.notes.length)))
+}
+
+console.log('\nbuses')
+{
+  const busPatch: Patch = { modules: [mod('bus1', 'busin')], cables: [] }
+  const alone = runTracks({ a: tonePatch(220) }, 8192)
+  const worstOf = (x: Float32Array, y: Float32Array, k = 1) => {
+    let w = 0
+    for (let i = 0; i < x.length; i++) w = Math.max(w, Math.abs(x[i] - y[i] * k))
+    return w
+  }
+
+  // The bus is listed first, so this only works if it is rendered after
+  // what feeds it.
+  const routed = runTracks({ b: busPatch, a: tonePatch(220) }, 8192, (e) =>
+    e.setMix({ a: { gain: 1, audible: true, out: 'b' }, b: { gain: 1, audible: true } }),
+  )
+  check('a track routed to a bus comes out of it, unchanged by a bare Bus In', worstOf(routed.left, alone.left) < 1e-6, `worst ${worstOf(routed.left, alone.left)}`)
+  check('in both sides', worstOf(routed.right, alone.right) < 1e-6)
+
+  const quiet = runTracks({ b: busPatch, a: tonePatch(220) }, 8192, (e) =>
+    e.setMix({ a: { gain: 1, audible: true, out: 'b' }, b: { gain: 0.5, audible: true } }),
+  )
+  check("the bus's fader scales what it was fed", worstOf(quiet.left, alone.left, 0.5) < 1e-6)
+
+  const levelled = runTracks({ b: { modules: [mod('bus1', 'busin', { level: 0.25 })], cables: [] }, a: tonePatch(220) }, 8192, (e) =>
+    e.setMix({ a: { gain: 1, audible: true, out: 'b' }, b: { gain: 1, audible: true } }),
+  )
+  check("and so does the Bus In's level", worstOf(levelled.left, alone.left, 0.25) < 1e-6)
+
+  const muted = runTracks({ b: busPatch, a: tonePatch(220) }, 8192, (e) =>
+    e.setMix({ a: { gain: 1, audible: true, out: 'b' }, b: { gain: 1, audible: false } }),
+  )
+  check('a muted bus silences what is routed to it', rms(muted.left) === 0)
+
+  const sent = runTracks({ b: busPatch, a: tonePatch(220) }, 8192, (e) =>
+    e.setMix({ a: { gain: 1, audible: true, sends: { b: 1 } }, b: { gain: 1, audible: true } }),
+  )
+  check('a send adds the bus to the dry channel', worstOf(sent.left, alone.left, 2) < 1e-6)
+
+  const sendOnly = runTracks({ b: busPatch, a: tonePatch(220) }, 8192, (e) =>
+    e.setMix({ a: { gain: 1, audible: true, out: null, sends: { b: 0.5 } }, b: { gain: 1, audible: true } }),
+  )
+  check('a channel going nowhere is heard only through its send', worstOf(sendOnly.left, alone.left, 0.5) < 1e-6)
+
+  const sendZero = runTracks({ b: busPatch, a: tonePatch(220) }, 8192, (e) =>
+    e.setMix({ a: { gain: 1, audible: true, sends: { b: 0 } }, b: { gain: 1, audible: true } }),
+  )
+  check('a send at zero leaves the mix exactly as it was', worstOf(sendZero.left, alone.left) < 1e-6)
+
+  const notBus = runTracks({ a: tonePatch(220), c: tonePatch(330) }, 8192, (e) =>
+    e.setMix({ a: { gain: 1, audible: true, out: 'c' }, c: { gain: 1, audible: true } }),
+  )
+  const both = runTracks({ a: tonePatch(220), c: tonePatch(330) }, 8192)
+  check('a route to a track with no Bus In goes to the master', worstOf(notBus.left, both.left) < 1e-6)
+
+  const chained = runTracks({ y: busPatch, x: busPatch, a: tonePatch(220) }, 8192, (e) =>
+    e.setMix({ a: { gain: 1, audible: true, out: 'x' }, x: { gain: 0.5, audible: true, out: 'y' }, y: { gain: 1, audible: true } }),
+  )
+  check('a bus can feed a bus', worstOf(chained.left, alone.left, 0.5) < 1e-6)
+
+  const loop = runTracks({ x: busPatch, y: busPatch, a: tonePatch(220) }, 8192, (e) =>
+    e.setMix({ a: { gain: 1, audible: true, out: 'x' }, x: { gain: 1, audible: true, out: 'y' }, y: { gain: 1, audible: true, out: 'x' } }),
+  )
+  // A send turned off, and the bus then routed back the other way: the old
+  // send must not count as a loop and push the new route to the master.
+  const turned = runTracks({ y: busPatch, x: busPatch, a: tonePatch(220) }, 8192, (e) => {
+    e.setMix({ a: { gain: 1, audible: true, out: 'x' }, y: { gain: 0.5, audible: true, sends: { x: 1 } }, x: { gain: 1, audible: true } })
+    e.render(new Float32Array(128), new Float32Array(128))
+    e.setMix({ a: { gain: 1, audible: true, out: 'x' }, y: { gain: 0.5, audible: true }, x: { gain: 1, audible: true, out: 'y' } })
+  })
+  // The same 128 samples in first, so the tone is in the same phase.
+  const ahead = runTracks({ a: tonePatch(220) }, 8192, (e) => e.render(new Float32Array(128), new Float32Array(128)))
+  const late = (b: Float32Array) => b.subarray(4096)
+  check('a send turned off does not block a route back the other way', worstOf(late(turned.left), late(ahead.left), 0.5) < 1e-6, `worst ${worstOf(late(turned.left), late(ahead.left), 0.5)}`)
+
+  check('a loop in a file neither hangs nor goes silent', rms(loop.left) > 0.01 && loop.left.every(Number.isFinite), `rms ${rms(loop.left).toFixed(3)}`)
+
+  // A Bus In feeding a filter, rendered in blocks that do not line up with
+  // the engine's: the feed has to be read at the right place in each.
+  const filtered: Patch = {
+    modules: [mod('bus1', 'busin'), mod('lpf1', 'ladder', { cutoff: 800 }), mod('mix1', 'mixer')],
+    cables: [cable('bus1', 'l', 'lpf1', 'in'), cable('lpf1', 'out', 'mix1', 'in1')],
+  }
+  const chunked = (size: number) => {
+    const tracks = Object.entries({ b: filtered, a: tonePatch(220) }).map(([id, p]) => {
+      const compiled = compile(p)
+      return { id, patch: compiled, params: compiled.params.slice() }
+    })
+    const e = new SongEngine(SR, tracks)
+    e.setMix({ a: { gain: 1, audible: true, out: 'b' }, b: { gain: 1, audible: true } })
+    const out = new Float32Array(8000)
+    for (let at = 0; at < out.length; at += size) {
+      const n = Math.min(size, out.length - at)
+      const l = new Float32Array(n)
+      const r = new Float32Array(n)
+      e.render(l, r)
+      out.set(l, at)
+    }
+    return out
+  }
+  const small = chunked(128)
+  const big = chunked(1000)
+  check('a bus with effects sounds', rms(small) > 0.01)
+  check('and renders the same in any block size, as a bounce does', worstOf(small, big) < 1e-5, `worst ${worstOf(small, big)}`)
+}
+
+console.log('\nbus routing in the song')
+{
+  const base: Song = {
+    ...benchSong(),
+    tracks: [
+      { id: 'a', name: 'A', patch: 'a', gain: 1, strip: { pan: 0, eq: { low: 0, mid: 0, high: 0 }, space: 0.4, delay: 0 } },
+      { id: 'c', name: 'C', patch: 'c', gain: 1 },
+      { id: 'b', name: 'Bus', patch: 'b', gain: 1 },
+    ],
+  }
+  const routed = routeTo(base, 'a', 'b')
+  check('a track routes to a bus', routed.tracks[0].strip?.out === 'b' && trackMix(routed).a.out === 'b')
+  check('a route that would loop is refused', !canRoute(routed, 'b', 'a') && routeTo(routed, 'b', 'a') === routed)
+  check('so is a send that would', setSend(routed, 'b', 'a', 0.5) === routed)
+  check('and a route to itself', !canRoute(base, 'a', 'a'))
+  check('back to the master takes the route away', routeTo(routed, 'a', undefined).tracks[0].strip?.out === undefined)
+
+  const soloA = updateTrack(routed, 'a', { solo: true })
+  check('soloing a track keeps the bus it feeds', heardTracks(soloA).has('b') && !heardTracks(soloA).has('c'))
+  const soloB = updateTrack(routed, 'b', { solo: true })
+  check('soloing a bus keeps what feeds it', heardTracks(soloB).has('a') && !heardTracks(soloB).has('c'))
+  const sentSolo = updateTrack(setSend(base, 'a', 'b', 0.5), 'b', { solo: true })
+  const fed = trackMix(sentSolo).a
+  check('and a track it brings in is heard only through the bus', fed.audible && fed.out === null && fed.sends?.b === 0.5 && fed.space === 0)
+
+  const mutedBus = updateTrack(routed, 'b', { mute: true })
+  check('a track routed to a muted bus goes nowhere', trackMix(mutedBus).a.audible && trackMix(mutedBus).a.out === null)
+  const mutedFeeder = updateTrack(soloB, 'a', { mute: true })
+  check('a muted track does not feed a soloed bus', !heardTracks(mutedFeeder).has('a'))
+
+  const stemA = trackMix(routed, ['a'])
+  check("a track's stem is before its bus", stemA.a.out === undefined && !stemA.b.audible)
+  const sentBoth = setSend(routed, 'c', 'b', 0.3)
+  const stemB = trackMix(sentBoth, ['b'])
+  check("a bus's stem is fed by what feeds it", stemB.a.audible && stemB.a.out === 'b' && stemB.c.audible && stemB.c.out === null && stemB.c.sends?.b === 0.3)
+  check('with nothing of theirs but what reaches it', stemB.a.space === 0)
+
+  const removed = removeTrack(sentBoth, 'b')
+  check('removing a bus sends its tracks back to the master', removed.tracks.every((t) => !t.strip?.out && !t.strip?.sends))
+  check('unrouting a track that is not routed is no edit', unrouteFrom(base, 'b') === base)
+
+  const back = parseSong(JSON.parse(JSON.stringify(sentBoth)))!
+  check('routes and sends survive a save', back.tracks[0].strip?.out === 'b' && back.tracks[1].strip?.sends?.b === 0.3)
+}
+
+console.log('\nsidechain: a Track In hears another track')
+{
+  const hearing = (source: string, level = 1): Patch => ({
+    modules: [{ ...mod('tap1', 'trackin', { level }), ...(source ? { text: source } : {}) }, mod('mix1', 'mixer')],
+    cables: [cable('tap1', 'l', 'mix1', 'in1')],
+  })
+  const worstOf = (x: Float32Array, y: Float32Array, k = 1) => {
+    let w = 0
+    for (let i = 0; i < x.length; i++) w = Math.max(w, Math.abs(x[i] - y[i] * k))
+    return w
+  }
+  const alone = runTracks({ a: tonePatch(220) }, 8192)
+  // What the listening rack plays: the other rack's output, through a mixer
+  // of its own -- so the same tone through two.
+  const twice = (...pitches: number[]): Patch => ({
+    modules: [...pitches.flatMap((p, i) => [mod(`osc${i}`, 'osc', { pitch: p, wave: 3, level: 1 }), mod(`pre${i}`, 'mixer')]), mod('mix1', 'mixer')],
+    cables: pitches.flatMap((_, i) => [cable(`osc${i}`, 'out', `pre${i}`, 'in1'), cable(`pre${i}`, 'l', 'mix1', `in${i + 1}`)]),
+  })
+  const ref = runTracks({ a: twice(220) }, 8192)
+  // Listed first, so this only works if it is rendered after what it hears;
+  // and the track it hears is muted, which a sidechain must not care about.
+  const heard = runTracks({ l: hearing('a'), a: tonePatch(220) }, 8192, (e) =>
+    e.setMix({ l: { gain: 1, audible: true }, a: { gain: 1, audible: false } }),
+  )
+  check("a Track In plays another track's rack, unchanged", worstOf(heard.left, ref.left) < 1e-6, `worst ${worstOf(heard.left, ref.left)}`)
+  const pulled = runTracks({ l: hearing('a'), a: tonePatch(220) }, 8192, (e) =>
+    e.setMix({ l: { gain: 1, audible: true }, a: { gain: 0.25, audible: false, pan: 1 } }),
+  )
+  check("before the other track's fader, pan and mute", worstOf(pulled.left, ref.left) < 1e-6)
+  const levelled = runTracks({ l: hearing('a', 0.5), a: tonePatch(220) }, 8192, (e) =>
+    e.setMix({ l: { gain: 1, audible: true }, a: { gain: 1, audible: false } }),
+  )
+  check('scaled by its level', rms(levelled.left) > rms(ref.left) * 0.3 && rms(levelled.left) < rms(ref.left) * 0.7)
+  const both = runTracks({ l: hearing('a'), a: tonePatch(220) }, 8192, (e) =>
+    e.setMix({ l: { gain: 0, audible: true }, a: { gain: 1, audible: true } }),
+  )
+  check('and the track it hears still plays as ever', worstOf(both.left, alone.left) < 1e-6)
+
+  const silent = (patches: Record<string, Patch>) => rms(runTracks(patches, 4096).left) === 0
+  check('pointed at nothing it is silent', silent({ l: hearing('') }))
+  check('and at a track that is not there', silent({ l: hearing('gone') }))
+  check('and at itself', silent({ l: hearing('l') }))
+  const humming: Patch = {
+    modules: [...hearing('y').modules, mod('osc1', 'osc', { pitch: 220, wave: 3 })],
+    cables: [...hearing('y').cables, cable('osc1', 'out', 'mix1', 'in2')],
+  }
+  const loop = runTracks({ x: humming, y: hearing('x') }, 8192)
+  check('two racks hearing each other neither hang nor blow up', loop.left.every(Number.isFinite) && rms(loop.left) > 0.01)
+
+  // A track heard by two racks, and a rack hearing two tracks.
+  const twoTaps: Patch = {
+    modules: [{ ...mod('tap1', 'trackin'), text: 'a' }, { ...mod('tap2', 'trackin'), text: 'b' }, mod('mix1', 'mixer')],
+    cables: [cable('tap1', 'l', 'mix1', 'in1'), cable('tap2', 'l', 'mix1', 'in2')],
+  }
+  const pair = runTracks({ l: twoTaps, m: hearing('a'), a: tonePatch(220), b: tonePatch(330) }, 8192, (e) =>
+    e.setMix({ l: { gain: 1, audible: true }, m: { gain: 0, audible: true }, a: { gain: 1, audible: false }, b: { gain: 1, audible: false } }),
+  )
+  const ab = runTracks({ a: twice(220, 330) }, 8192)
+  check('a rack can hear two tracks at once', worstOf(pair.left, ab.left) < 1e-5, `worst ${worstOf(pair.left, ab.left)}`)
+
+  // The point of it: a bass ducking under a kick on another track.
+  const ducked = (source: string): Patch => ({
+    modules: [
+      mod('osc1', 'osc', { pitch: 110, wave: 3, level: 1 }),
+      { ...mod('tap1', 'trackin'), ...(source ? { text: source } : {}) },
+      mod('comp1', 'comp', { threshold: -40, ratio: 20, attack: 0.001, release: 0.05 }),
+      mod('mix1', 'mixer'),
+    ],
+    cables: [cable('osc1', 'out', 'comp1', 'in'), cable('tap1', 'l', 'comp1', 'key'), cable('comp1', 'out', 'mix1', 'in1')],
+  })
+  const quietMix = (e: SongEngine) => e.setMix({ bass: { gain: 1, audible: true }, kick: { gain: 1, audible: false } })
+  const pumped = runTracks({ bass: ducked('kick'), kick: tonePatch(55) }, 16384, quietMix)
+  const free = runTracks({ bass: ducked(''), kick: tonePatch(55) }, 16384, quietMix)
+  check('keyed by a Track In, a Compressor ducks one track under another', rms(pumped.left) < rms(free.left) * 0.5,
+    `${rms(free.left).toFixed(3)} -> ${rms(pumped.left).toFixed(3)}`)
+
+  const chunked = (size: number) => {
+    const tracks = Object.entries({ bass: ducked('kick'), kick: tonePatch(55) }).map(([id, p]) => {
+      const compiled = compile(p)
+      return { id, patch: compiled, params: compiled.params.slice() }
+    })
+    const e = new SongEngine(SR, tracks)
+    quietMix(e)
+    const out = new Float32Array(8000)
+    for (let at = 0; at < out.length; at += size) {
+      const n = Math.min(size, out.length - at)
+      const l = new Float32Array(n)
+      e.render(l, new Float32Array(n))
+      out.set(l, at)
+    }
+    return out
+  }
+  check('and renders the same in any block size, as a bounce does', worstOf(chunked(128), chunked(1000)) < 1e-5)
+
+  // Pointed somewhere else part way: the rack is rebuilt in place.
+  const turned = runTracks({ l: hearing(''), a: tonePatch(220) }, 8192, (e) => {
+    e.setMix({ l: { gain: 1, audible: true }, a: { gain: 1, audible: false } })
+    e.render(new Float32Array(128), new Float32Array(128))
+    const c = compile(hearing('a'))
+    e.setTrack('l', c, c.params.slice())
+  })
+  check('pointed at a track while playing, it hears it from then on', rms(turned.left.subarray(4096)) > 0.1)
+}
+
+console.log('\nsidechain in the song')
+{
+  const base: Song = {
+    ...benchSong(),
+    tracks: [
+      { id: 'kick', name: 'Kick', patch: 'kick', gain: 1 },
+      { id: 'bass', name: 'Bass', patch: 'bass', gain: 1 },
+      { id: 'bus', name: 'Bus', patch: 'bus', gain: 1 },
+    ],
+  }
+  const tapRack = (source: string) => ({ patch: { modules: [{ ...mod('tap1', 'trackin'), text: source }], cables: [] } })
+  const taps = tapsOf(base, { bass: tapRack('kick'), kick: tapRack('kick'), bus: tapRack('nobody') })
+  check("a rack's Track Ins are read from it", JSON.stringify([...taps]) === JSON.stringify([['bass', ['kick']]]))
+  check('one hearing itself or a track not in the song is no edge', !taps.has('kick') && !taps.has('bus'))
+  check('a rack may hear a track', canHear(base, 'bass', 'kick', taps))
+  check('but not one that hears it', !canHear(base, 'kick', 'bass', taps))
+  check('nor itself', !canHear(base, 'bass', 'bass', taps))
+  check('a route that would loop through a Track In is refused', !canRoute(base, 'bass', 'kick', taps) && routeTo(base, 'bass', 'kick', taps) === base)
+  check('so is a send', setSend(base, 'bass', 'kick', 0.5, taps) === base)
+  const viaBus = routeTo(base, 'bass', 'bus', taps)
+  check('and a loop through a bus is caught too', viaBus.tracks[1].strip?.out === 'bus' && !canHear(viaBus, 'kick', 'bus', taps))
+  check('without Track Ins nothing changes', canRoute(base, 'bass', 'kick'))
+}
+
+console.log('\nsidechain in a bounce')
+{
+  const keyed = (source: string): Patch => ({
+    modules: [
+      mod('key1', 'keys'),
+      mod('osc1', 'osc', { pitch: 110, fmAmount: 1, envAmount: 1, decay: 0.25 }),
+      { ...mod('tap1', 'trackin'), ...(source ? { text: source } : {}) },
+      mod('comp1', 'comp', { threshold: -40, ratio: 20, attack: 0.001, release: 0.05 }),
+      mod('mix1', 'mixer'),
+    ],
+    cables: [
+      cable('key1', 'pitch', 'osc1', 'fm'),
+      cable('key1', 'gate', 'osc1', 'gate'),
+      cable('osc1', 'out', 'comp1', 'in'),
+      cable('tap1', 'l', 'comp1', 'key'),
+      cable('comp1', 'out', 'mix1', 'in1'),
+    ],
+  })
+  const s = song()
+  s.tracks[1].mute = true
+  const racks = (source: string) => ({ lead: { patch: keyed(source), values: {} }, drum: { patch: voiceRack(220), values: {} } })
+  const pumped = await renderSong(s, racks('drum'), RAW)
+  const free = await renderSong(s, racks(''), RAW)
+  check('a muted track still keys a bounce', rms(pumped.left) < rms(free.left) * 0.8, `${rms(free.left).toFixed(4)} -> ${rms(pumped.left).toFixed(4)}`)
+  const stems = await renderStems(s, racks('drum'), RAW)
+  let worst = 0
+  for (let i = 0; i < pumped.left.length; i++) worst = Math.max(worst, Math.abs(pumped.left[i] - stems[0].audio.left[i]))
+  check('and its stem, which runs the muted track it hears', stems.length === 1 && worst < 1e-6, `worst ${worst}`)
+
+  const hears = new Map([['lead', ['drum']]])
+  const drums = (x: Song, t?: Map<string, string[]>) => songEventTicks(x, 0, songEnd(x), t).filter((e) => e.track === 'drum').length
+  check('the notes of a muted track a heard rack hears are still played', drums(s, hears) > 0 && drums(s) === 0)
+  const soloLead = updateTrack(song(), 'lead', { solo: true })
+  check('and so are they with the rack that hears it soloed', drums(soloLead, hears) > 0 && drums(soloLead) === 0)
+  check('but not once that rack is muted too', drums(updateTrack(s, 'lead', { mute: true }), hears) === 0)
+}
+
+console.log('\naudio clips: sounds on the timeline')
+{
+  // A second of a ramp, so where in the file a sample came from can be read
+  // straight off its value.
+  const FILE = SR
+  const ramp = new Float32Array(FILE)
+  for (let i = 0; i < FILE; i++) ramp[i] = 0.25 + 0.5 * (i / FILE)
+  const samples = new Map([['ramp', { channels: [ramp], rate: SR, frames: FILE }]])
+  const clipsRack = { patch: { modules: [mod('clips1', 'clips')], cables: [] }, values: {} }
+  const BEAT = PPQ
+  // At 120, a beat is half a second: the sound is two beats long.
+  const sounding = (over: Partial<Song> = {}, place: Partial<Placement> = {}): Song => ({
+    tempo: 120,
+    tracks: [{ id: 'vo', name: 'VO', patch: 'vo', gain: 1 }],
+    patterns: [{ id: 'line', name: 'Line', length: 2 * BEAT, notes: [], audio: { sample: { id: 'ramp', name: 'ramp.wav' }, track: 'vo' } }],
+    playlist: [{ pattern: 'line', tick: 0, ...place }],
+    ...over,
+  })
+  const RAWER = { ...RAW, samples, routing: STEM_ROUTING.raw, tailSeconds: 0.5 }
+  const render = (s: Song) => renderSong(s, { vo: clipsRack }, RAWER)
+  // Past the end of a render trimmed of its silent tail is silence.
+  const at = (buf: Float32Array, i: number) => buf[i] ?? 0
+  const near = (a: number, b: number, e = 1e-4) => Math.abs(a - b) < e
+
+  const plain = await render(sounding())
+  // Past the 3 ms fade in, the file comes out sample for sample.
+  check('a clip plays its sound from the start', near(at(plain.left, 1000), ramp[1000]) && near(at(plain.left, 20000), ramp[20000]),
+    `${at(plain.left, 1000)} vs ${ramp[1000]}`)
+  check('in both sides from a mono file', near(at(plain.right, 20000), ramp[20000]))
+  check('and stops at its end', Math.abs(at(plain.left, FILE + 500)) < 1e-6)
+
+  // From the front: half a beat trimmed off plays from a quarter second in.
+  const trimmed = await render(sounding({}, { offset: BEAT / 2, length: BEAT }))
+  check('a clip trimmed from the front plays from part way in', near(at(trimmed.left, 1000), ramp[1000 + SR / 4]), `${at(trimmed.left, 1000)} vs ${ramp[1000 + SR / 4]}`)
+  check('and one trimmed short stops at its end', Math.abs(at(trimmed.left, SR / 2 + 400)) < 1e-6)
+
+  // Drawn out to six beats: the file every two.
+  const looped = await render(sounding({}, { length: 6 * BEAT }))
+  check('a clip drawn out past its sound starts it again', near(at(looped.left, SR + 1000), ramp[1000]) && near(at(looped.left, 2 * SR + 1000), ramp[1000]))
+
+  // A sound played at the wrong tempo is still the same audio: natural speed.
+  const slow = await render(sounding({ tempo: 60 }))
+  check('the tempo does not change how a sound plays', near(at(slow.left, 20000), ramp[20000]))
+
+  const muted = await render(sounding({}, { mute: true }))
+  check('a muted clip is silent', Math.abs(at(muted.left, 20000)) < 1e-6)
+  const mutedTrack = await render(updateTrack(sounding(), 'vo', { mute: true }))
+  check('so is one on a muted track', Math.abs(at(mutedTrack.left, 20000)) < 1e-6)
+  const noModule = await renderSong(sounding(), { vo: { patch: tonePatch(220), values: {} } }, RAWER)
+  check('a track with no Clips module plays its tone and no sound', Math.abs(noModule.left[20000] - ramp[20000]) > 0.01)
+
+  // Two lanes, the same sound on top of itself a beat apart: two voices.
+  const layered = await render({ ...sounding(), playlist: [{ pattern: 'line', tick: 0 }, { pattern: 'line', tick: BEAT, lane: 1 }] })
+  check('overlapping clips sound together', near(at(layered.left, SR / 2 + 1000), ramp[SR / 2 + 1000] + ramp[1000]))
+
+  // Started part way through a clip, as a transport does: picked up there.
+  const fromMid = fill(sounding(), SR, { tick: BEAT, frame: 0 }, 4096, null, true)
+  const sync = fromMid.sounds.find((e) => e.kind === 'sync' && e.track === 'vo')
+  check('starting inside a clip picks the sound up where the playhead is',
+    !!sync && sync.kind === 'sync' && sync.voices.length === 1 && near(sync.voices[0].from, 0.5, 1e-9), JSON.stringify(sync))
+  const player = new SongPlayer(sounding(), { vo: clipsRack }, { sampleRate: SR, samples, loop: null })
+  player.seek(BEAT)
+  const l = new Float32Array(2048)
+  const r = new Float32Array(2048)
+  for (let k = 0; k < 4; k++) player.render(l, r)
+  const tail = l[2047]
+  const latency = player.latency
+  check('and the player plays it from there', near(tail, ramp[SR / 2 + 4 * 2048 - latency - 1], 1e-3), `${tail} vs ${ramp[SR / 2 + 4 * 2048 - latency - 1]}`)
+
+  // In a loop, the seam stops the sound and the far side starts it again.
+  const looping = fill(sounding({}, { length: 8 * BEAT }), SR, { tick: 0, frame: 0 }, SR * 3, { from: BEAT, to: 3 * BEAT }, true)
+  const syncs = looping.sounds.filter((e) => e.kind === 'sync' && e.track === 'vo')
+  check('a loop\'s seam lets the sounds go and picks them up at its start',
+    syncs.length >= 3 && syncs.some((e) => e.kind === 'sync' && e.voices.length === 1 && near(e.voices[0].from, 0.5, 1e-9)), JSON.stringify(syncs.map((e) => e.kind === 'sync' && e.voices)))
+
+  // Any block size, as a bounce.
+  const blocks = (size: number) => {
+    const p = new SongPlayer(sounding({}, { offset: 100, length: 5 * BEAT }), { vo: clipsRack }, { sampleRate: SR, samples, loop: null })
+    const out = new Float32Array(SR * 2)
+    for (let i = 0; i < out.length; i += size) {
+      const n = Math.min(size, out.length - i)
+      const a = new Float32Array(n)
+      p.render(a, new Float32Array(n))
+      out.set(a, i)
+    }
+    return out
+  }
+  const b1 = blocks(128)
+  const b2 = blocks(1000)
+  let worst = 0
+  for (let i = 0; i < b1.length; i++) worst = Math.max(worst, Math.abs(b1[i] - b2[i]))
+  check('and renders the same in any block size', worst < 1e-6, `worst ${worst}`)
+
+  // The game: a stinger on demand, by name.
+  const game = new SongPlayer({ ...sounding(), playlist: [] }, { vo: clipsRack }, { sampleRate: SR, samples, loop: null })
+  const id = game.playSound('Line')
+  check('a game plays a sound by name', typeof id === 'string')
+  check('and not one the song does not have', game.playSound('Nope') === null)
+  const g = new Float32Array(4096)
+  game.render(g, new Float32Array(4096))
+  game.render(g, new Float32Array(4096))
+  check('which sounds from its start', near(g[4095], ramp[8191 - game.latency], 1e-3), `${g[4095]}`)
+  check('and stops when asked', game.stopSound(id!))
+  game.render(g, new Float32Array(4096))
+  check('with a short fade', Math.abs(g[4095]) < 1e-6)
+  const noClips = new SongPlayer({ ...sounding(), playlist: [] }, { vo: { patch: tonePatch(220), values: {} } }, { sampleRate: SR, samples, loop: null })
+  check('a sound whose track has no Clips module is refused', noClips.playSound('Line') === null)
+
+  // The song layer.
+  const back = parseSong(JSON.parse(JSON.stringify(sounding())))!
+  check('a sound survives a save', back.patterns[0].audio?.sample.id === 'ramp' && back.patterns[0].audio?.track === 'vo' && back.patterns[0].notes.length === 0)
+  const two: Song = { ...sounding(), tracks: [...sounding().tracks, { id: 'keys', name: 'Keys', patch: 'keys', gain: 1 }] }
+  const gone = removeTrack(two, 'vo')
+  check('removing its track removes the sound and its clips', gone.patterns.length === 0 && gone.playlist.length === 0)
+  check('a sound on a track not in the song is dropped on reading', !parseSong(JSON.parse(JSON.stringify({ ...sounding(), patterns: [...sounding().patterns.map((p) => ({ ...p, audio: { ...p.audio, track: 'nobody' } })), { id: 'p', name: 'P', length: BEAT, notes: [] }] })))!.patterns.some((p) => p.audio))
+  check('a sound\'s sample is found where samples are looked for', sampleIdsIn(sounding()).has('ramp'))
+}
+
+console.log('\nthe master rack')
+{
+  const worstOf = (x: Float32Array, y: Float32Array, k = 1) => {
+    let w = 0
+    for (let i = 0; i < x.length; i++) w = Math.max(w, Math.abs(x[i] - y[i] * k))
+    return w
+  }
+  const bare = (level = 1): Patch => ({ modules: [mod('bus1', 'busin', { level })], cables: [] })
+  const plain = runTracks({ a: tonePatch(220) }, 8192)
+  const through = runTracks({ a: tonePatch(220), [MASTER_RACK]: bare() }, 8192)
+  check('a master rack that is a bare Bus In changes nothing', worstOf(through.left, plain.left) === 0, `worst ${worstOf(through.left, plain.left)}`)
+  check('and is not one of the mix\'s tracks', through.engine.trackIds.join() === 'a')
+  const halved = runTracks({ a: tonePatch(220), [MASTER_RACK]: bare(0.5) }, 8192)
+  check('it is the whole mix: its level scales everything', worstOf(halved.left, plain.left, 0.5) < 1e-6)
+
+  // The Space's return goes through it too.
+  const sending = (e: SongEngine) => {
+    e.setMix({ a: { gain: 0.25, audible: true, space: 1 } })
+    e.setConsole({ ...DEFAULT_CONSOLE, space: { ...DEFAULT_CONSOLE.space, level: 1 } })
+  }
+  const wet = runTracks({ a: tonePatch(220) }, 16384, sending)
+  const wetHalved = runTracks({ a: tonePatch(220), [MASTER_RACK]: bare(0.5) }, 16384, sending)
+  check('the returns included', worstOf(wetHalved.left, wet.left, 0.5) < 1e-6, `worst ${worstOf(wetHalved.left, wet.left, 0.5)}`)
+
+  // Before the limiter: driven twice over full scale, the limiter still holds it.
+  const hot = runTracks({ a: tonePatch(220), [MASTER_RACK]: bare(2) }, 16384, (e) => e.setMix({ a: { gain: 4, audible: true } }))
+  let peak = 0
+  for (const v of hot.left.subarray(4096)) peak = Math.max(peak, Math.abs(v))
+  check('and before the limiter, which still holds the peak', peak > 0.5 && peak < 0.9, `peak ${peak.toFixed(3)}`)
+
+  // A stem leaves the master bus out, and the rack with it.
+  const stem = (patches: Record<string, Patch>) =>
+    runTracks(patches, 8192, (e) => e.setRouting({ strips: true, sends: false, master: false }))
+  check('a stem leaves it out', worstOf(stem({ a: tonePatch(220), [MASTER_RACK]: bare(0.5) }).left, stem({ a: tonePatch(220) }).left) === 0)
+
+  // Taken away and put back while running.
+  const gone = runTracks({ a: tonePatch(220), [MASTER_RACK]: bare(0.5) }, 8192, (e) => e.removeTrack(MASTER_RACK))
+  check('taken away, the mix is as it was', worstOf(gone.left, plain.left) === 0)
+
+  // A Track In on the master hears a muted track.
+  const keyedMaster: Patch = {
+    modules: [mod('bus1', 'busin'), { ...mod('tap1', 'trackin'), text: 'k' }, mod('mix1', 'mixer')],
+    cables: [cable('bus1', 'l', 'mix1', 'in1'), cable('tap1', 'l', 'mix1', 'in2')],
+  }
+  const heardOnMaster = runTracks({ [MASTER_RACK]: keyedMaster, k: tonePatch(330) }, 8192, (e) => e.setMix({ k: { gain: 1, audible: false } }))
+  check('a Track In in it hears any track', rms(heardOnMaster.left) > 0.05, `rms ${rms(heardOnMaster.left).toFixed(3)}`)
+
+  // The song layer.
+  const s = song()
+  const racks = { lead: { patch: voiceRack(110), values: {} }, drum: { patch: voiceRack(220), values: {} }, [MASTER_RACK]: { patch: bare(0.5), values: {} } }
+  const stored = toStoredProject('M', s, racks)
+  const back = fromStoredProject(JSON.parse(JSON.stringify(stored)))
+  check('it is saved with the project, and read back', !('error' in back) && !!back.racks[MASTER_RACK] && back.warnings.length === 0, JSON.stringify(!('error' in back) && back.warnings))
+  check('a track cannot take its id', !parseSong(JSON.parse(JSON.stringify({ ...s, tracks: [...s.tracks, { id: MASTER_RACK, name: 'X', patch: 'x', gain: 1 }] })))!.tracks.some((t) => t.id === MASTER_RACK))
+  const lane = { target: `rack/${MASTER_RACK}/bus1.level`, points: [{ tick: 0, value: 0.2 }] }
+  const laned: Song = { ...s, patterns: s.patterns.map((p) => ({ ...p, automation: [lane] })) }
+  check('its knobs keep their lanes', parseSong(JSON.parse(JSON.stringify(laned)))!.patterns[0].automation?.[0]?.target === lane.target)
+  check('and the lanes play', automationBindings(laned, racks).has(lane.target))
+
+  const loud = await renderSong(s, { lead: racks.lead, drum: racks.drum }, RAW)
+  const quiet = await renderSong(s, racks, RAW)
+  check('a bounce goes through it', rms(quiet.left) < rms(loud.left) * 0.6 && rms(quiet.left) > rms(loud.left) * 0.4,
+    `${rms(loud.left).toFixed(4)} -> ${rms(quiet.left).toFixed(4)}`)
+  const player = new SongPlayer(s, racks, { sampleRate: SR, loop: null })
+  check('a game turns its knobs as "master"', player.setParam('master', 'bus1.level', 1) && player.getParam('Master', 'bus1.level') === 1)
 }
 
 console.log(failures === 0 ? '\nall good\n' : `\n${failures} failed\n`)

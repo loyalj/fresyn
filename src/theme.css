@@ -54,6 +54,12 @@
   --spine-bottom: #2c2e35;
   --rear-top: #1e2025;
   --rear-bottom: #191a1e;
+  /* The case a utility comes in: bench gear beside the rack, not a unit in
+     it. The panel's own lightness moved a step, tinted toward the ears' hue
+     (or the lamp's, where the ears have none), so it is clearly another
+     instrument and clearly from the same studio. */
+  --bench-top: #342b21;
+  --bench-bottom: #2c241a;
 
   --well: #1a1b20;
   --recess: rgb(0 0 0 / 0.22);
@@ -151,6 +157,8 @@
   --spine-bottom: #eeeeea;
   --rear-top: #e4e4df;
   --rear-bottom: #d9d9d3;
+  --bench-top: #fcf3e8;
+  --bench-bottom: #f4eadf;
 
   --well: #f0f0ec;
   --recess: rgb(35 37 43 / 0.07);
@@ -257,6 +265,8 @@
   --spine-ink-faint: #6c5e50;
   --rear-top: #e6dfcf;
   --rear-bottom: #dcd4c1;
+  --bench-top: #f3f0e7;
+  --bench-bottom: #ebe8df;
 
   --well: #ebe4d6;
   --recess: rgb(70 52 44 / 0.07);
@@ -358,6 +368,8 @@
   --spine-bottom: #4a2c36;
   --rear-top: #2a211a;
   --rear-bottom: #1e1712;
+  --bench-top: #312428;
+  --bench-bottom: #2a1d21;
 
   --well: #1e1712;
   --recess: rgb(0 0 0 / 0.24);
@@ -459,6 +471,8 @@
   --spine-bottom: #570a57;
   --rear-top: #2a0442;
   --rear-bottom: #1f0331;
+  --bench-top: #420150;
+  --bench-bottom: #3a0048;
 
   --well: #240339;
   --recess: rgb(0 0 0 / 0.26);
@@ -564,6 +578,8 @@
   --spine-bottom: #deddff;
   --rear-top: #e0e6f2;
   --rear-bottom: #d5dcec;
+  --bench-top: #ebeafa;
+  --bench-bottom: #e3e2f1;
 
   --well: #e9e7f4;
   --recess: rgb(60 56 110 / 0.07);
@@ -666,6 +682,8 @@
   --spine-bottom: #edd6b4;
   --rear-top: #f2e2c8;
   --rear-bottom: #e9d6b8;
+  --bench-top: #f0e6d8;
+  --bench-bottom: #e8ded0;
 
   --well: #f5e7cf;
   --recess: rgb(70 40 30 / 0.07);
@@ -763,6 +781,8 @@
   --spine-bottom: #66392a;
   --rear-top: #352321;
   --rear-bottom: #281a18;
+  --bench-top: #422e29;
+  --bench-bottom: #3a2721;
 
   --well: #2a1c19;
   --recess: rgb(0 0 0 / 0.24);
@@ -863,6 +883,8 @@
   --spine-bottom: #123a20;
   --rear-top: #0b1d12;
   --rear-bottom: #071409;
+  --bench-top: #192e1f;
+  --bench-bottom: #122718;
 
   --well: #08170e;
   --recess: rgb(0 0 0 / 0.3);
@@ -962,6 +984,8 @@
   --spine-bottom: #efdcb4;
   --rear-top: #eddcb2;
   --rear-bottom: #e3cf9f;
+  --bench-top: #f9e9c9;
+  --bench-bottom: #f1e1c1;
 
   --well: #eedbb0;
   --recess: rgb(80 45 5 / 0.09);
@@ -1062,6 +1086,8 @@
   --spine-bottom: #3f2257;
   --rear-top: #251c2d;
   --rear-bottom: #1a131f;
+  --bench-top: #3a2f44;
+  --bench-bottom: #32283c;
 
   --well: #1b1421;
   --recess: rgb(0 0 0 / 0.28);
@@ -1161,6 +1187,8 @@
   --spine-ink-faint: #cdb6e3;
   --rear-top: #f7e9d4;
   --rear-bottom: #efdcc2;
+  --bench-top: #f5edff;
+  --bench-bottom: #ede5f9;
 
   --well: #faeedb;
   --recess: rgb(60 30 70 / 0.07);
@@ -1260,6 +1288,8 @@
   --spine-ink-faint: #ffd0c8;
   --rear-top: #f2f5f8;
   --rear-bottom: #e7ecf0;
+  --bench-top: #ffeae5;
+  --bench-bottom: #fae1dd;
 
   --well: #f3f6f8;
   --recess: rgb(30 40 50 / 0.06);
@@ -1356,6 +1386,8 @@
   --spine-ink-faint: #f0a89f;
   --rear-top: #1c252b;
   --rear-bottom: #141b20;
+  --bench-top: #4e2a25;
+  --bench-bottom: #46221e;
 
   --well: #151c21;
   --recess: rgb(0 0 0 / 0.25);
@@ -1453,6 +1485,8 @@
   --spine-bottom: #0f3550;
   --rear-top: #0d1e31;
   --rear-bottom: #081523;
+  --bench-top: #1c344b;
+  --bench-bottom: #142d43;
 
   --well: #091727;
   --recess: rgb(0 0 0 / 0.26);
@@ -1548,6 +1582,8 @@
   --spine-ink-faint: #47697a;
   --rear-top: #eaf6f6;
   --rear-bottom: #dcefef;
+  --bench-top: #e7fbfc;
+  --bench-bottom: #dff3f4;
 
   --well: #eef8f8;
   --recess: rgb(10 50 70 / 0.06);
@@ -1643,6 +1679,8 @@
   --spine-bottom: #1c1c8a;
   --rear-top: #15151b;
   --rear-bottom: #0c0c10;
+  --bench-top: #21263f;
+  --bench-bottom: #1b1f37;
 
   --well: #0e0e13;
   --recess: rgb(0 0 0 / 0.26);
@@ -1740,6 +1778,8 @@
   --spine-ink-faint: #c9d8ff;
   --rear-top: #f3f1fb;
   --rear-bottom: #e8e5f5;
+  --bench-top: #e7f0ff;
+  --bench-bottom: #dee8fb;
 
   --well: #f5f3fc;
   --recess: rgb(20 20 43 / 0.06);
@@ -1836,6 +1876,8 @@
   --spine-bottom: #16448a;
   --rear-top: #103672;
   --rear-bottom: #0c2d63;
+  --bench-top: #1e4789;
+  --bench-bottom: #153e80;
 
   --well: #0d3068;
   --recess: rgb(0 10 30 / 0.25);
@@ -1931,6 +1973,8 @@
   --spine-bottom: #ccd6c4;
   --rear-top: #eef2ea;
   --rear-bottom: #e3e9de;
+  --bench-top: #f2f9ff;
+  --bench-bottom: #e9f1fd;
 
   --well: #f2f5ee;
   --recess: rgb(40 45 40 / 0.06);
@@ -2028,6 +2072,8 @@
   --spine-ink-faint: #f0a8b2;
   --rear-top: #16291f;
   --rear-bottom: #0f2018;
+  --bench-top: #563031;
+  --bench-bottom: #4d2929;
 
   --well: #10231a;
   --recess: rgb(0 0 0 / 0.26);
@@ -2125,6 +2171,8 @@
   --spine-ink-faint: #b9d6c4;
   --rear-top: #f1f5f3;
   --rear-bottom: #e5ece8;
+  --bench-top: #e5f5eb;
+  --bench-bottom: #dcede2;
 
   --well: #f3f7f5;
   --recess: rgb(20 40 30 / 0.06);
@@ -2223,6 +2271,8 @@
   --spine-ink-faint: #3b2566;
   --rear-top: #281e4b;
   --rear-bottom: #20183e;
+  --bench-top: #582d5b;
+  --bench-bottom: #4f2653;
 
   --well: #241b45;
   --recess: rgb(0 0 0 / 0.26);
@@ -2318,6 +2368,8 @@
   --spine-ink-faint: #644e91;
   --rear-top: #fbeaf4;
   --rear-bottom: #f4dcea;
+  --bench-top: #f0fdff;
+  --bench-bottom: #e8f5ff;
 
   --well: #fcf0f7;
   --recess: rgb(90 40 110 / 0.06);
@@ -2413,6 +2465,8 @@
   --spine-bottom: #5a4a36;
   --rear-top: #1d1b19;
   --rear-bottom: #141312;
+  --bench-top: #372e23;
+  --bench-bottom: #2f261c;
 
   --well: #171514;
   --recess: rgb(0 0 0 / 0.26);
@@ -2510,6 +2564,8 @@
   --spine-ink-faint: #d8b4a2;
   --rear-top: #efe6d3;
   --rear-bottom: #e5dac3;
+  --bench-top: #f9e1dd;
+  --bench-bottom: #f1d9d5;
 
   --well: #f4ecdc;
   --recess: rgb(50 35 25 / 0.06);

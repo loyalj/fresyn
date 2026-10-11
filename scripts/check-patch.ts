@@ -16,6 +16,7 @@ import {
   pasteModules,
   reorderModules,
   setCableColor,
+  setModuleText,
   setSample,
   toggleBypass,
 } from '../src/patch/edit'
@@ -670,6 +671,20 @@ console.log('\nnotes on the rack')
   const reopened = fromStoredProject(JSON.parse(JSON.stringify(project)))
   const racks = 'error' in reopened ? {} : reopened.racks
   check('and in a project', Object.values(racks)[0]?.patch.notes?.length === 2)
+}
+
+console.log('\na module\'s text')
+{
+  const base: Patch = { modules: [{ id: 'expr1', type: 'expr', params: {} }, { id: 'mix1', type: 'mixer', params: {} }], cables: [] }
+  const typed = setModuleText(base, 'expr1', 't*(t>>5|t>>8)')
+  check('a formula is set on its module', typed.modules[0].text === 't*(t>>5|t>>8)')
+  check('the same formula again is no edit', setModuleText(typed, 'expr1', 't*(t>>5|t>>8)') === typed)
+  check('an empty one takes it away', setModuleText(typed, 'expr1', '').modules[0].text === undefined)
+  const back = fromStored(JSON.parse(JSON.stringify(toStored('Beat', typed, initialValues(typed)))))
+  check('and it survives a save', !('error' in back) && back.patch.modules[0].text === 't*(t>>5|t>>8)')
+  check('the compiler hands it to the engine', compile(typed).modules.find((m) => m.id === 'expr1')?.text === 't*(t>>5|t>>8)')
+  const clip = copyModules(typed, initialValues(typed), ['expr1'])
+  check('a copied unit keeps its formula', clip.modules[0].text === 't*(t>>5|t>>8)')
 }
 
 console.log(failures === 0 ? '\nall clear' : `\n${failures} check(s) failed`)

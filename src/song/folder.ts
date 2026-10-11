@@ -1,3 +1,4 @@
+import { busEdges, reach, reversed } from './route'
 import type { Folder, Song, Track } from './types'
 
 /**
@@ -24,9 +25,43 @@ export function folderOf(song: Song, track: Track): Folder | undefined {
  * and a track is muted by its own button or by its folder's.
  */
 export function heardTracks(song: Song): Set<string> {
-  const soloed = song.tracks.filter((t) => t.solo || folderOf(song, t)?.solo)
-  const live = soloed.length > 0 ? soloed : song.tracks.filter((t) => !t.mute && !folderOf(song, t)?.mute)
-  return new Set(live.map((t) => t.id))
+  return hearing(song).heard
+}
+
+/**
+ * Who is heard, and how, once buses are counted.
+ *
+ * Without a solo it is the tracks nobody muted. A muted bus still takes in
+ * what is routed to it -- those tracks run and feed it -- and puts out
+ * nothing, as a muted channel on a desk does.
+ *
+ * A solo reaches along the routing both ways, or soloing anything on a bus
+ * would be silence. Downstream: the buses a soloed track feeds, and theirs,
+ * so it is heard through its effects. Upstream: the tracks that feed a
+ * soloed bus, so it has something to play -- but only into it, which is
+ * what `feeders` and `lead` are for: a feeder's own way to the master, its
+ * shared sends and any route that does not lead to the solo are cut. Only a
+ * soloed track overrides its own mute; one brought in by the routing is
+ * still muted if it was, and nothing is reached through it.
+ */
+export function hearing(song: Song): {
+  heard: Set<string>
+  /** Tracks heard only because they feed a soloed bus. */
+  feeders: Set<string>
+  /** With a solo, the soloed tracks and everything feeding them: where a feeder's routes may go. */
+  lead: Set<string> | null
+} {
+  const muted = new Set(song.tracks.filter((t) => t.mute || folderOf(song, t)?.mute).map((t) => t.id))
+  const soloed = song.tracks.filter((t) => t.solo || folderOf(song, t)?.solo).map((t) => t.id)
+  if (!soloed.length) {
+    return { heard: new Set(song.tracks.filter((t) => !muted.has(t.id)).map((t) => t.id)), feeders: new Set(), lead: null }
+  }
+  const edges = busEdges(song)
+  const open = (id: string) => !muted.has(id)
+  const down = reach(edges, soloed, open)
+  const lead = reach(reversed(edges), soloed, open)
+  const feeders = new Set([...lead].filter((id) => !down.has(id)))
+  return { heard: new Set([...down, ...lead]), feeders, lead }
 }
 
 /** A track's level after its folder's: the two faders, one after the other. */

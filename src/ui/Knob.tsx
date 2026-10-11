@@ -93,13 +93,19 @@ interface Props {
   step?: number
   /** Overrides the readout, for knobs that are not module parameters. */
   format?: (value: number) => string
+  /**
+   * Overrides how typed text is read, for the same knobs: the value, or null
+   * to refuse it. A knob whose readout says something `parseValue` cannot
+   * read back -- a note against a reference other than 440 -- needs this.
+   */
+  parse?: (text: string) => number | null
 }
 
 /**
  * One knob. Memoized, so the knobs beside one being turned are left alone:
  * the unit hands each one a handler that stays the same (see `Control`).
  */
-export const Knob = memo(function Knob({ spec, value: own, onChange, step, format }: Props) {
+export const Knob = memo(function Knob({ spec, value: own, onChange, step, format, parse }: Props) {
   // Where the song's automation has it while it plays, which is where it is
   // drawn -- and where a hand taking hold of it starts from.
   const automation = useAutomation(spec.id)
@@ -268,7 +274,12 @@ export const Knob = memo(function Knob({ spec, value: own, onChange, step, forma
   /** Apply typed text, or refuse it and stay open. True when it took. */
   const commit = useCallback(
     (text: string) => {
-      const parsed = parseValue(spec, text)
+      const typed = parse?.(text)
+      const parsed = parse
+        ? typed === null || typed === undefined
+          ? ({ ok: false } as const)
+          : ({ ok: true, value: clampValue(spec, typed) } as const)
+        : parseValue(spec, text)
       if (!parsed.ok) {
         setRejected(true)
         return false
@@ -281,7 +292,7 @@ export const Knob = memo(function Knob({ spec, value: own, onChange, step, forma
       onChange(parsed.value)
       return true
     },
-    [spec, onChange],
+    [spec, onChange, parse],
   )
 
   const startEntry = useCallback(() => {

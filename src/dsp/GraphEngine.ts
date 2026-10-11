@@ -1,9 +1,12 @@
 import type { CompiledPad, CompiledPatch } from '../patch/compile'
 import { MODULE_FACTORIES, type DspModule } from './modules'
-import { BLOCK, type Capturing, type Metering, type Playable } from './modules/types'
+import { BLOCK, type Capturing, type Feed, type Metering, type Playable, type SoundPlayer } from './modules/types'
 import { curveAt, mapValue, type Curve, type ValueMap } from './automation'
 import { DEFAULT_SEED } from './Rng'
 import { emptyBank, type SampleBank } from './samples'
+
+/** A track with nothing routed to it. */
+const NO_FEED = new Float32Array(0)
 
 /**
  * Something to do to the rack at an exact sample.
@@ -22,6 +25,11 @@ export type EngineEvent =
   // A knob following a curve from here on, or let go of. By key rather than
   // index, because a patch edited while it plays is laid out afresh.
   | { frame: number; kind: 'auto'; key: string; curve: AutoCurve | null }
+  // A sound's clip, for whatever in the rack plays them: see `SoundPlayer`.
+  // By sample id, which the engine looks up in its bank as it lands.
+  | { frame: number; kind: 'sound'; key: string; sample: string; from: number }
+  | { frame: number; kind: 'soundStop'; key: string }
+  | { frame: number; kind: 'soundSync'; voices: readonly { key: string; sample: string; from: number }[] }
 
 /** A curve in engine frames, and how its positions become the knob's values. */
 export type AutoCurve = Curve & { map: ValueMap }
@@ -103,6 +111,14 @@ export class GraphEngine {
    * every event names the module it is for.
    */
   private playables = new Map<string, Playable>()
+  /** Modules the song's sounds play on. Every one hears every sound: a rack normally has one. */
+  private sounders: SoundPlayer[] = []
+  /** What the song routes to this track, for a Bus In to play. See `Feed`. */
+  private readonly feed: Feed = { l: NO_FEED, r: NO_FEED, base: 0 }
+  /** Whether anything in the rack plays the feed: whether this track is a bus. */
+  listens = false
+  /** Modules that play another track's audio, each with a feed of its own the song binds: see `DspModule.hears`. */
+  taps: DspModule[] = []
   /**
    * Samples rendered since the transport was last moved.
    *
@@ -377,6 +393,15 @@ export class GraphEngine {
     for (const copies of this.polyById.values()) for (const mod of copies) this.resolveSample(mod)
   }
 
+  /**
+   * What the song has routed to this track, as long as the buffers the next
+   * `render` fills; empty buffers for none. Read by its Bus In, if it has one.
+   */
+  setFeed(l: Float32Array, r: Float32Array) {
+    this.feed.l = l
+    this.feed.r = r
+  }
+
   private resolveSample(mod: DspModule) {
     mod.sample = mod.sampleId ? (this.samples.get(mod.sampleId) ?? null) : null
   }
@@ -428,6 +453,9 @@ export class GraphEngine {
     this.captures = []
     this.meters = []
     this.playables.clear()
+    this.sounders = []
+    this.listens = false
+    this.taps = []
     const next = new Map<string, DspModule>()
     // Each module's pad, by its place in the compiled list: carried over to
     // its place in ours as it is pushed, in case anything is skipped.
@@ -456,6 +484,7 @@ export class GraphEngine {
       mod.params = this.paramValues.subarray(m.paramBase, m.paramBase + m.paramCount)
       mod.sampleId = m.sample ?? ''
       this.resolveSample(mod)
+      if (mod.text !== (m.text ?? '')) mod.setText(m.text ?? '')
       // Only a fresh module is prepared; preparing a reused one would reseed
       // its smoothers and undo the point of keeping it. The same goes for its
       // random stream: restarting it on every cable drag would make the noise
@@ -474,6 +503,12 @@ export class GraphEngine {
       if (mod.capture) this.captures.push({ id: m.id, mod: mod.capture })
       if (mod.meter) this.meters.push({ id: m.id, mod: mod.meter })
       if (mod.playable) this.playables.set(m.id, mod.playable)
+      if (mod.sounds) this.sounders.push(mod.sounds)
+      if (mod.listens) {
+        mod.feed = this.feed
+        this.listens = true
+      }
+      if (mod.hears) this.taps.push(mod)
     }
 
     // Nothing to carry: a module that survived the edit is the same object and
@@ -933,6 +968,7 @@ export class GraphEngine {
    */
   allNotesOff() {
     for (const p of this.playables.values()) p.noteOff()
+    for (const s of this.sounders) s.stopAll()
     this.padHeld.fill(0)
   }
 
@@ -1054,6 +1090,7 @@ export class GraphEngine {
     mod.params = first.params
     mod.sampleId = first.sampleId
     mod.sample = first.sample
+    if (mod.text !== first.text) mod.setText(first.text)
     if (!kept) {
       mod.seedFrom(this.seed, voiceKey(id, v))
       mod.prepare()
@@ -1431,6 +1468,20 @@ export class GraphEngine {
       case 'auto':
         this.automate(event.key, event.curve)
         break
+      case 'sound': {
+        const data = this.samples.get(event.sample) ?? null
+        for (const s of this.sounders) s.play(event.key, data, event.from)
+        break
+      }
+      case 'soundStop':
+        for (const s of this.sounders) s.stop(event.key)
+        break
+      case 'soundSync': {
+        if (!this.sounders.length) break
+        const voices = event.voices.map((v) => ({ key: v.key, sample: this.samples.get(v.sample) ?? null, from: v.from }))
+        for (const s of this.sounders) s.sync(voices)
+        break
+      }
     }
   }
 
@@ -1484,6 +1535,9 @@ export class GraphEngine {
         span = total - at
         settle = index + span === BLOCK
       }
+      // Sample `index` of the block is sample `at` of the render.
+      this.feed.base = at - index
+      for (let k = 0; k < this.taps.length; k++) this.taps[k].feed!.base = at - index
       this.renderSpan(index, index + span, settle)
 
       if (this.probe >= 0) {

@@ -2,6 +2,7 @@ import type { SampleBank } from '../dsp/samples'
 import { GraphEngine } from '../dsp/GraphEngine'
 import { streamFor, streamSeed } from '../dsp/Rng'
 import { compile } from '../patch/compile'
+import { seamFrames } from '../dsp/modules/LoopSeam'
 import { defOf } from '../patch/defs'
 import { denormalize, normalize } from '../patch/param'
 import type { Patch } from '../patch/types'
@@ -75,7 +76,11 @@ export function renderPatch(
   // A render is what reaches the recorder, not what reaches the speakers.
   // With nothing patched to it the two are the same signal.
   engine.setTap('recorder')
-  const total = Math.max(BLOCK, Math.ceil(opts.duration * opts.sampleRate))
+  // A rack with a Loop Seam renders one pass of its loop, and nothing else:
+  // past the recording and the first pass (which blends in from the live
+  // sound), exactly a loop long, with no fade and no trim, so it tiles.
+  const seam = loopRender(patch, values, opts.sampleRate)
+  const total = seam ? seam.skip + seam.loop : Math.max(BLOCK, Math.ceil(opts.duration * opts.sampleRate))
   const gateFrames = Math.round(opts.gateSeconds * opts.sampleRate)
 
   const left = new Float32Array(total)
@@ -99,7 +104,30 @@ export function renderPatch(
     right.set(br.subarray(0, n), i)
   }
 
+  if (seam) {
+    const l = left.slice(seam.skip, seam.skip + seam.loop) as Float32Array<ArrayBuffer>
+    const r = right.slice(seam.skip, seam.skip + seam.loop) as Float32Array<ArrayBuffer>
+    let peak = 0
+    for (let i = 0; i < l.length; i++) peak = Math.max(peak, Math.abs(l[i]), Math.abs(r[i]))
+    return { left: l, right: r, peak, seconds: seam.loop / opts.sampleRate, sampleRate: opts.sampleRate, seed: opts.seed }
+  }
   return finish(left, right, opts)
+}
+
+/**
+ * Where a loop render starts and how long it is, for a rack with a Loop
+ * Seam in it; null for any other rack. With more than one, the first in the
+ * rack decides.
+ */
+export function loopRender(patch: Patch, values: Record<string, number>, sampleRate: number) {
+  const m = patch.modules.find((x) => x.type === 'seam')
+  if (!m) return null
+  const knob = (id: string) => {
+    const v = values[`${m.id}.${id}`] ?? m.params[id]
+    return typeof v === 'number' && Number.isFinite(v) ? v : defOf('seam').params.find((p) => p.id === id)!.default
+  }
+  const { loop, cross } = seamFrames(knob('length'), knob('fade'), sampleRate)
+  return { loop, skip: 2 * loop + cross }
 }
 
 export interface TrimOptions {

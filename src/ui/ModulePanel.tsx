@@ -9,6 +9,8 @@ import { MixerFace } from './MixerFace'
 import { SamplerFace } from './SamplerFace'
 import { OscFace } from './OscFace'
 import { ScopeFace } from './ScopeFace'
+import { ExprFace } from './ExprFace'
+import { TrackInFace } from './TrackInFace'
 import { SeqFace } from './SeqFace'
 import { KnobHelpModule } from './KnobHelp'
 import { UnitSpine } from './UnitSpine'
@@ -17,6 +19,9 @@ interface Props {
   /** What a Sampler is pointed at, and what to do when that changes. */
   sample?: { id: string; name: string }
   onSample?: (file: File | null) => void
+  /** A module's text -- the Expression's formula, the track a Track In hears -- and what to do when it is edited. */
+  text?: string
+  onText?: (text: string) => void
   def: ModuleDef
   moduleId: string
   /** Controls a module needs that are not knobs, such as a trigger button. */
@@ -58,6 +63,8 @@ export function ModulePanel({
   onChanges,
   sample,
   onSample,
+  text,
+  onText,
   tuning,
   kit,
 }: Props) {
@@ -165,6 +172,17 @@ export function ModulePanel({
           {faceExtra}
         </>
       )
+    }
+    if (def.type === 'expr') {
+      return (
+        <>
+          <ExprFace def={def} moduleId={moduleId} text={text} onText={onText} valueOf={valueOf} onChange={onChange} />
+          {faceExtra}
+        </>
+      )
+    }
+    if (def.type === 'trackin') {
+      return <TrackInFace def={def} text={text} onText={onText} valueOf={valueOf} onChange={onChange} />
     }
     if (def.type === 'mixer') {
       return (

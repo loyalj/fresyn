@@ -35,6 +35,10 @@ await build({
   platform: 'node',
   format: 'esm',
   outfile,
+  // The knob's help reads the manual through a Vite transform (`?knob-help`).
+  // A check that reaches a knob only by way of the utilities' lazy imports
+  // never renders one, so the raw text is enough to let it bundle.
+  loader: { '.md': 'text' },
   logLevel: 'warning',
 })
 

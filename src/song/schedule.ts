@@ -1,7 +1,8 @@
 import { clipEnd, clipOffset } from './clip'
 import { heardTracks } from './folder'
+import { reach, type Taps } from './route'
 import { framesPerTick, tempoMap } from './timeline'
-import { SWING_MIN, type Note, type Pattern, type Placement, type Song, type Swing } from './types'
+import { MASTER_RACK, SWING_MIN, type Note, type Pattern, type Placement, type Song, type Swing } from './types'
 
 /**
  * Turning an arrangement into a list of things to do at exact samples.
@@ -47,6 +48,38 @@ export interface SongEventAt {
   velocity: number
 }
 
+/**
+ * A sound's clip starting or stopping, in ticks.
+ *
+ * Kept apart from notes: a sound is not played by a note but started at a
+ * place in its file, which only the tempo map can say -- so it carries the
+ * tick its pass of the file began on, and the frame arithmetic is left to
+ * whoever has the map.
+ */
+export interface SoundEventAt {
+  tick: number
+  track: string
+  kind: 'play' | 'stop'
+  /**
+   * Which pass of which clip: the sound and the tick the pass began on, with
+   * the lane. The same for as long as that pass plays, however the clip is
+   * trimmed, so a voice already playing it can be recognised and left alone.
+   */
+  key: string
+  /** The sample, by id. */
+  sample: string
+  /** Where this pass of the file began, in song ticks: the file's own start. */
+  origin: number
+}
+
+/** A pass of a sound playing over a tick: what a voice should be doing there. */
+export interface SoundAt {
+  track: string
+  key: string
+  sample: string
+  origin: number
+}
+
 export { framesPerTick }
 
 /** One tick past the last thing in the playlist, which is where a song ends. */
@@ -62,12 +95,16 @@ export function songEnd(song: Song): number {
 }
 
 /**
- * Which tracks are audible. Any solo anywhere silences everything unsoloed,
+ * Which tracks are played. Any solo anywhere silences everything unsoloed,
  * which is what solo means on every desk; mute is only consulted when nothing
- * is soloed, so soloing a muted track still sounds it.
+ * is soloed, so soloing a muted track still sounds it. And a track a heard
+ * rack hears through a Track In plays whether it is heard or not -- muted,
+ * it is not in the mix, but it still keys the sidechain it is there for.
  */
-function audible(song: Song): Set<string> {
-  return heardTracks(song)
+function audible(song: Song, taps?: Taps): Set<string> {
+  const heard = heardTracks(song)
+  // The master rack is always heard, so what it hears always plays.
+  return taps?.size ? reach(taps, [...heard, MASTER_RACK]) : heard
 }
 
 /**
@@ -87,9 +124,10 @@ export function songEvents(
   sampleRate: number,
   fromTick: number,
   toTick: number,
+  taps?: Taps,
 ): SongEvent[] {
   const time = tempoMap(song, sampleRate)
-  return songEventTicks(song, fromTick, toTick).map((e) => ({
+  return songEventTicks(song, fromTick, toTick, taps).map((e) => ({
     frame: Math.round(time.frameAt(e.tick)),
     track: e.track,
     kind: e.kind,
@@ -148,12 +186,15 @@ export function unswungTick(tick: number, pattern: Pick<Pattern, 'length' | 'swi
     : start + step + ((into - split) * step) / (pair - split)
 }
 
-/** The same window, in ticks. See `SongEventAt` for why both exist. */
-export function songEventTicks(song: Song, fromTick: number, toTick: number): SongEventAt[] {
+/**
+ * The same window, in ticks. See `SongEventAt` for why both exist. `taps`
+ * are the racks' Track Ins (see `tapsOf`), so the tracks they hear play too.
+ */
+export function songEventTicks(song: Song, fromTick: number, toTick: number, taps?: Taps): SongEventAt[] {
   const events: SongEventAt[] = []
   if (!(toTick > fromTick)) return events
 
-  const live = audible(song)
+  const live = audible(song, taps)
   const patterns = new Map(song.patterns.map((p) => [p.id, p]))
   const tracks = new Set(song.tracks.map((t) => t.id))
 
@@ -185,6 +226,70 @@ export function songEventTicks(song: Song, fromTick: number, toTick: number): So
 }
 
 const rank = (kind: 'on' | 'off') => (kind === 'off' ? 0 : 1)
+
+/**
+ * Every pass of every sound's clip, with the stretch of song it plays: from
+ * where it starts to where its clip or its pass ends, whichever is first.
+ * Only clips playing on a track that is played and that overlap `[from, to]`.
+ */
+function soundPasses(song: Song, from: number, to: number, taps?: Taps) {
+  const out: { track: string; key: string; sample: string; origin: number; start: number; end: number }[] = []
+  const live = audible(song, taps)
+  const patterns = new Map(song.patterns.map((p) => [p.id, p]))
+  for (const place of song.playlist) {
+    const pattern = patterns.get(place.pattern)
+    const audio = pattern?.audio
+    if (!pattern || !audio || place.mute || !live.has(audio.track)) continue
+    if (place.tick > to || clipEnd(place, pattern) < from) continue
+    const end = clipEnd(place, pattern)
+    for (const r of clipRepeats(place, pattern, from, to)) {
+      const start = Math.max(r, place.tick)
+      const stop = Math.min(r + pattern.length, end)
+      if (!(stop > start)) continue
+      out.push({
+        track: audio.track,
+        key: `${pattern.id}@${r}/${place.lane ?? 0}`,
+        sample: audio.sample.id,
+        origin: r,
+        start,
+        end: stop,
+      })
+    }
+  }
+  return out
+}
+
+/**
+ * Every sound clip starting or stopping in `[fromTick, toTick)`, soonest
+ * first and stops before starts on one tick -- the end of one pass of a
+ * looped clip is the start of the next.
+ */
+export function soundEventTicks(song: Song, fromTick: number, toTick: number, taps?: Taps): SoundEventAt[] {
+  const events: SoundEventAt[] = []
+  if (!(toTick > fromTick)) return events
+  for (const p of soundPasses(song, fromTick, toTick, taps)) {
+    if (p.start >= fromTick && p.start < toTick) {
+      events.push({ tick: p.start, track: p.track, kind: 'play', key: p.key, sample: p.sample, origin: p.origin })
+    }
+    if (p.end >= fromTick && p.end < toTick) {
+      events.push({ tick: p.end, track: p.track, kind: 'stop', key: p.key, sample: p.sample, origin: p.origin })
+    }
+  }
+  events.sort((a, b) => a.tick - b.tick || (a.kind === 'stop' ? 0 : 1) - (b.kind === 'stop' ? 0 : 1))
+  return events
+}
+
+/**
+ * The sounds playing over a tick: each pass that started at or before it
+ * and ends after it. What a transport starting, or picking up after an edit,
+ * has to have sounding there -- a voice-over begun before the playhead is
+ * heard from where the playhead is, where a note begun there is not.
+ */
+export function soundsAt(song: Song, tick: number, taps?: Taps): SoundAt[] {
+  return soundPasses(song, tick, tick, taps)
+    .filter((p) => p.start <= tick && p.end > tick)
+    .map(({ track, key, sample, origin }) => ({ track, key, sample, origin }))
+}
 
 /**
  * Where a note lets go, from the start of its pattern: cut at the end of the

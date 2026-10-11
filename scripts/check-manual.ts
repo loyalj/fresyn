@@ -13,7 +13,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { renderPatch } from '../src/audio/render'
-import { disconnectAt } from '../src/patch/edit'
+import { disconnectAt, setModuleText } from '../src/patch/edit'
 import { defOf, MODULE_DEFS } from '../src/patch/defs'
 import { helpFor, parseKnobHelp } from '../src/patch/knobHelp'
 import { add, LIBRARY, templateById, wire } from '../src/patch/library'
@@ -960,6 +960,375 @@ tutorial('22', 'charge-up')
   }
   check('charge-up: the drive lane waits for its half of the turn', first > at(0.6) && first < at(1.2),
     first < 0 ? 'never differs' : `wakes at ${(first / SR).toFixed(2)}s`)
+}
+
+// --- helpers for 23 onwards ---------------------------------------------
+
+/**
+ * The strongest repeat between `minHz` and `maxHz`, as a rate: the first peak
+ * nearly as high as the highest, so twice the period never wins. For bangs,
+ * hops and swings that a pitch finder's range does not reach.
+ */
+function repeatRate(buf: Float32Array, from: number, to: number, minHz: number, maxHz: number) {
+  const lo = Math.floor(SR / maxHz)
+  const hi = Math.ceil(SR / minHz)
+  const c = new Float64Array(hi + 2)
+  let top = 0
+  for (let lag = lo; lag <= hi + 1; lag++) {
+    let s = 0
+    for (let i = from; i + lag < to && i + lag < buf.length; i++) s += buf[i] * buf[i + lag]
+    c[lag] = s
+    if (s > top) top = s
+  }
+  for (let lag = lo + 1; lag <= hi; lag++) {
+    if (c[lag] >= c[lag - 1] && c[lag] >= c[lag + 1] && c[lag] > top * 0.85) return SR / lag
+  }
+  return 0
+}
+
+/**
+ * How exactly a window repeats at its strongest period, 0 to 1: 1 for a
+ * steady note, less for a groan that catches unevenly. Worked on the
+ * sample-to-sample difference, which tilts the spectrum flat -- otherwise a
+ * low sound resembles itself at any short lag whether it repeats or not.
+ */
+function steadiness(buf: Float32Array, from: number, to: number) {
+  const d = new Float64Array(to - from)
+  for (let i = from + 1; i < to; i++) d[i - from] = buf[i] - buf[i - 1]
+  let best = 0
+  for (let lag = Math.floor(SR / 1000); lag < SR / 20; lag++) {
+    let s = 0
+    let a = 0
+    let b = 0
+    for (let i = 0; i + lag < d.length; i++) {
+      s += d[i] * d[i + lag]
+      a += d[i] * d[i]
+      b += d[i + lag] * d[i + lag]
+    }
+    const r = s / Math.sqrt(a * b + 1e-30)
+    if (r > best) best = r
+  }
+  return best
+}
+
+/** The level of everything under about 60 Hz: what a subwoofer would get. */
+function bass(buf: Float32Array, from: number, to: number) {
+  const k = 1 - Math.exp((-2 * Math.PI * 60) / SR)
+  let a = 0
+  let b = 0
+  let sum = 0
+  for (let i = from; i < to && i < buf.length; i++) {
+    a += (buf[i] - a) * k
+    b += (a - b) * k
+    sum += b * b
+  }
+  return Math.sqrt(sum / Math.max(1, to - from))
+}
+
+/** Where each burst of sound starts, in samples: a rising edge of loudness over a fraction of the peak. */
+function onsets(buf: Float32Array, from: number, to: number, floor = 0.15, window = 0.002) {
+  const w = at(window)
+  const level = stats(buf, from, to).peak * floor
+  const out: number[] = []
+  let quiet = true
+  for (let i = from; i + w < to && i + w < buf.length; i += w) {
+    const loud = stats(buf, i, i + w).peak > level
+    if (loud && quiet) out.push(i)
+    quiet = !loud
+  }
+  return out
+}
+
+/**
+ * Where each hit starts: a window at least twice as loud as the one before,
+ * and loud enough to count. Ringing that beats or rustles never doubles in
+ * one step; a strike does.
+ */
+function strikes(buf: Float32Array, from: number, to: number, window = 0.002, gap = 0.02) {
+  const w = at(window)
+  const floor = stats(buf, from, to).peak * 0.05
+  const out: number[] = []
+  let last = 0
+  for (let i = from; i + w < to && i + w < buf.length; i += w) {
+    const p = stats(buf, i, i + w).peak
+    if (p > floor && p > last * 2 && (out.length === 0 || i - out[out.length - 1] > at(gap))) out.push(i)
+    last = p
+  }
+  return out
+}
+
+/** Loudness in 10 ms frames, for finding where a swell peaks. */
+function frames(buf: Float32Array, from: number, to: number) {
+  const out: number[] = []
+  for (let i = from; i + at(0.01) <= to && i + at(0.01) <= buf.length; i += at(0.01)) out.push(stats(buf, i, i + at(0.01)).rms)
+  return out
+}
+
+// --- 23. boiling potion -----------------------------------------------
+tutorial('23', 'boiling potion')
+{
+  const { patch, values: preset } = fromLibrary('potion')
+  const values = knobs(patch, preset)
+  const out = oneShot('potion', patch, values, 2, 5)
+  const bubbles = onsets(out.left, at(0.4), at(2), 0.25).length
+  check('potion: dozens of separate bubbles', bubbles > 20, `${bubbles} in 1.6 s`)
+  const big = render(patch, { ...values, 'bub1.size': 15 }, 2, 5)
+  const small = brightness(out.left, at(0.4), at(2))
+  const low = brightness(big.left, at(0.4), at(2))
+  check('potion: bigger bubbles are lower notes', low < small * 0.6, `${small.toFixed(0)} -> ${low.toFixed(0)} crossings a second`)
+}
+
+// --- 24. creaking door ------------------------------------------------
+tutorial('24', 'creaking door')
+{
+  const { patch, values: preset } = fromLibrary('doorcreak')
+  const values = knobs(patch, preset)
+  const out = oneShot('creak', patch, values, 2, 5)
+  const start = stats(out.left, 0, at(0.15)).rms
+  const swung = stats(out.left, at(1), at(1.5)).rms
+  check('creak: silent until the push builds', start < swung / 8, `${start.toFixed(4)} then ${swung.toFixed(3)}`)
+  // Low and pressed hard it is a groan; up at 440 Hz with the surface
+  // smooth, the same string holds a steady note.
+  const groan = steadiness(out.left, at(1), at(1.3))
+  const glass = steadiness(render(patch, { ...values, 'fric1.pitch': 440, 'fric1.rough': 0, 'fric1.pressure': 0.5 }, 2, 5).left, at(1), at(1.3))
+  check('creak: a groan, where the same string up high is a note', glass > 0.995 && groan < glass - 0.025, `${groan.toFixed(3)} steady at 35 Hz, ${glass.toFixed(3)} at 440`)
+}
+
+// --- 25. crate drag ---------------------------------------------------
+tutorial('25', 'crate drag')
+{
+  const { patch, values: preset } = fromLibrary('crate')
+  const values = knobs(patch, preset)
+  const out = oneShot('crate', patch, values, 1.5, 3)
+  const early = brightness(out.left, at(0.05), at(0.35))
+  const late = brightness(out.left, at(0.8), at(1.1))
+  check('crate: it darkens as it slows', early > late * 1.3, `${early.toFixed(0)} -> ${late.toFixed(0)} crossings a second`)
+  check('crate: and quietens', stats(out.left, at(0.05), at(0.35)).rms > stats(out.left, at(0.8), at(1.1)).rms * 2)
+}
+
+// --- 26. motorbike rev ------------------------------------------------
+tutorial('26', 'motorbike rev')
+{
+  const { patch, values: preset } = fromLibrary('motorbike')
+  const values = knobs(patch, preset)
+  const out = render(patch, values, 2, 5)
+  const whole = stats(out.left)
+  check('motorbike: makes a sound', whole.peak > 0.05, `peak=${whole.peak.toFixed(3)}`)
+  check('motorbike: no NaN', whole.nan === 0)
+  check('motorbike: does not clip', whole.peak <= 1.0001, `peak=${whole.peak.toFixed(3)}`)
+  // 1500 rpm on two cylinders is 25 bangs a second; the envelope adds up to
+  // two octaves, a hundred.
+  const idle = repeatRate(out.left, at(4), at(4.8), 15, 160)
+  const peakRate = repeatRate(out.left, at(0.55), at(0.75), 15, 160)
+  check('motorbike: it idles at 25 bangs a second', Math.abs(idle - 25) < 2, `${idle.toFixed(1)}`)
+  check('motorbike: and revs towards a hundred', peakRate > 70, `${peakRate.toFixed(1)} at the top of the rev`)
+  check('motorbike: and keeps idling once let go', stats(out.left, at(4), at(4.8)).rms > 0.02)
+}
+
+// --- 27. car pass-by --------------------------------------------------
+tutorial('27', 'car pass-by')
+{
+  const { patch, values: preset } = fromLibrary('carpass')
+  const values = knobs(patch, preset)
+  const out = render(patch, values, 0.1, 8)
+  const whole = stats(out.left)
+  check('carpass: makes a sound', whole.peak > 0.05, `peak=${whole.peak.toFixed(3)}`)
+  check('carpass: no NaN', whole.nan === 0 && stats(out.right).nan === 0)
+  check('carpass: does not clip', whole.peak <= 1.0001 && stats(out.right).peak <= 1.0001)
+  check('carpass: it comes in on the left and leaves on the right',
+    stats(out.left, at(1), at(2)).rms > stats(out.right, at(1), at(2)).rms * 2 && stats(out.right, at(4.5), at(5.5)).rms > stats(out.left, at(4.5), at(5.5)).rms * 2)
+  const both = (a: number, b: number) => stats(out.left, at(a), at(b)).rms + stats(out.right, at(a), at(b)).rms
+  check('carpass: loudest as it passes', both(3, 3.8) > both(0.5, 1.3) * 3, `${both(0.5, 1.3).toFixed(3)} far, ${both(3, 3.8).toFixed(3)} passing`)
+  // A hundred bangs a second, heard higher coming and lower going.
+  const coming = repeatRate(out.left, at(1), at(2), 60, 160)
+  const going = repeatRate(out.right, at(4.5), at(5.5), 60, 160)
+  check('carpass: the engine drops in pitch as it passes', coming > going * 1.12, `${coming.toFixed(1)} -> ${going.toFixed(1)} bangs a second`)
+}
+
+// --- 28. deep boom ----------------------------------------------------
+tutorial('28', 'deep boom')
+{
+  const { patch, values: preset } = fromLibrary('boom')
+  const values = knobs(patch, preset)
+  const out = oneShot('boom', patch, values, 0.1, 4)
+  const without = render(patch, { ...values, 'sub1.sub1': 0, 'sub1.sub2': 0 }, 0.1, 4)
+  const floor = bass(out.left, 0, at(1.5))
+  const thin = bass(without.left, 0, at(1.5))
+  check('boom: the octaves down add the floor', floor > thin * 1.5, `${thin.toFixed(4)} -> ${floor.toFixed(4)} under 60 Hz`)
+}
+
+// --- 29. rewind spell -------------------------------------------------
+tutorial('29', 'rewind spell')
+{
+  const { patch, values: preset } = fromLibrary('rewind')
+  const values = knobs(patch, preset)
+  const out = oneShot('rewind', patch, values, 0.05, 5)
+  // The reversed copy, after the pluck: it builds to its loudest rather than
+  // starting there.
+  const f = frames(out.left, at(0.3), at(1.2))
+  const top = Math.max(...f)
+  const first = f.findIndex((v) => v > top * 0.1)
+  const peakAt = f.indexOf(top)
+  const pluck = frames(render(patch, { ...values, 'rev1.mix': 0 }, 0.05, 5).left, 0, at(0.5))
+  const pluckRise = pluck.indexOf(Math.max(...pluck)) - pluck.findIndex((v) => v > Math.max(...pluck) * 0.1)
+  check('rewind: the pluck comes back backwards, swelling into its attack', peakAt - first > 8 && pluckRise <= 2, `${(peakAt - first) * 10} ms from onset to peak, against ${pluckRise * 10} ms for the pluck`)
+  const dry = render(patch, { ...values, 'rev1.mix': 0 }, 0.05, 5)
+  check('rewind: and Mix at zero is only the pluck', stats(dry.left, at(0.6), at(1.2)).rms < stats(out.left, at(0.6), at(1.2)).rms / 10)
+}
+
+// --- 30. item get -----------------------------------------------------
+tutorial('30', 'item get')
+{
+  const { patch, values: preset } = fromLibrary('itemget')
+  const values = knobs(patch, preset)
+  const out = render(patch, values, 0.05, 12)
+  const whole = stats(out.left)
+  check('itemget: makes a sound', whole.peak > 0.05, `peak=${whole.peak.toFixed(3)}`)
+  check('itemget: no NaN', whole.nan === 0 && stats(out.right).nan === 0)
+  check('itemget: does not clip', whole.peak <= 1.0001)
+  check('itemget: rings on, and dies away', out.seconds > 3 && out.seconds < 11.95, `${out.seconds.toFixed(2)}s`)
+  const climb = (b: Float32Array) => toneAt(b, 1760, at(1), at(3)) / (toneAt(b, 880, at(1), at(3)) + 1e-9)
+  const plain = render(patch, { ...values, 'shim1.shimmer': 0 }, 0.05, 12)
+  check('itemget: the tail climbs an octave', climb(out.left) > climb(plain.left) * 3, `${climb(plain.left).toFixed(2)} -> ${climb(out.left).toFixed(2)} at 1760 against 880`)
+  check('itemget: in stereo', !same(out.left, out.right))
+}
+
+// --- 31. mic squeal ---------------------------------------------------
+tutorial('31', 'mic squeal')
+{
+  const { patch, values: preset } = fromLibrary('squeal')
+  const values = knobs(patch, preset)
+  const out = render(patch, values, 2, 5)
+  const whole = stats(out.left)
+  check('squeal: makes a sound', whole.peak > 0.05, `peak=${whole.peak.toFixed(3)}`)
+  check('squeal: no NaN', whole.nan === 0)
+  check('squeal: does not clip', whole.peak <= 1.0001)
+  check('squeal: and stops once let go', out.seconds < 4.95, `${out.seconds.toFixed(2)}s`)
+  const hiss = stats(out.left, at(0.05), at(0.3)).rms
+  const howl = stats(out.left, at(1.2), at(1.8)).rms
+  check('squeal: it swells up out of the hiss', howl > hiss * 3, `${hiss.toFixed(3)} -> ${howl.toFixed(3)}`)
+  const pitch = ringPitch(out.left, at(1.3), at(1.5))
+  check('squeal: near its Pitch', Math.abs(pitch / 1200 - 1) < 0.15, `${pitch.toFixed(0)} Hz`)
+  const tame = render(patch, { ...values, 'howl1.cvAmount': 0 }, 2, 5)
+  check('squeal: with Fdbk Amt at zero it never takes off', stats(tame.left, at(1.2), at(1.8)).rms < howl / 3)
+}
+
+// --- 32. boing --------------------------------------------------------
+tutorial('32', 'boing')
+{
+  const { patch, values: preset } = fromLibrary('boing')
+  const values = knobs(patch, preset)
+  const out = oneShot('boing', patch, values, 0.05, 2)
+  const { low, high } = pitchRange(out.left, 0.6, 24)
+  check('boing: the pitch swings up and down', high > low * 1.6, `${low.toFixed(0)} to ${high.toFixed(0)} crossings a second`)
+  // Six swings a second: the brightness rises through its average about
+  // that often in the first second.
+  const slices: number[] = []
+  for (let s = 0; s + 0.01 <= 0.8; s += 0.01) slices.push(brightness(out.left, at(s), at(s + 0.02)))
+  const mean = slices.reduce((a, b) => a + b, 0) / slices.length
+  let swings = 0
+  for (let k = 1; k < slices.length; k++) if (slices[k - 1] < mean && slices[k] >= mean) swings++
+  check('boing: swinging at Freq', swings >= 3 && swings <= 7, `${swings} in 0.8 s`)
+}
+
+// --- 33. dropped coin -------------------------------------------------
+tutorial('33', 'dropped coin')
+{
+  const { patch, values: preset } = fromLibrary('coindrop')
+  const values = knobs(patch, preset)
+  const out = oneShot('coindrop', patch, values, 0.05, 3)
+  const hits = strikes(out.left, 0, at(1.5))
+  check('coindrop: it lands Fall after it is let go', hits.length > 0 && Math.abs(hits[0] / SR - 0.25) < 0.02, hits.length ? `${(hits[0] / SR).toFixed(3)} s` : 'no hits')
+  check('coindrop: and rattles to a stop', hits.length >= 5, `${hits.length} hits`)
+  const gaps = hits.slice(1).map((h, k) => h - hits[k])
+  check('coindrop: each bounce sooner than the last', gaps.slice(1, 4).every((g, k) => g < gaps[k]), gaps.map((g) => (g / SR).toFixed(3)).join(' '))
+  const peakNear = (h: number) => stats(out.left, h, h + at(0.02)).peak
+  check('coindrop: and softer', hits.length >= 4 && peakNear(hits[3]) < peakNear(hits[0]) * 0.6)
+}
+
+// --- 34. footsteps ----------------------------------------------------
+tutorial('34', 'footsteps')
+{
+  const { patch, values: preset } = fromLibrary('footsteps')
+  const values = knobs(patch, preset)
+  const out = oneShot('footsteps', patch, values, 0.05, 5)
+  const steps = strikes(out.left, 0, at(4.5), 0.01).length
+  check('footsteps: one press, eight steps', steps === 8, `${steps}`)
+  const tone = [...Array(8).keys()].map((k) => brightness(out.left, at(k * 0.5), at(k * 0.5 + 0.12)))
+  check('footsteps: no two steps in a row alike', tone.every((v, k) => k === 0 || Math.abs(v / tone[k - 1] - 1) > 0.05), tone.map((v) => v.toFixed(0)).join(' '))
+  const groups = [tone.slice(0, 4), tone.slice(4, 8)].map((g) => new Set(g.map((v) => Math.round(v / 50))).size)
+  check('footsteps: every four uses all four', groups.every((n) => n === 4), groups.join(' '))
+}
+
+// --- 35. 8-bit jump ---------------------------------------------------
+tutorial('35', '8-bit jump')
+{
+  const { patch, values: preset } = fromLibrary('chipjump')
+  const values = knobs(patch, preset)
+  const out = render(patch, values, 0.4, 2)
+  const whole = stats(out.left)
+  check('chipjump: makes a sound', whole.peak > 0.05, `peak=${whole.peak.toFixed(3)}`)
+  check('chipjump: no NaN', whole.nan === 0)
+  check('chipjump: does not clip', whole.peak <= 1.0001)
+  check('chipjump: and is over in under half a second', out.seconds < 0.45, `${out.seconds.toFixed(2)}s`)
+  const up = brightness(out.left, at(0.25), at(0.33)) > brightness(out.left, at(0.01), at(0.09)) * 1.5
+  check('chipjump: it sweeps upward', up)
+  // Sixteen levels for the envelope, each a whole step of the chip's.
+  check('chipjump: and fades away across Decay', stats(out.left, at(0.02), at(0.08)).rms > stats(out.left, at(0.26), at(0.32)).rms * 2)
+}
+
+// --- 36. waveshaper by formula ----------------------------------------
+tutorial('36', 'waveshaper by formula')
+{
+  const { patch, values: preset } = fromLibrary('shaper')
+  const values = knobs(patch, preset)
+  const out = oneShot('shaper', patch, values, 0.5, 2)
+  const plain = render(setModuleText(patch, 'expr1', 'x'), values, 0.5, 2)
+  check('shaper: the formula adds harmonics a sine does not have', treble(out.left, at(0.05), at(0.3)) > treble(plain.left, at(0.05), at(0.3)) * 2,
+    `${treble(plain.left, at(0.05), at(0.3)).toFixed(3)} -> ${treble(out.left, at(0.05), at(0.3)).toFixed(3)}`)
+  const harder = render(patch, { ...values, 'expr1.a': 1 }, 0.5, 2)
+  check('shaper: and A turns it up', treble(harder.left, at(0.05), at(0.3)) > treble(out.left, at(0.05), at(0.3)) * 1.2)
+}
+
+// --- 37. bytebeat -----------------------------------------------------
+tutorial('37', 'bytebeat')
+{
+  const { patch, values: preset } = fromLibrary('bytebeat')
+  const values = knobs(patch, preset)
+  const out = render(patch, values, 1, 2)
+  const whole = stats(out.left)
+  check('bytebeat: makes a sound', whole.peak > 0.05, `peak=${whole.peak.toFixed(3)}`)
+  check('bytebeat: no NaN', whole.nan === 0)
+  check('bytebeat: does not clip', whole.peak <= 1.0001)
+  // The formula, worked out by hand at 8000 a second from t = 0.
+  const formula = (i: number) => {
+    const t = Math.floor((i * 8000) / SR)
+    return ((t * ((t >> 5) | (t >> 8))) & 255) / 127.5 - 1
+  }
+  let dot = 0
+  let a = 0
+  let b = 0
+  for (let i = at(0.05); i < at(0.8); i++) {
+    dot += out.left[i] * formula(i)
+    a += out.left[i] * out.left[i]
+    b += formula(i) * formula(i)
+  }
+  const match = dot / Math.sqrt(a * b)
+  check('bytebeat: it is the formula, from t = 0', match > 0.95, match.toFixed(3))
+}
+
+// --- 38. seamless wind ------------------------------------------------
+tutorial('38', 'seamless wind')
+{
+  const { patch, values: preset } = fromLibrary('windloop')
+  const values = knobs(patch, preset)
+  const take = render(patch, values, 0.05, 6)
+  check('windloop: it renders exactly one loop', take.left.length === 4 * SR, `${(take.left.length / SR).toFixed(3)} s`)
+  check('windloop: of wind', stats(take.left).rms > 0.02 && stats(take.left).nan === 0)
+  let step = 0
+  for (let i = 1; i < take.left.length; i++) step = Math.max(step, Math.abs(take.left[i] - take.left[i - 1]))
+  const seam = Math.abs(take.left[0] - take.left[take.left.length - 1])
+  check('windloop: whose end runs into its start', seam < step, `${seam.toFixed(4)} across the seam, ${step.toFixed(4)} at most elsewhere`)
 }
 
 // --- the shelf is covered ----------------------------------------------

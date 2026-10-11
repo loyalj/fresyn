@@ -37,7 +37,16 @@ const FRAMES = 4096
  * check's window and not about the module. A second is long enough for the
  * buffer to hold something wherever Position lands.
  */
-const LONG_RUN: Record<string, number> = { gran: SR }
+const LONG_RUN: Record<string, number> = {
+  gran: SR,
+  // The Chip's Decay steps down across up to two seconds, and its first step
+  // at the longest is a seventh of a second in: half a second, in whole blocks.
+  chip: 128 * 188,
+  // The Loop Seam passes its input through while it records -- Length and
+  // Fade, four and a half seconds at their defaults -- so neither knob does
+  // anything until the loop starts.
+  seam: SR * 5,
+}
 
 /**
  * How many switch combinations are worth enumerating before falling back to
@@ -198,6 +207,40 @@ const CEILING: Record<string, number> = {
   // Eight channels at full level cannot leave the bus above full scale: the
   // mixer drives the speakers now, so it saturates rather than summing past 1.
   mixer: 1,
+  // In a rack on its own nothing is routed to it, so it is silence.
+  busin: 0,
+  // In a rack on its own there is no track for it to hear.
+  trackin: 0,
+  // And no song to play it any sounds.
+  clips: 0,
+  // Each held under full scale by a soft limit on the way out.
+  bubble: 1,
+  // Gates, a 0..1 index, and 0..1 velocities and heights.
+  robin: 1,
+  bounce: 1,
+  // The chip's loudest step is full scale; the pulse's edge correction
+  // overshoots it by a hair.
+  chip: 1.1,
+  // Closest approach is unity, and the pan is equal-power.
+  doppler: 1.05,
+  // What it recorded, crossfaded at equal power: uncorrelated halves sum to
+  // one, correlated ones to the square root of two.
+  seam: 1.45,
+  engine: 1,
+  friction: 1,
+  scrape: 1,
+  // A crossfade between full-scale dry and a loop a soft limit holds at one.
+  howl: 1.05,
+  shimmer: 1.05,
+  // Two windowed playheads, each leaned by Swell, over a buffer held at one.
+  reverse: 2,
+  // Dry at one plus two octaves down, each given back the level its
+  // lowpass took: 1.6 a side.
+  sub: 4.5,
+  // Both hit their stops at ten: a mass on a spring driven at resonance,
+  // and a formula's answer in math mode.
+  mass: 10,
+  expr: 10,
   // It has no output at all.
   scope: 0,
   // Nor has the recorder: it is a tap, and taps nothing at audio rate.
@@ -502,6 +545,16 @@ const DISPLAY_ONLY = new Set(['scope.timebase', 'scope.gain', 'scope.mode'])
  * group can cut nothing off here. `check-song` strikes them in turn.
  */
 const STRUCK_ONLY = /^kit\.choke\d+$/
+/**
+ * Knobs this rig cannot reach. The Bus In plays what the song routes to its
+ * track, the Track In another track's rack and the Clips the song's sounds,
+ * and a rack on its own has none of them -- so their Level scales silence
+ * here; `check-song` feeds all three.
+ * The Doppler's Speed moves it only with Pos empty and a sound at In, and
+ * the rig drives every jack or none; `check-dsp` measures the shift Speed
+ * makes.
+ */
+const FED_ONLY = new Set(['busin.level', 'trackin.level', 'clips.level', 'doppler.speed'])
 
 console.log('\nevery parameter reaches the DSP')
 {
@@ -513,7 +566,7 @@ console.log('\nevery parameter reaches the DSP')
     const frames = LONG_RUN[type] ?? FRAMES
 
     for (const spec of def.params) {
-      if (DISPLAY_ONLY.has(`${type}.${spec.id}`) || STRUCK_ONLY.test(`${type}.${spec.id}`)) continue
+      if (DISPLAY_ONLY.has(`${type}.${spec.id}`) || FED_ONLY.has(`${type}.${spec.id}`) || STRUCK_ONLY.test(`${type}.${spec.id}`)) continue
 
       let moved = false
 

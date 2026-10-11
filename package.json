@@ -41,6 +41,11 @@
     "check:notes": "node scripts/check-notes.mjs",
     "check:midi": "node scripts/check-midi.mjs",
     "check:automation": "node scripts/check-automation.mjs",
+    "check:buses": "node scripts/check-buses.mjs",
+    "check:sidechain": "node scripts/check-sidechain.mjs",
+    "check:sounds": "node scripts/check-sounds.mjs",
+    "check:master": "node scripts/check-master.mjs",
+    "check:expression": "node scripts/check-expression.mjs",
     "check:ux": "node scripts/check-ux.mjs"
   },
   "dependencies": {

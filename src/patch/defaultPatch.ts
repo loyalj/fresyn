@@ -90,3 +90,17 @@ function cable(fromModule: string, fromPort: string, toModule: string, toPort: s
   const to = { module: toModule, port: toPort }
   return { id: cableId(from, to), from, to }
 }
+
+/**
+ * The starting rack for a bus track: a Bus In and nothing else. Unpatched, it
+ * is the rack's main mix, so a new bus passes what it is fed straight through
+ * -- a fader for a group of tracks -- until something is patched after it.
+ */
+export function busPatch(): Patch {
+  return { modules: [{ id: 'bus1', type: 'busin', params: {} }], cables: [] }
+}
+
+/** An audio track's rack: a Clips module, which goes straight to the speakers until effects are patched in. */
+export function clipsPatch(): Patch {
+  return { modules: [{ id: 'clips1', type: 'clips', params: {} }], cables: [] }
+}

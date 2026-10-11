@@ -35,8 +35,9 @@ interface Props {
  * one thing a menu cannot: the units on screen right now are lit, so the
  * list doubles as a map of where in the rack you are.
  *
- * Only where the window leaves a margin wide enough to hold it; below that
- * the stylesheet hides it and the Jump menu comes back.
+ * In the margin on a wide window; on a laptop the rack moves left to make
+ * one. Only on a window too narrow for both does the stylesheet hide it and
+ * bring the Jump menu back.
  */
 export const RackIndex = memo(function RackIndex({
   tracks,

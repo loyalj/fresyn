@@ -137,6 +137,11 @@ npm run check:utilities-ui # the Utilities menu, and every panel end to end
 npm run check:notes        # notes on the rack: added, moved, undone, saved, hidden
 npm run check:midi         # a pretend controller learnt onto knobs and buttons, and played
 npm run check:automation   # a lane drawn under the roll, played, taken over by hand, and kept
+npm run check:buses        # a bus added in the Mix view, routed to, sent to, never looped, and kept
+npm run check:sidechain    # a Track In picks a track to hear, greys out loops, and names one that has gone
+npm run check:sounds       # an audio file dropped on the playlist, drawn, painted, played and kept
+npm run check:master       # a master rack added from the Mix view, benched, kept and taken away
+npm run check:expression   # a formula typed, checked, handed over, undone, and graphed
 npm run check:ux           # the counter, the loop on the ruler, clip menus, Ctrl+K, audition, jacks
 npm run bench              # not a check: songs, instruments and modules against the audio budget
 ```

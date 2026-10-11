@@ -7,6 +7,9 @@ import { clampNote, KIT_SLOTS, kitSlots, padPatch, padPrefix } from './kit'
 import { readNotes, writeNotes } from './notes'
 import type { Cable, KitSlot, Patch, PatchModule } from './types'
 
+/** The longest module text a file may carry; the Expression's own limit. */
+const MAX_TEXT = 2000
+
 export const PATCH_FORMAT = 1
 
 interface Migration {
@@ -79,6 +82,7 @@ export function toStored(name: string, patch: Patch, values: Record<string, numb
     // The hash and the name, never the audio: a patch stays a small file, and
     // what it names is either in this browser's store or arrives in a bundle.
     if (m.sample) out.sample = { id: m.sample.id, name: m.sample.name }
+    if (m.text) out.text = m.text
     if (m.bypass) out.bypass = true
     // A Drum Kit's pads, each a rack written the way a patch is.
     if (m.type === 'kit' && m.slots?.some(Boolean)) {
@@ -184,9 +188,15 @@ export function fromStored(input: unknown): LoadResult | { error: string } {
         ? { id: raw.id, name: typeof raw.name === 'string' ? raw.name : raw.id }
         : undefined
 
+    // Text is taken as it is, short of absurd: a formula that will not
+    // compile comes up silent with its message on the panel, which is how
+    // it would have been left.
+    const text = typeof m.text === 'string' && m.text && m.text.length <= MAX_TEXT ? m.text : undefined
+
     const built: PatchModule = { id, type, params }
     if (key) built.key = key
     if (sample) built.sample = sample
+    if (text) built.text = text
     // Only where the module can be bypassed at all: a flag on anything else
     // would be a switch the panel has no way to turn back off.
     if (m.bypass === true && defOf(type).bypass) built.bypass = true

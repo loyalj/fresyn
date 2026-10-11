@@ -29,8 +29,10 @@ import {
 } from '../song/range'
 import { addSection, sectionAt, sectionOver, sectionsOf, splitSection } from '../song/section'
 import { clipHits, clipRepeats } from '../song/schedule'
-import { barsIn, barsOf, type Snap } from '../song/timeline'
+import { barsIn, barsOf, tempoMap, type Snap, type TempoMap } from '../song/timeline'
 import { barTicks, beatTicks, type Pattern, type Placement, type Song } from '../song/types'
+import type { SampleData } from '../dsp/samples'
+import { useSamples } from './SampleContext'
 import { ContextMenu, type MenuItem } from './Menu'
 import { NameField } from './NameField'
 import { SectionStrip } from './SectionStrip'
@@ -53,6 +55,10 @@ interface Props {
   onEdit: (fn: (song: Song) => Song) => void
   /** Open a pattern in the roll: a double-click on one of its clips. */
   onOpenPattern: (id: string) => void
+  /** Put a track on the bench: a double-click on a sound's clip opens the track it plays on. */
+  onSelectTrack: (id: string) => void
+  /** An audio file dropped on a lane, to become a sound and a clip of it there. */
+  onDropAudio: (file: File, tick: number, lane: number) => void
   /** The section being looped, by the tick it starts on, or null. */
   section: number | null
   onSection: (tick: number | null) => void
@@ -150,10 +156,32 @@ export function Playlist({
   onRemovePattern,
   onEdit,
   onOpenPattern,
+  onSelectTrack,
+  onDropAudio,
   section,
   onSection,
   transport,
 }: Props) {
+  /**
+   * A sound picked to paint with. Kept here rather than as the roll's
+   * pattern, which a sound cannot be: picking one paints it and leaves the
+   * roll writing where it was.
+   */
+  const [soundPick, setSoundPick] = useState<string | null>(null)
+  const paintId = soundPick && song.patterns.some((p) => p.id === soundPick && p.audio) ? soundPick : patternId
+  const choose = (id: string) => {
+    if (song.patterns.find((p) => p.id === id)?.audio) setSoundPick(id)
+    else {
+      setSoundPick(null)
+      onSelectPattern(id)
+    }
+  }
+  const samples = useSamples()
+  // Redrawn when a file arrives, which is after the song already names it.
+  const [, bump] = useState(0)
+  useEffect(() => samples?.onChange(() => bump((n) => n + 1)), [samples])
+  const time = useMemo(() => tempoMap({ tempo: song.tempo, tempos: song.tempos }, WAVE_RATE), [song.tempo, song.tempos])
+  const [dropping, setDropping] = useState(false)
   // The song's bars, however its meter changes. The zoom is a width for the
   // song's first bar, and every other bar is as wide as its ticks make it.
   const grid = barsOf(song)
@@ -356,7 +384,7 @@ export function Playlist({
       }
       setPicked([])
       const tick = snap(p.tick, e.altKey, 'floor')
-      setDrag({ kind: 'paint', pattern: patternId, start: tick, x0: p.tick, tick, lane: clamp(p.lane, 0, MAX_LANE) })
+      setDrag({ kind: 'paint', pattern: paintId, start: tick, x0: p.tick, tick, lane: clamp(p.lane, 0, MAX_LANE) })
       return
     }
 
@@ -364,7 +392,7 @@ export function Playlist({
     if (!place) return
     // A clip touched is its pattern chosen: the next click paints it, and the
     // roll is writing into it.
-    if (place.pattern !== patternId) onSelectPattern(place.pattern)
+    if (place.pattern !== paintId) choose(place.pattern)
     const pattern = song.patterns.find((x) => x.id === place.pattern)
 
     if (ctrl && pattern) {
@@ -724,7 +752,7 @@ export function Playlist({
             <div
               key={pattern.id}
               role="listitem"
-              className={`playlist-pattern${pattern.id === patternId ? ' on' : ''}`}
+              className={`playlist-pattern${pattern.id === paintId ? ' on' : ''}${pattern.audio ? ' sound' : ''}`}
             >
               {/* The track list's colour chip: a click steps it on round the
                   wheel, and round to none. */}
@@ -736,12 +764,21 @@ export function Playlist({
                 aria-label={`Colour ${pattern.name}`}
                 type="button"
               />
+              {pattern.audio && (
+                <span className="playlist-sound-mark" aria-hidden="true">
+                  ∿
+                </span>
+              )}
               <NameField
                 className="playlist-name"
                 value={pattern.name}
-                label="Pattern name"
-                title="Paint with this pattern and write into it; double-click to rename it"
-                onSelect={() => onSelectPattern(pattern.id)}
+                label={pattern.audio ? 'Sound name' : 'Pattern name'}
+                title={
+                  pattern.audio
+                    ? `A sound, ${pattern.audio.sample.name}, played on ${song.tracks.find((t) => t.id === pattern.audio!.track)?.name ?? 'its track'}: paint with it; double-click to rename it`
+                    : 'Paint with this pattern and write into it; double-click to rename it'
+                }
+                onSelect={() => choose(pattern.id)}
                 onRename={(name) => onRenamePattern(pattern.id, name)}
               />
               <button
@@ -757,8 +794,8 @@ export function Playlist({
                 className="track-remove"
                 onClick={() => onRemovePattern(pattern.id)}
                 // There has to be one for the roll to write into.
-                disabled={song.patterns.length <= 1}
-                title="Delete this pattern, and every clip of it in the song"
+                disabled={!pattern.audio && song.patterns.filter((p) => !p.audio).length <= 1}
+                title={`Delete this ${pattern.audio ? 'sound' : 'pattern'}, and every clip of it in the song`}
                 aria-label={`Delete ${pattern.name}`}
                 type="button"
               >
@@ -770,6 +807,7 @@ export function Playlist({
         <button className="track-add" onClick={() => onAddPattern()} type="button">
           + Pattern
         </button>
+        <span className="playlist-drop-hint">Drop audio on a lane for a sound</span>
       </div>
 
       <div className="playlist-main">
@@ -978,8 +1016,23 @@ export function Playlist({
                 ))}
               </div>
               <div
-                className="playlist-layer"
+                className={`playlist-layer${dropping ? ' dropping' : ''}`}
                 ref={layerRef}
+                onDragOver={(e) => {
+                  if (!e.dataTransfer.types.includes('Files')) return
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = 'copy'
+                  setDropping(true)
+                }}
+                onDragLeave={() => setDropping(false)}
+                onDrop={(e) => {
+                  const file = e.dataTransfer.files[0]
+                  setDropping(false)
+                  if (!file) return
+                  e.preventDefault()
+                  const p = pointAt(e)
+                  onDropAudio(file, snap(p.tick, e.altKey, 'floor'), clamp(p.lane, 0, MAX_LANE))
+                }}
                 style={{ width: span * ppt }}
                 onPointerDown={onPointerDown}
                 onPointerMove={onPointerMove}
@@ -989,7 +1042,9 @@ export function Playlist({
                 onDoubleClick={(e) => {
                   const clip = e.target instanceof Element ? e.target.closest<HTMLElement>('.playlist-clip') : null
                   const place = clip ? song.playlist[Number(clip.dataset.index)] : undefined
-                  if (place) onOpenPattern(place.pattern)
+                  const audio = place && song.patterns.find((p) => p.id === place.pattern)?.audio
+                  if (audio) onSelectTrack(audio.track)
+                  else if (place) onOpenPattern(place.pattern)
                 }}
               >
                 {/* The bar and beat lines, a stretch of one meter at a time:
@@ -1042,6 +1097,8 @@ export function Playlist({
                       index={i}
                       place={place}
                       pattern={pattern}
+                      sound={pattern.audio ? (samples?.get(pattern.audio.sample.id)?.data ?? null) : null}
+                      time={time}
                       ppt={ppt}
                       picked={shownPicked.has(i)}
                       erasing={erasing.has(i)}
@@ -1076,6 +1133,10 @@ interface ClipProps {
   index: number
   place: Placement
   pattern: Pattern
+  /** A sound's file, once it has arrived; null for a pattern of notes. */
+  sound: SampleData | null
+  /** The song's tempo, which says where in a sound's file each tick of its clip is. */
+  time: TempoMap
   ppt: number
   picked: boolean
   erasing: boolean
@@ -1087,13 +1148,19 @@ interface ClipProps {
  * drag re-renders the playlist every time the pointer crosses a snap line and
  * most clips have not moved.
  */
-const Clip = memo(function Clip({ index, place, pattern, ppt, picked, erasing }: ClipProps) {
+const Clip = memo(function Clip({ index, place, pattern, sound, time, ppt, picked, erasing }: ClipProps) {
   const length = clipLength(place, pattern)
   const art = useMemo(() => clipArt(place, pattern), [place, pattern])
+  // As many columns as there are pairs of pixels, within reason.
+  const columns = Math.max(8, Math.min(600, Math.round((length * ppt) / 2)))
+  const wave = useMemo(
+    () => (pattern.audio && sound ? soundArt(place, pattern, sound, time, columns) : null),
+    [place, pattern, sound, time, columns],
+  )
   const colored = pattern.color !== undefined
   return (
     <div
-      className={`playlist-clip${picked ? ' picked' : ''}${erasing ? ' erasing' : ''}${colored ? ' colored' : ''}${place.mute ? ' muted' : ''}`}
+      className={`playlist-clip${picked ? ' picked' : ''}${erasing ? ' erasing' : ''}${colored ? ' colored' : ''}${place.mute ? ' muted' : ''}${pattern.audio ? ' sound' : ''}`}
       data-index={index}
       style={
         {
@@ -1104,8 +1171,16 @@ const Clip = memo(function Clip({ index, place, pattern, ppt, picked, erasing }:
         } as React.CSSProperties
       }
       aria-label={`${pattern.name}, clip ${index + 1}`}
-      title={`${pattern.name} -- drag to move, drag an edge to trim, Ctrl+click to split, right-click to delete, double-click to edit`}
+      title={`${pattern.name} -- drag to move, drag an edge to trim, Ctrl+click to split, right-click to delete, double-click to ${pattern.audio ? 'open its track' : 'edit'}`}
     >
+      {pattern.audio ? (
+        <svg className="playlist-clip-wave" viewBox={`0 0 ${length} 2`} preserveAspectRatio="none" aria-hidden="true">
+          {art.seams.map((x) => (
+            <line key={`s${x}`} className="seam" x1={x} x2={x} y1={0} y2={2} vectorEffect="non-scaling-stroke" />
+          ))}
+          {wave && <polygon points={wave} />}
+        </svg>
+      ) : (
       <svg className="playlist-clip-notes" viewBox={`0 0 ${length} ${art.rows}`} preserveAspectRatio="none" aria-hidden="true">
         {art.seams.map((x) => (
           <line key={`s${x}`} className="seam" x1={x} x2={x} y1={0} y2={art.rows} vectorEffect="non-scaling-stroke" />
@@ -1117,6 +1192,7 @@ const Clip = memo(function Clip({ index, place, pattern, ppt, picked, erasing }:
           <polyline key={`a${k}`} className="auto" points={points} vectorEffect="non-scaling-stroke" />
         ))}
       </svg>
+      )}
       <span className="playlist-clip-name">
         <button className="playlist-clip-menu" type="button" tabIndex={-1} aria-label={`${pattern.name}: clip menu`} title="Rename, colour, make unique, mute or delete">
           ▾
@@ -1128,6 +1204,56 @@ const Clip = memo(function Clip({ index, place, pattern, ppt, picked, erasing }:
     </div>
   )
 })
+
+/** The rate a sound's place in its file is worked out at: any will do, being a ratio. */
+const WAVE_RATE = 48000
+
+/** How many columns of loudness a second of a file is kept as, for drawing. */
+const ENVELOPE_RATE = 200
+
+/** Each file's loudness, a column per 5 ms, made once per file. */
+const envelopes = new WeakMap<SampleData, Float32Array>()
+
+function envelopeOf(data: SampleData): Float32Array {
+  let env = envelopes.get(data)
+  if (env) return env
+  const per = Math.max(1, Math.round(data.rate / ENVELOPE_RATE))
+  env = new Float32Array(Math.ceil(data.frames / per))
+  for (const ch of data.channels) {
+    for (let i = 0; i < data.frames; i++) {
+      const a = Math.abs(ch[i])
+      const k = (i / per) | 0
+      if (a > env[k]) env[k] = a
+    }
+  }
+  envelopes.set(data, env)
+  return env
+}
+
+/**
+ * A sound's clip drawn as its file's loudness, mirrored round the middle:
+ * the points of one polygon, ticks across and 0..2 down. Each tick finds its
+ * place in the file from the start of its pass at the song's tempo, so a
+ * clip trimmed or drawn out to repeat shows what it plays.
+ */
+function soundArt(place: Placement, pattern: Pattern, data: SampleData, time: TempoMap, columns: number): string {
+  const env = envelopeOf(data)
+  const len = pattern.length
+  const length = clipLength(place, pattern)
+  const origin = place.tick - ((((place.offset ?? 0) % len) + len) % len)
+  const top: string[] = []
+  const bottom: string[] = []
+  for (let c = 0; c <= columns; c++) {
+    const x = (length * c) / columns
+    const tick = place.tick + Math.min(x, length - 1e-6)
+    const pass = origin + Math.floor((tick - origin) / len) * len
+    const seconds = time.span(pass, tick) / WAVE_RATE
+    const v = Math.min(1, env[Math.floor(seconds * ENVELOPE_RATE)] ?? 0)
+    top.push(`${x.toFixed(1)},${(1 - v).toFixed(3)}`)
+    bottom.push(`${x.toFixed(1)},${(1 + v).toFixed(3)}`)
+  }
+  return [...top, ...bottom.reverse()].join(' ')
+}
 
 /** Past this many notes a clip is drawn without them: a solid block reads as well. */
 const MAX_DRAWN = 2000

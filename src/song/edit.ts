@@ -2,7 +2,8 @@ import type { TrackMix } from '../dsp/SongEngine'
 import { targetTrack } from './automation'
 import { normalizeSong } from './normalize'
 import { clipOffset } from './clip'
-import { heardTracks, trackGain } from './folder'
+import { hearing, trackGain } from './folder'
+import { busOut, busSends, reach, reversed, unrouteFrom } from './route'
 import { clipHits, sameSwing, songEnd, unswungTick } from './schedule'
 import { barsIn, barsOf } from './timeline'
 import { METER, setAt } from './timing'
@@ -66,10 +67,15 @@ export function addTrack(song: Song, id: string, name: string): Song {
  */
 export function removeTrack(song: Song, id: string): Song {
   if (song.tracks.length <= 1 || !song.tracks.some((t) => t.id === id)) return song
+  // Whatever was routed to it goes back to the master.
+  const unrouted = unrouteFrom(song, id)
+  // Its sounds go with it, and their clips, as its notes do.
+  const sounds = new Set(song.patterns.filter((p) => p.audio?.track === id).map((p) => p.id))
   return {
-    ...song,
-    tracks: song.tracks.filter((t) => t.id !== id),
-    patterns: song.patterns.map((p) => withoutTrack(p, id)),
+    ...unrouted,
+    tracks: unrouted.tracks.filter((t) => t.id !== id),
+    patterns: song.patterns.filter((p) => !sounds.has(p.id)).map((p) => withoutTrack(p, id)),
+    ...(sounds.size ? { playlist: song.playlist.filter((c) => !sounds.has(c.pattern)) } : {}),
   }
 }
 
@@ -127,6 +133,8 @@ export function duplicatePattern(song: Song, sourceId: string, id: string, name:
         // A copy is a variation to write, and it should groove like the
         // part it was copied from until it is told otherwise.
         ...(source.swing ? { swing: { ...source.swing } } : {}),
+        // A sound's copy plays the same file, to be trimmed or moved on its own.
+        ...(source.audio ? { audio: { sample: { ...source.audio.sample }, track: source.audio.track } } : {}),
       },
     ],
   }
@@ -218,7 +226,9 @@ export function setMeter(song: Song, meter: Meter): Song {
 
 /** Take a pattern out, and every placement of it. Never the last one. */
 export function removePattern(song: Song, id: string): Song {
-  if (song.patterns.length <= 1 || !song.patterns.some((p) => p.id === id)) return song
+  const target = song.patterns.find((p) => p.id === id)
+  // There has to be a pattern of notes left for the roll to write into.
+  if (!target || (!target.audio && song.patterns.filter((p) => !p.audio).length <= 1)) return song
   return {
     ...song,
     patterns: song.patterns.filter((p) => p.id !== id),
@@ -358,7 +368,7 @@ export function contextNotes(song: Song, patternId: string, at: number, heard = 
  * is: the arrangement, with one track let through.
  */
 export function trackMix(song: Song, only?: readonly string[]): Record<string, TrackMix> {
-  const heard = heardTracks(song)
+  const { heard, feeders, lead } = hearing(song)
   const mix: Record<string, TrackMix> = {}
   for (const t of song.tracks) {
     const strip = t.strip ?? DEFAULT_STRIP
@@ -367,14 +377,64 @@ export function trackMix(song: Song, only?: readonly string[]): Record<string, T
       gain: trackGain(song, t),
       // What multiplies the fader, so an automated fader keeps its folder.
       scale: song.folders?.length ? trackGain(song, { ...t, gain: 1 }) : 1,
-      audible: heard.has(t.id) && (!only || only.includes(t.id)),
+      audible: heard.has(t.id),
       pan: strip.pan,
       eq: strip.eq,
       space: strip.space,
       delay: strip.delay,
+      out: busOut(song, t),
+      sends: busSends(song, t),
+    }
+    // Heard only for the soloed bus it feeds: into that and nowhere else.
+    if (feeders.has(t.id)) narrowTo(mix[t.id], lead!)
+  }
+  if (only) focus(mix, only)
+  // A route to a track that is not heard goes nowhere, rather than falling
+  // back to the master the way one to a track that is not a bus does: a
+  // muted bus silences what it is fed, and a bounce leaves that bus out.
+  for (const m of Object.values(mix)) {
+    if (typeof m.out === 'string' && !mix[m.out]?.audible) m.out = null
+    if (m.sends) {
+      const kept = Object.entries(m.sends).filter(([bus]) => mix[bus]?.audible)
+      m.sends = kept.length ? Object.fromEntries(kept) : undefined
     }
   }
   return mix
+}
+
+/**
+ * A stem's mix: the tracks in `only` as they reach their own channels, and
+ * whatever feeds them -- a bus's stem is its effects on what it was fed --
+ * with nothing past them. `only` goes to the master rather than on to any
+ * bus of its own, which is what makes a track's stem the track before its
+ * bus, and the bus a stem of its own.
+ */
+function focus(mix: Record<string, TrackMix>, only: readonly string[]) {
+  const edges = new Map<string, string[]>()
+  for (const [id, m] of Object.entries(mix)) {
+    if (!m.audible) continue
+    const to = [...(typeof m.out === 'string' ? [m.out] : []), ...Object.keys(m.sends ?? {})]
+    if (to.length) edges.set(id, to)
+  }
+  const lead = reach(reversed(edges), only, (id) => !!mix[id]?.audible)
+  for (const [id, m] of Object.entries(mix)) {
+    if (only.includes(id)) {
+      m.out = undefined
+      m.sends = undefined
+    } else if (lead.has(id)) narrowTo(m, lead)
+    else m.audible = false
+  }
+}
+
+/** A channel heard only as what it feeds: its routes cut to those into `lead`, and nothing to the master or the shared effects. */
+function narrowTo(m: TrackMix, lead: ReadonlySet<string>) {
+  m.out = typeof m.out === 'string' && lead.has(m.out) ? m.out : null
+  if (m.sends) {
+    const kept = Object.entries(m.sends).filter(([bus]) => lead.has(bus))
+    m.sends = kept.length ? Object.fromEntries(kept) : undefined
+  }
+  m.space = 0
+  m.delay = 0
 }
 
 /** One track's channel on the console, with the default filling in what it never set. */

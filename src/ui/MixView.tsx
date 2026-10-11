@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { folderOf, heardTracks } from '../song/folder'
 import type { AudioEngine } from '../audio/AudioEngine'
 import { consoleOf, stripOf, updateConsole, updateStrip } from '../song/edit'
+import { orderEdges, reach, routeTo, setSend, type Taps } from '../song/route'
+import type { ParamSpec } from '../patch/param'
 import type { Song, Track } from '../song/types'
 import { AutomationScope, useAutomation } from './AutomationContext'
 import { Knob } from './Knob'
@@ -19,7 +21,21 @@ interface Props {
   engine: AudioEngine
   /** Whether hidden tracks get strips after all. */
   showHidden: boolean
+  /** The tracks whose racks have a Bus In: where a channel can be routed. */
+  buses: ReadonlySet<string>
+  /** The tracks each rack hears through a Track In: a route must not loop through those either. */
+  taps: Taps
+  /** A new track that is a bus, ready to route to. */
+  onAddBus: () => void
+  /** Whether the song has a master rack, and whether it is on the bench. */
+  hasMaster: boolean
+  masterOpen: boolean
+  onOpenMaster: () => void
+  onRemoveMaster: () => void
 }
+
+/** A send to one bus, labelled with the bus's name. */
+const sendSpec = (bus: Track): ParamSpec => ({ id: `send.${bus.id}`, label: bus.name, min: 0, max: 1, default: 0, unit: '', curve: 'lin' })
 
 const dbText = (gain: number) => {
   if (gain <= 0) return '−∞ dB'
@@ -36,9 +52,15 @@ const dbText = (gain: number) => {
  * are written straight to the page from the audio thread's reports and never
  * go through React.
  */
-export function MixView({ song, onEdit, onTrack, onSolo, engine, showHidden }: Props) {
+export function MixView({ song, onEdit, onTrack, onSolo, engine, showHidden, buses, taps, onAddBus, hasMaster, masterOpen, onOpenMaster, onRemoveMaster }: Props) {
   const desk = consoleOf(song)
   const heard = heardTracks(song)
+  const busTracks = song.tracks.filter((t) => buses.has(t.id))
+  // What each bus already reaches, so a choice that would close a loop is
+  // offered greyed out rather than refused after it is made.
+  const edges = orderEdges(song, taps)
+  const downstream = new Map(busTracks.map((b) => [b.id, reach(edges, [b.id])]))
+  const canFeed = (from: string, to: string) => from !== to && !downstream.get(to)?.has(from)
   const bars = useRef(new Map<string, HTMLDivElement>())
   const feed = useFallingMeter(FALL, (id: string, v) => fillBar(bars.current.get(id), v))
   const lufs = useRef<HTMLSpanElement>(null)
@@ -83,6 +105,12 @@ export function MixView({ song, onEdit, onTrack, onSolo, engine, showHidden }: P
           const folder = folderOf(song, track)
           const set = (change: Parameters<typeof updateStrip>[2], field: string) =>
             onEdit((s) => updateStrip(s, track.id, change), `strip:${track.id}:${field}`)
+          const isBus = buses.has(track.id)
+          const others = busTracks.filter((b) => b.id !== track.id)
+          // A send that would loop is left off, unless it is already up --
+          // from a file -- and has to be turned down somewhere.
+          const sendable = others.filter((b) => canFeed(track.id, b.id) || (strip.sends?.[b.id] ?? 0) > 0)
+          const outName = strip.out ? song.tracks.find((t) => t.id === strip.out)?.name : undefined
           return (
             // Automated by the track's id, where a controller counts strips by place.
             <AutomationScope.Provider key={track.id} value={`strip/${track.id}/`}>
@@ -94,9 +122,11 @@ export function MixView({ song, onEdit, onTrack, onSolo, engine, showHidden }: P
             >
               <div className="mix-name" title={folder ? `${track.name}, in ${folder.name}` : track.name}>
                 {folder && <span className="mix-folder">{folder.name}</span>}
+                {isBus && <span className="mix-bus-tag">Bus</span>}
                 {track.name}
               </div>
               <div className="mix-body">
+                <div className="mix-controls">
                 <div className="mix-knobs">
                   <Knob spec={EQ.high} value={strip.eq.high} onChange={(v) => set({ eq: { ...strip.eq, high: v } }, 'high')} />
                   <Knob spec={SEND_SPACE} value={strip.space} onChange={(v) => set({ space: v }, 'space')} />
@@ -105,11 +135,48 @@ export function MixView({ song, onEdit, onTrack, onSolo, engine, showHidden }: P
                   <Knob spec={EQ.low} value={strip.eq.low} onChange={(v) => set({ eq: { ...strip.eq, low: v } }, 'low')} />
                   <Knob spec={PAN} value={strip.pan} onChange={(v) => set({ pan: v }, 'pan')} />
                 </div>
+                {/* Sends to the song's buses. Not automatable yet, so out of
+                    the automation's scope. */}
+                {sendable.length > 0 && (
+                  <AutomationScope.Provider value={null}>
+                    <div className="mix-sends">
+                      {sendable.map((b) => (
+                        <Knob
+                          key={b.id}
+                          spec={sendSpec(b)}
+                          value={strip.sends?.[b.id] ?? 0}
+                          onChange={(v) => onEdit((s) => setSend(s, track.id, b.id, v, taps), `send:${track.id}:${b.id}`)}
+                        />
+                      ))}
+                    </div>
+                  </AutomationScope.Provider>
+                )}
+                </div>
                 <div className="mix-level">
                   {fader(`${track.name} level`, track.gain, (g) => onTrack(track.id, { gain: g }, `gain:${track.id}`), 'gain')}
                   {meter(track.id)}
                 </div>
               </div>
+              {(others.length > 0 || strip.out) && (
+                <select
+                  className="mix-out"
+                  value={strip.out ?? ''}
+                  aria-label={`${track.name} output`}
+                  title="Where this channel goes: the master, or a bus"
+                  onChange={(e) => onEdit((s) => routeTo(s, track.id, e.target.value || undefined, taps))}
+                >
+                  <option value="">→ Master</option>
+                  {others.map((b) => (
+                    <option key={b.id} value={b.id} disabled={!canFeed(track.id, b.id)}>
+                      → {b.name}
+                    </option>
+                  ))}
+                  {/* Routed to a track that has since lost its Bus In: heard on the master until it has one again. */}
+                  {strip.out && !buses.has(strip.out) && (
+                    <option value={strip.out}>→ {outName ?? strip.out} (no Bus In)</option>
+                  )}
+                </select>
+              )}
               <div className="mix-foot">
                 <span className="mix-db">{dbText(track.gain)}</span>
                 <button
@@ -135,6 +202,9 @@ export function MixView({ song, onEdit, onTrack, onSolo, engine, showHidden }: P
             </AutomationScope.Provider>
           )
         })}
+        <button className="track-add mix-add-bus" onClick={onAddBus} title="A track to route other tracks to, and put effects on" type="button">
+          + Bus
+        </button>
       </div>
 
       {/* The two effects every strip can send to. One of each for the whole
@@ -191,6 +261,26 @@ export function MixView({ song, onEdit, onTrack, onSolo, engine, showHidden }: P
           </div>
         </div>
         </AutomationScope.Provider>
+        {/* The rack the whole mix goes through before the master bus. */}
+        <div className="mix-master-rack">
+          <button
+            className={`dock-toggle${masterOpen ? ' on' : ''}`}
+            onClick={onOpenMaster}
+            title={
+              hasMaster
+                ? 'Put the master rack on the bench: the whole mix, returns and all, goes through it before the EQ and limiter'
+                : 'Add a rack for the whole mix, before the EQ and limiter, and put it on the bench'
+            }
+            type="button"
+          >
+            {hasMaster ? 'Rack' : '+ Rack'}
+          </button>
+          {hasMaster && (
+            <button className="track-remove" onClick={onRemoveMaster} title="Take the master rack away" aria-label="Remove master rack" type="button">
+              ×
+            </button>
+          )}
+        </div>
         <div className="mix-foot">
           <span className="mix-db">{dbText(desk.master.level)}</span>
           <span className="mix-lufs" ref={lufs} title="Loudness of the mix over the last 3 seconds">

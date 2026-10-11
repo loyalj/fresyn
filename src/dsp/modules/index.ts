@@ -1,6 +1,24 @@
 import { AdsrModule } from './Adsr'
+import { BubbleModule } from './Bubble'
+import { BounceModule } from './Bounce'
+import { ChipModule } from './Chip'
+import { DopplerModule } from './Doppler'
+import { LoopSeamModule } from './LoopSeam'
+import { RoundRobinModule } from './RoundRobin'
+import { EngineModule } from './Engine'
+import { ExpressionModule } from './Expression'
+import { FrictionModule } from './Friction'
+import { ScrapeModule } from './Scrape'
+import { SubharmonicModule } from './Subharmonic'
+import { ReverseModule } from './Reverse'
+import { ShimmerModule } from './Shimmer'
+import { HowlModule } from './Howl'
+import { SpringMassModule } from './SpringMass'
 import { BitcrushModule } from './Bitcrush'
 import { BurstModule } from './Burst'
+import { BusInModule } from './BusIn'
+import { TrackInModule } from './TrackIn'
+import { ClipsModule } from './Clips'
 import { ChordModule } from './Chord'
 import { ChorusModule } from './Chorus'
 import { ClockModule } from './Clock'
@@ -99,6 +117,24 @@ export const MODULE_FACTORIES: Record<string, Factory> = {
   spring: (c) => new SpringModule(c),
   convolve: (c) => new ConvolveModule(c),
   res: (c) => new ResonatorModule(c),
+  busin: (c) => new BusInModule(c),
+  trackin: (c) => new TrackInModule(c),
+  clips: (c) => new ClipsModule(c),
+  bubble: (c) => new BubbleModule(c),
+  chip: (c) => new ChipModule(c),
+  robin: (c) => new RoundRobinModule(c),
+  bounce: (c) => new BounceModule(c),
+  doppler: (c) => new DopplerModule(c),
+  seam: (c) => new LoopSeamModule(c),
+  engine: (c) => new EngineModule(c),
+  friction: (c) => new FrictionModule(c),
+  scrape: (c) => new ScrapeModule(c),
+  mass: (c) => new SpringMassModule(c),
+  expr: (c) => new ExpressionModule(c),
+  sub: (c) => new SubharmonicModule(c),
+  howl: (c) => new HowlModule(c),
+  reverse: (c) => new ReverseModule(c),
+  shimmer: (c) => new ShimmerModule(c),
   mixer: (c) => new MixerModule(c),
   scope: (c) => new ScopeModule(c),
   rec: (c) => new RecorderModule(c),

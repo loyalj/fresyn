@@ -11,6 +11,19 @@ export interface ModuleContext {
  */
 export const BLOCK = 128
 
+/**
+ * What the song has routed to a track, for its rack to play: a buffer per
+ * side as long as the render, and where in it sample 0 of the current block
+ * falls -- so sample `i` of a block is `l[base + i]`. Empty for a track
+ * nothing is routed to. The engine owns it and moves `base` along; a module
+ * only reads.
+ */
+export interface Feed {
+  l: Float32Array
+  r: Float32Array
+  base: number
+}
+
 /** What a module's ports are before an engine has bound them. */
 const UNBOUND: Float32Array[] = []
 
@@ -54,6 +67,33 @@ export interface Metering {
  * Collected by interface, like `Capturing` and `Metering`, so the engine
  * still never has to know what a keyboard is.
  */
+/**
+ * A module the song's sounds are played on: the Clips module. Each pass of a
+ * clip is a voice, named by its key; see `SoundEvent`.
+ */
+/**
+ * What a pass played by a game rather than by the song is named from. A sync
+ * leaves these alone -- the song does not know about them, so it cannot say
+ * they should stop -- and only stopping the transport, or the game, ends one
+ * early.
+ */
+export const GAME_SOUND = 'game:'
+
+export interface SoundPlayer {
+  /** Start a pass of a file `from` seconds in, unless that pass is already playing. */
+  play(key: string, sample: SampleData | null, from: number): void
+  /** Let go of one pass. */
+  stop(key: string): void
+  /**
+   * Exactly these passes from now: others let go, missing ones started,
+   * playing ones left alone -- bar a game's (see `GAME_SOUND`), which the
+   * song cannot see.
+   */
+  sync(voices: readonly { key: string; sample: SampleData | null; from: number }[]): void
+  /** Everything let go, as stopping the transport does. */
+  stopAll(): void
+}
+
 export interface Playable {
   /**
    * Pitch is in semitones from the bottom of the module's own range, which is
@@ -190,6 +230,8 @@ export abstract class DspModule {
    * piano roll, a MIDI keyboard, and a game asking for a sound at a pitch.
    */
   readonly playable: Playable | null = null
+  /** Set by a module the song's sounds play on: the Clips module. */
+  readonly sounds: SoundPlayer | null = null
   /** Slot index per input port, in the def's port order. 0 is ground. */
   ins: Int32Array = new Int32Array(0)
   /** Slot index per output port. */
@@ -209,6 +251,35 @@ export abstract class DspModule {
   sample: SampleData | null = null
   /** Which sample it is asking for, copied from the patch. */
   sampleId = ''
+  /**
+   * Set by a module that plays what the song routes to its track: the Bus
+   * In. The engine points `feed` at its own input for these, so the audio
+   * thread still never has to know what a bus is.
+   */
+  readonly listens: boolean = false
+  /** The track's input, bound by the engine for a module that `listens`. */
+  feed: Feed | null = null
+  /**
+   * Set by a module that plays another track's audio: the Track In. Its text
+   * names the track, and it carries a `feed` of its own, which the song
+   * points at that track's output. The rack moves its `base` along with the
+   * track's own.
+   */
+  readonly hears: boolean = false
+  /**
+   * The module's text, copied from the patch: the Expression's formula.
+   * Empty for every module that reads none.
+   */
+  text = ''
+
+  /**
+   * The engine's, when the rack is built or rebuilt: the patch's text for
+   * this module. A module that reads one overrides this to make what it
+   * needs of it -- never on the audio path, so it may allocate.
+   */
+  setText(text: string) {
+    this.text = text
+  }
 
   constructor(protected readonly ctx: ModuleContext) {}
 

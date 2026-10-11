@@ -16,7 +16,8 @@
  * Add every sample id found anywhere inside `value` to `into`.
  *
  * A module is anything with a string `type` and a `sample` carrying a string
- * `id`, which is what a patch module is both live and stored. Depth is capped
+ * `id`, which is what a patch module is both live and stored; a sound is
+ * anything with an `audio` naming a `track` and a `sample` with an `id`. Depth is capped
  * only so that something cyclic cannot hang the walk; no real document comes
  * near it.
  */
@@ -34,6 +35,14 @@ export function sampleIdsIn(value: unknown, into: Set<string> = new Set()): Set<
     if (typeof o.type === 'string' && typeof sample === 'object' && sample !== null) {
       const id = (sample as Record<string, unknown>).id
       if (typeof id === 'string' && id) into.add(id)
+    }
+    // A song's sound: a pattern whose `audio` names a file and a track.
+    const audio = o.audio
+    if (typeof audio === 'object' && audio !== null) {
+      const a = audio as Record<string, unknown>
+      const s = a.sample
+      const id = typeof s === 'object' && s !== null ? (s as Record<string, unknown>).id : undefined
+      if (typeof a.track === 'string' && typeof id === 'string' && id) into.add(id)
     }
     for (const key of Object.keys(o)) walk(o[key], depth + 1)
   }

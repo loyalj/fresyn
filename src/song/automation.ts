@@ -4,7 +4,7 @@ import { kitSlots } from '../patch/kit'
 import type { ParamSpec } from '../patch/param'
 import type { Patch } from '../patch/types'
 import { clipEnd, clipOffset } from './clip'
-import type { AutomationLane, AutomationPoint, Pattern, Placement, Song } from './types'
+import { MASTER_RACK, type AutomationLane, type AutomationPoint, type Pattern, type Placement, type Song } from './types'
 
 /**
  * Automation: knobs that move by themselves while a pattern plays.
@@ -174,7 +174,7 @@ export function bindingOf(
   if (!t) return null
   if (t.kind === 'rack') {
     const rack = racks[t.track]
-    const spec = tracks.has(t.track) && rack ? rackSpec(rack.patch, t.module, t.param) : null
+    const spec = (tracks.has(t.track) || t.track === MASTER_RACK) && rack ? rackSpec(rack.patch, t.module, t.param) : null
     return spec ? { track: t.track, key: t.key, map: mapOf(spec) } : null
   }
   if (t.kind === 'strip' && !tracks.has(t.track)) return null
@@ -594,7 +594,8 @@ export function cleanLanes(raw: unknown, tracks: ReadonlySet<string>): Automatio
     const l = item as Record<string, unknown>
     if (typeof l.target !== 'string' || !parseTarget(l.target) || out.some((x) => x.target === l.target)) continue
     const track = targetTrack(l.target)
-    if (track !== null && !tracks.has(track)) continue
+    // The master rack's knobs are lanes too, though it is no track.
+    if (track !== null && !tracks.has(track) && track !== MASTER_RACK) continue
     const points = (Array.isArray(l.points) ? l.points : []).map((p) => cleanPoint(p)).filter((p): p is AutomationPoint => !!p)
     points.sort((a, b) => a.tick - b.tick)
     out.push({ target: l.target, points })

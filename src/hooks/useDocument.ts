@@ -7,7 +7,7 @@ import { loadLocalProject } from '../patch/storage'
 import type { Patch } from '../patch/types'
 import { setPatternNotes } from '../song/edit'
 import type { Rack } from '../song/project'
-import { BENCH_TRACK, benchSong, type Song } from '../song/types'
+import { MASTER_RACK, BENCH_TRACK, benchSong, type Song } from '../song/types'
 import { describeEdit } from './describeEdit'
 
 /** Edits to the same control inside this window fold into one undo step. */
@@ -85,7 +85,8 @@ export function useDocument(initialDoc: Doc) {
    */
   const [selected, setSelected] = useState(() => initialDoc.song.tracks[0]?.id ?? BENCH_TRACK)
   /** Undo can take a track away underneath the selection, so this is checked. */
-  const trackId = song.tracks.some((t) => t.id === selected)
+  // The master rack can be on the bench too, while the song has one.
+  const trackId = song.tracks.some((t) => t.id === selected) || (selected === MASTER_RACK && !!racks[MASTER_RACK])
     ? selected
     : (song.tracks[0]?.id ?? BENCH_TRACK)
   const trackRack = racks[trackId] ?? initialDoc.racks[BENCH_TRACK]
@@ -114,13 +115,14 @@ export function useDocument(initialDoc: Doc) {
   /** Where the bench's own ids are in the running track: nothing, or a pad's `kit1/3/`. */
   const enginePrefix = bench ? padPrefix(bench.kit, bench.slot) : ''
   /** A patch is named on its track: the one name is both. */
-  const patchName = song.tracks.find((t) => t.id === trackId)?.name ?? 'Untitled'
+  const patchName = trackId === MASTER_RACK ? 'Master' : (song.tracks.find((t) => t.id === trackId)?.name ?? 'Untitled')
 
   /** Which pattern the roll is writing into. Also a view, also not an edit. */
-  const [patternId, setPatternId] = useState(() => initialDoc.song.patterns[0]?.id ?? 'main')
-  const activePattern = song.patterns.some((p) => p.id === patternId)
+  // Never a sound, which has no notes to write: see `Pattern.audio`.
+  const [patternId, setPatternId] = useState(() => initialDoc.song.patterns.find((p) => !p.audio)?.id ?? 'main')
+  const activePattern = song.patterns.some((p) => p.id === patternId && !p.audio)
     ? patternId
-    : (song.patterns[0]?.id ?? 'main')
+    : (song.patterns.find((p) => !p.audio)?.id ?? 'main')
 
   const coalesceKey = useRef<string | null>(null)
   const coalesceAt = useRef(0)

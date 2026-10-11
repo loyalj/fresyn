@@ -5,7 +5,7 @@ import { fromStored, toStored, type StoredPatch } from '../patch/serialize'
 import type { Patch } from '../patch/types'
 import { laneByPattern } from './clip'
 import { parseSong } from './serialize'
-import { BENCH_TRACK, benchSong, type Song } from './types'
+import { MASTER_RACK, BENCH_TRACK, benchSong, type Song } from './types'
 
 /**
  * A project: the arrangement, and one rack per track.
@@ -60,6 +60,8 @@ export function toStoredProject(
     if (!rack) continue
     out[track.id] = toStored(track.name, rack.patch, rack.values)
   }
+  const master = racks[MASTER_RACK]
+  if (master) out[MASTER_RACK] = toStored('Master', master.patch, master.values)
   return { version: PROJECT_FORMAT, name, song, racks: out }
 }
 
@@ -113,6 +115,15 @@ export function fromStoredProject(input: unknown): LoadedProject | { error: stri
     }
     warnings.push(...loaded.warnings.map((w) => `${track.name}: ${w}`))
     racks[track.id] = { patch: loaded.patch, values: initialValues(loaded.patch) }
+  }
+  // The master rack, if the song has one. Not a track, so none is missed.
+  if (Object.prototype.hasOwnProperty.call(stored, MASTER_RACK)) {
+    const loaded = fromStored(stored[MASTER_RACK])
+    if ('error' in loaded) warnings.push(`master rack: ${loaded.error}`)
+    else {
+      warnings.push(...loaded.warnings.map((w) => `Master: ${w}`))
+      racks[MASTER_RACK] = { patch: loaded.patch, values: initialValues(loaded.patch) }
+    }
   }
 
   return {

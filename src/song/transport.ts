@@ -1,7 +1,8 @@
 import type { Curve } from '../dsp/automation'
 import { automationChanges } from './automation'
-import { songEnd, songEventTicks, type SongEvent } from './schedule'
+import { songEnd, songEventTicks, soundEventTicks, soundsAt, type SongEvent } from './schedule'
 import { tempoMap, type TempoMap } from './timeline'
+import type { Taps } from './route'
 import type { Song } from './types'
 
 /**
@@ -50,9 +51,26 @@ export interface AutomationEvent {
   curve: Curve | null
 }
 
+/**
+ * What a track's sounds do, in engine time. `from` is seconds into the file:
+ * its natural speed, whatever the tempo.
+ */
+export type SoundEvent =
+  | { frame: number; track: string; kind: 'play'; key: string; sample: string; from: number }
+  | { frame: number; track: string; kind: 'stop'; key: string }
+  /**
+   * Exactly these passes sounding from here, on this track: any other is let
+   * go, any missing is started, and one already playing is left alone. Sent
+   * where playback starts or picks up -- a start, an edit, the far side of a
+   * loop's seam -- and an empty list stops them all.
+   */
+  | { frame: number; track: string; kind: 'sync'; voices: { key: string; sample: string; from: number }[] }
+
 export interface Fill {
   /** Ready to schedule, in engine time, oldest first. */
   events: SongEvent[]
+  /** The sounds' clips, in engine time, oldest first. */
+  sounds: SoundEvent[]
   /** What the automation does in the same stretch, oldest first. See `song/automation`. */
   automation: AutomationEvent[]
   cursor: Cursor
@@ -88,14 +106,19 @@ export function fill(
   untilFrame: number,
   loop: Loop | null,
   snapshot = false,
+  /** The racks' Track Ins, whose tracks play even when they are not heard: see `songEventTicks`. */
+  taps?: Taps,
 ): Fill {
   const events: SongEvent[] = []
   const automation: AutomationEvent[] = []
+  const sounds: SoundEvent[] = []
   const seams: Seam[] = []
   const time = tempoMap(song, sampleRate)
-  if (!(time.rateAt(cursor.tick) > 0)) return { events, automation, cursor, seams, ended: true }
+  if (!(time.rateAt(cursor.tick) > 0)) return { events, sounds, automation, cursor, seams, ended: true }
   // A loop with no length would be an infinite number of passes over nothing.
-  if (loop && !(loop.to > loop.from)) return { events, automation, cursor, seams, ended: false }
+  if (loop && !(loop.to > loop.from)) return { events, sounds, automation, cursor, seams, ended: false }
+  // Seconds into a sound's file at a tick, for a pass that began at `origin`.
+  const into = (origin: number, at: number) => Math.max(0, time.span(origin, at) / sampleRate)
   let fresh = snapshot
 
   const end = loop ? loop.to : songEnd(song)
@@ -122,6 +145,10 @@ export function fill(
       // the other two sounding on every pass until the polyphony ran out.
       for (const t of song.tracks) {
         events.push({ frame: Math.round(frame), track: t.id, kind: 'off', velocity: 0 })
+        // And every sound stopped, to be picked up again where the loop
+        // starts: a clip running across the seam is heard from there, not
+        // carried on from here.
+        sounds.push({ frame: Math.round(frame), track: t.id, kind: 'sync', voices: [] })
       }
       seams.push({ frame, tick: loop.from, before: tick })
       tick = loop.from
@@ -144,11 +171,34 @@ export function fill(
     // one at the start of the loop is picked up by the window after the wrap.
     const edge =
       windowEnd === end
-        ? songEventTicks(song, end, end + 1).filter((e) => e.kind === 'off' && e.tick === end)
+        ? songEventTicks(song, end, end + 1, taps).filter((e) => e.kind === 'off' && e.tick === end)
         : []
 
-    const inWindow = songEventTicks(song, tick, windowEnd)
+    const inWindow = songEventTicks(song, tick, windowEnd, taps)
     if (edge.length) inWindow.push(...edge)
+
+    // Where playback starts or picks up, what should be sounding there: a
+    // clip begun before the cursor is heard from part way through.
+    if (fresh) {
+      const playing = soundsAt(song, tick, taps)
+      for (const t of song.tracks) {
+        const voices = playing
+          .filter((v) => v.track === t.id)
+          .map((v) => ({ key: v.key, sample: v.sample, from: into(v.origin, tick) }))
+        sounds.push({ frame: Math.round(frame), track: t.id, kind: 'sync', voices })
+      }
+    }
+    // A clip ending on the end is let go of there, as a note is (see `edge`).
+    const soundEdge =
+      windowEnd === end ? soundEventTicks(song, end, end + 1, taps).filter((e) => e.kind === 'stop' && e.tick === end) : []
+    for (const e of [...soundEventTicks(song, tick, windowEnd, taps), ...soundEdge]) {
+      const at = Math.round(frame + time.span(tick, e.tick))
+      sounds.push(
+        e.kind === 'play'
+          ? { frame: at, track: e.track, kind: 'play', key: e.key, sample: e.sample, from: into(e.origin, e.tick) }
+          : { frame: at, track: e.track, kind: 'stop', key: e.key },
+      )
+    }
 
     for (const e of inWindow) {
       // Measured from the cursor rather than from the start of the song, so
@@ -179,7 +229,7 @@ export function fill(
     tick = windowEnd
   }
 
-  return { events, automation, cursor: { tick, frame }, seams, ended }
+  return { events, sounds, automation, cursor: { tick, frame }, seams, ended }
 }
 
 /**

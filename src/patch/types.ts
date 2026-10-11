@@ -111,6 +111,13 @@ export interface PatchModule {
    */
   sample?: { id: string; name: string }
   /**
+   * The module's text, for one that reads any: the formula an Expression
+   * computes. Beside `params` for the reason `sample` is -- it is not a
+   * number. Absent for every other module, and for an Expression still on
+   * its starting formula.
+   */
+  text?: string
+  /**
    * The key this module's gate answers to, as a `KeyboardEvent.code`.
    *
    * Beside `params` rather than in it because it is not a number and has no

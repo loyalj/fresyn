@@ -21,6 +21,7 @@ import {
   type Section,
   type Note,
   type Pattern,
+  type SoundRef,
   type Placement,
   type Song,
   type Strip,
@@ -109,6 +110,7 @@ export function parseSong(input: unknown): Song | null {
       ...hue(p.color),
       ...swingOf(p.swing),
       ...lanesOf(p.automation, known),
+      ...soundOf(p.audio),
     })
   }
 
@@ -219,6 +221,16 @@ export function parseSong(input: unknown): Song | null {
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
 
+/** A sound's audio, when it names a file and a track; a pattern of notes otherwise. */
+function soundOf(v: unknown): { audio?: SoundRef } {
+  const a = obj(v)
+  const sample = obj(a.sample)
+  const id = str(sample.id)
+  const track = str(a.track)
+  if (!id || !track) return {}
+  return { audio: { sample: { id, name: str(sample.name) || 'Audio' }, track } }
+}
+
 /** A meter from a file: its beats held to the range, and a beat that is no note read as a quarter. */
 function readMeter(m: Record<string, unknown>): Meter {
   const beats = Math.round(num(m.beats, 4, 1, METER_BEATS_MAX))
@@ -249,8 +261,21 @@ function stripFrom(v: unknown): { strip?: Strip } {
       eq: eqFrom(s.eq, DEFAULT_STRIP.eq),
       space: num(s.space, 0, 0, 1),
       delay: num(s.delay, 0, 0, 1),
+      ...(typeof s.out === 'string' && s.out ? { out: s.out } : {}),
+      ...sendsFrom(s.sends),
     },
   }
+}
+
+/** A strip's bus sends, keeping only the ones turned up; nothing for none. */
+function sendsFrom(v: unknown): { sends?: Record<string, number> } {
+  if (typeof v !== 'object' || v === null) return {}
+  const sends: Record<string, number> = {}
+  for (const [bus, amount] of Object.entries(v as Record<string, unknown>)) {
+    const a = num(amount, 0, 0, 1)
+    if (bus && a > 0) sends[bus] = a
+  }
+  return Object.keys(sends).length ? { sends } : {}
 }
 
 /** The song's desk, every field clamped to its knob's range. */

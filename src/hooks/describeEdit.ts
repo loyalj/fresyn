@@ -225,6 +225,11 @@ function describeTracks(a: Track[], b: Track[]): string | null {
     if (o.gain !== t.gain) return `Level · ${name}`
     if (!!o.mute !== !!t.mute) return `${t.mute ? 'Mute' : 'Unmute'} ${name}`
     if (!!o.solo !== !!t.solo) return `${t.solo ? 'Solo' : 'Unsolo'} ${name}`
+    if (o.strip?.out !== t.strip?.out) {
+      const to = t.strip?.out ? b.find((x) => x.id === t.strip!.out)?.name : undefined
+      return `Route ${name} to ${to ?? 'the master'}`
+    }
+    if (JSON.stringify(o.strip?.sends ?? {}) !== JSON.stringify(t.strip?.sends ?? {})) return `Bus send · ${name}`
     if (o.strip !== t.strip) return `Channel · ${name}`
     if (o.color !== t.color) return `Colour · ${name}`
     if (o.folder !== t.folder) return t.folder ? `File ${name}` : `Unfile ${name}`

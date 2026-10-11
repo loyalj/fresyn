@@ -400,5 +400,25 @@ console.log('\nmidi export')
   check('a variable-length number is seven bits a byte', varLen(0).join() === '0' && varLen(127).join() === '127' && varLen(128).join() === '129,0' && varLen(0x0fffffff).join() === '255,255,255,127')
 }
 
+console.log('\na loop render')
+{
+  // A slow wobble that does not fit four seconds a whole number of times.
+  const patch: Patch = {
+    modules: [
+      { id: 'lfo1', type: 'lfo', params: { rate: 0.37, depth: 0.8 } },
+      { id: 'loop1', type: 'seam', params: { length: 1.5, fade: 0.25 } },
+    ],
+    cables: [{ id: 'c1', from: { module: 'lfo1', port: 'out' }, to: { module: 'loop1', port: 'inL' } }],
+  }
+  const values = initialValues(patch)
+  const take = renderPatch(patch, values, { duration: 6, sampleRate: 48000 })
+  check('a rack with a Loop Seam renders exactly one loop', take.left.length === 72000 && take.seconds === 1.5, `${take.left.length} samples`)
+  let step = 0
+  for (let i = 1; i < take.left.length; i++) step = Math.max(step, Math.abs(take.left[i] - take.left[i - 1]))
+  const seam = Math.abs(take.left[0] - take.left[take.left.length - 1])
+  check('which tiles: its end runs into its start', seam < step * 2, `${seam.toFixed(5)} across the seam, ${step.toFixed(5)} at most elsewhere`)
+  check('untrimmed and unfaded', Math.abs(take.left[take.left.length - 1]) > 1e-4 || Math.abs(take.left[0]) > 1e-4)
+}
+
 console.log(failures === 0 ? '\nall clear' : `\n${failures} check(s) failed`)
 process.exit(failures === 0 ? 0 : 1)

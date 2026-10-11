@@ -27,9 +27,10 @@ import { parseMidi, readMessage, useMidiInput } from './input/midi'
 import type { TargetContext } from './input/midiTargets'
 import { useMidiControl } from './input/useMidiControl'
 import { useMcu, type McuContext } from './input/useMcu'
-import { PPQ } from './song/types'
+import { PPQ, type Song } from './song/types'
 import { defOf } from './patch/defs'
-import { defaultPatch } from './patch/defaultPatch'
+import { busPatch, clipsPatch, defaultPatch } from './patch/defaultPatch'
+import { addSound } from './song/sound'
 import { sampleIdsIn, sampleIdsInLocalStorage } from './patch/sampleRefs'
 import type { Template } from './patch/library'
 import {
@@ -48,6 +49,7 @@ import {
   reorderModules,
   setCableColor,
   setModuleKey,
+  setModuleText,
   setSample,
   toggleBypass,
   type ModuleClip,
@@ -81,7 +83,7 @@ import {
   trackMix,
 } from './song/edit'
 import { toStoredProject, type Rack } from './song/project'
-import { BENCH_TRACK, benchSong } from './song/types'
+import { BENCH_TRACK, benchSong, MASTER_RACK } from './song/types'
 import type { Patch, PatchModule } from './patch/types'
 import { Cables, type DragState, type LabelRect } from './ui/Cables'
 import { nearestCable, type JackGeometry } from './ui/cableGeometry'
@@ -117,6 +119,8 @@ import { DOCK_DEFAULT_SHARE, dockHeightWithin, useDockMax, useWindowHeight } fro
 import { useRackDrag } from './ui/useRackDrag'
 import { addNote, copyNotes, editNote, nextNoteId, removeNote, sameSound } from './patch/notes'
 import type { RackNote } from './patch/types'
+import { TrackChoicesContext, type TrackChoices } from './ui/TrackInFace'
+import { canHear, tapsOf } from './song/route'
 import { focusNoteWhenShown, NoteActionsContext, NotesShown, useNotesByModule, type NoteActions } from './ui/RackNotes'
 
 /**
@@ -166,9 +170,10 @@ const NO_DEVICES: readonly string[] = []
 /** Each patch's sample ids, kept while the patch lives: a knob turn changes no patch. */
 const idsOfPatch = new WeakMap<object, string[]>()
 
-/** Every sample any track names, as one sorted, comma-joined key. */
-function samplesWanted(racks: Record<string, Rack>): string {
+/** Every sample any track or sound names, as one sorted, comma-joined key. */
+function samplesWanted(racks: Record<string, Rack>, song: Song): string {
   const all = new Set<string>()
+  for (const p of song.patterns) if (p.audio) all.add(p.audio.sample.id)
   for (const rack of Object.values(racks)) {
     let ids = idsOfPatch.get(rack.patch)
     if (!ids) {
@@ -238,10 +243,10 @@ export default function App() {
   const engine = useMemo(
     () =>
       new AudioEngine(
-        initialDoc.song.tracks.map((t) => ({
-          id: t.id,
-          patch: initialDoc.racks[t.id].patch,
-          values: initialDoc.racks[t.id].values,
+        [...initialDoc.song.tracks.map((t) => t.id), ...(initialDoc.racks[MASTER_RACK] ? [MASTER_RACK] : [])].map((id) => ({
+          id,
+          patch: initialDoc.racks[id].patch,
+          values: initialDoc.racks[id].values,
         })),
         loadPrefs().audio,
       ),
@@ -434,7 +439,7 @@ export default function App() {
   // every track rather than only the one on the bench: the song plays them
   // all, and a Sampler on a track nobody had opened since the reload used to
   // play silence until somebody did.
-  const wanted = samplesWanted(racks)
+  const wanted = samplesWanted(racks, song)
 
   useEffect(() => {
     let live = true
@@ -461,6 +466,7 @@ export default function App() {
     const keep = sampleIdsInLocalStorage()
     if (!keep) return
     sampleIdsIn(initialDoc.racks, keep)
+    sampleIdsIn(initialDoc.song.patterns, keep)
     void pruneSamples(keep).catch(() => {})
   }, [initialDoc])
 
@@ -577,6 +583,113 @@ export default function App() {
   }, [commitDoc, song, setSelected])
 
   /**
+   * The tracks that are buses: those whose racks have a Bus In. Kept by what
+   * it says rather than rebuilt for every knob turn.
+   */
+  const busKey = JSON.stringify(song.tracks.filter((t) => racks[t.id]?.patch.modules.some((m) => m.type === 'busin')).map((t) => t.id))
+  const buses = useMemo(() => new Set<string>(JSON.parse(busKey)), [busKey])
+  /** Which tracks each rack hears through a Track In, kept the same way. */
+  const tapsKey = JSON.stringify([...tapsOf(song, racks)])
+  const taps = useMemo(() => new Map<string, string[]>(JSON.parse(tapsKey)), [tapsKey])
+  /** What the Track Ins on the bench can be pointed at. */
+  const trackChoices = useMemo<TrackChoices>(
+    () => ({
+      self: trackId,
+      tracks: song.tracks.map((t) => ({ id: t.id, name: t.name })),
+      canHear: (id) => canHear(song, trackId, id, taps),
+    }),
+    [song, trackId, taps],
+  )
+
+  /** The audio tracks: those whose racks have a Clips module, kept the same way as the buses. */
+  const audioKey = JSON.stringify(song.tracks.filter((t) => racks[t.id]?.patch.modules.some((m) => m.type === 'clips')).map((t) => t.id))
+  const audioTracks = useMemo(() => new Set<string>(JSON.parse(audioKey)), [audioKey])
+
+  /**
+   * Put the master rack on the bench, making it first if the song has none:
+   * a Bus In, which passes the whole mix through until something is patched
+   * after it.
+   */
+  const onOpenMaster = useCallback(() => {
+    if (!racks[MASTER_RACK]) {
+      const patch = busPatch()
+      commitDoc((doc) => ({ ...doc, racks: { ...doc.racks, [MASTER_RACK]: { patch, values: initialValues(patch) } } }), undefined, 'Add master rack')
+    }
+    setSelected(MASTER_RACK)
+  }, [racks, commitDoc, setSelected])
+
+  /** Take the master rack away: the mix goes straight to the master bus again. */
+  const onRemoveMaster = useCallback(() => {
+    commitDoc((doc) => {
+      const { [MASTER_RACK]: _, ...rest } = doc.racks
+      return { ...doc, racks: rest }
+    }, undefined, 'Remove master rack')
+    if (trackId === MASTER_RACK) setSelected(song.tracks[0]?.id ?? BENCH_TRACK)
+  }, [commitDoc, trackId, song.tracks, setSelected])
+
+  /** A track for sounds: a rack holding a Clips module. */
+  const onAddAudio = useCallback(() => {
+    const id = nextTrackId(song)
+    const patch = clipsPatch()
+    let n = audioTracks.size + 1
+    while (song.tracks.some((t) => t.name === `Audio ${n}`)) n++
+    commitDoc((doc) => ({
+      ...doc,
+      song: addTrack(doc.song, id, `Audio ${n}`),
+      racks: { ...doc.racks, [id]: { patch, values: initialValues(patch) } },
+    }))
+    setSelected(id)
+  }, [commitDoc, song, audioTracks, setSelected])
+
+  /**
+   * An audio file dropped on the playlist: stored and decoded first, then a
+   * sound of it and a clip where it landed, as one edit. It plays on the
+   * track on the bench if that is an audio track, and on a new one named
+   * for the file otherwise.
+   */
+  const onDropAudio = useCallback(
+    async (file: File, tick: number, lane: number) => {
+      let loaded
+      try {
+        loaded = await samples.add(file)
+      } catch {
+        setNotice(warn(`${file.name} is not audio this browser can read`))
+        return
+      }
+      engine.setSamples(samples.records())
+      const seconds = loaded.data.frames / loaded.data.rate
+      const sample = { id: loaded.id, name: loaded.name }
+      commitDoc((doc) => {
+        let song = doc.song
+        let racks = doc.racks
+        let track = trackId
+        if (!racks[track]?.patch.modules.some((m) => m.type === 'clips')) {
+          track = nextTrackId(song)
+          const patch = clipsPatch()
+          song = addTrack(song, track, loaded.name.replace(/\.[a-z0-9]{1,5}$/i, '') || 'Audio')
+          racks = { ...racks, [track]: { patch, values: initialValues(patch) } }
+        }
+        return { ...doc, song: addSound(song, sample, track, seconds, tick, lane).song, racks }
+      })
+    },
+    [samples, engine, commitDoc, trackId, setNotice],
+  )
+
+  /** A track to route others to: a rack holding a Bus In, named in the order buses were added. */
+  const onAddBus = useCallback(() => {
+    const id = nextTrackId(song)
+    const patch = busPatch()
+    let n = buses.size + 1
+    while (song.tracks.some((t) => t.name === `Bus ${n}`)) n++
+    commitDoc((doc) => ({
+      ...doc,
+      song: addTrack(doc.song, id, `Bus ${n}`),
+      racks: { ...doc.racks, [id]: { patch, values: initialValues(patch) } },
+    }))
+    setSelected(id)
+  }, [commitDoc, song, buses, setSelected])
+
+  /**
    * Take a track out, rack and all. No confirm: it undoes like any other
    * edit, and the notice says so -- which is what makes a single click on
    * an × safe to offer.
@@ -630,9 +743,11 @@ export default function App() {
   const onAddPattern = useCallback(
     (from?: string) => {
       const id = nextPatternId(song)
-      const name = `Pattern ${song.patterns.length + 1}`
+      const source = from ? song.patterns.find((p) => p.id === from) : undefined
+      const name = source?.audio ? `${source.name} copy` : `Pattern ${song.patterns.length + 1}`
       editSong((s) => (from ? duplicatePattern(s, from, id, name) : addPattern(s, id, name)))
-      setPatternId(id)
+      // A sound's copy is no pattern for the roll to write into.
+      if (!source?.audio) setPatternId(id)
     },
     [editSong, song, setPatternId],
   )
@@ -650,7 +765,8 @@ export default function App() {
 
   useEffect(() => {
     const before = shipped.current
-    for (const track of song.tracks) {
+    // Every track's rack, and the master's.
+    for (const track of racks[MASTER_RACK] ? [...song.tracks, { id: MASTER_RACK }] : song.tracks) {
       const rack = racks[track.id]
       if (!rack) continue
       const was = before[track.id]
@@ -724,6 +840,7 @@ export default function App() {
   useEffect(() => {
     transport.setSong(playSong)
   }, [transport, playSong])
+  useEffect(() => transport.setTaps(taps), [transport, taps])
 
   useEffect(() => {
     if (contextSpan) {
@@ -1673,6 +1790,7 @@ export default function App() {
     setParam: (id, paramId, v) => setParam(id, paramId, v),
     setParams: (id, changes) => setParams(id, changes),
     sample: (id, file) => void onSample(id, file),
+    text: (id, text) => editPatch((p) => setModuleText(p, id, text)),
     kitLoad: (id, slot, instrument) => void onKitLoad(id, slot, instrument),
     kitPad: (id, slot, change) => editPatch((p) => updateKitSlot(p, id, slot, change)),
     kitStandard: (id) => void onKitStandard(id),
@@ -2331,7 +2449,7 @@ export default function App() {
         )}
 
         <RackIndex
-          tracks={song.tracks}
+          tracks={racks[MASTER_RACK] ? [...song.tracks, { id: MASTER_RACK, name: 'Master' }] : song.tracks}
           trackId={trackId}
           onSelectTrack={setSelected}
           entries={indexEntries}
@@ -2376,6 +2494,7 @@ export default function App() {
         <AutomationContext.Provider value={automationContext}>
         <KnobHelpOn.Provider value={knobHelp}>
         <NoteActionsContext.Provider value={noteActions}>
+        <TrackChoicesContext.Provider value={trackChoices}>
         <NotesShown.Provider value={showNotes}>
         <ThemeContext.Provider value={appearance}>
           <EngineContext.Provider value={engine}>
@@ -2434,6 +2553,7 @@ export default function App() {
           </EngineContext.Provider>
         </ThemeContext.Provider>
         </NotesShown.Provider>
+        </TrackChoicesContext.Provider>
         </NoteActionsContext.Provider>
         </KnobHelpOn.Provider>
 
@@ -2442,6 +2562,8 @@ export default function App() {
             containing block, so a fixed element inside one is positioned
             against the rack rather than against the window. */}
         <ThemeContext.Provider value={appearance}>
+          {/* The playlist draws the sounds from it. */}
+          <SampleContext.Provider value={samples}>
           <SongDock
             transport={transport}
             live={liveNotes}
@@ -2452,6 +2574,15 @@ export default function App() {
             trackId={trackId}
             onSelectTrack={setSelected}
             onAddTrack={onAddTrack}
+            onAddBus={onAddBus}
+            buses={buses}
+            audioTracks={audioTracks}
+            onAddAudio={onAddAudio}
+            hasMaster={!!racks[MASTER_RACK]}
+            onOpenMaster={onOpenMaster}
+            onRemoveMaster={onRemoveMaster}
+            onDropAudio={onDropAudio}
+            taps={taps}
             onRemoveTrack={onRemoveTrack}
             onTrack={onTrack}
             patternId={activePattern}
@@ -2478,6 +2609,7 @@ export default function App() {
             showSwing={showSwing}
             lanes={rollLanes}
           />
+          </SampleContext.Provider>
         </ThemeContext.Provider>
         </AutomationContext.Provider>
 

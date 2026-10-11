@@ -1177,13 +1177,15 @@ body {
   border-radius: 3px;
 }
 
-/* The index card lives in the margin to the right of the rack, and only
-   where the window has one wide enough to hold it: the rack's column is
-   1040px, the card 200px, with 20px either side of it. Below that the card
-   goes and the Jump menu on the head panel takes its place. */
+/* The index card lives in the margin to the right of the rack. Where the
+   window is wide enough, the rack keeps the middle and the card sits in the
+   margin beside it: the rack's column is 1040px, the card 200px, with 20px
+   either side of it. Narrower than that, the margins go instead of the card
+   -- see the laptop widths below. Only on a window too narrow for both does
+   the card go and the Jump menu on the head panel take its place. */
 .rack-index-card { display: none; }
 
-@media (min-width: 1480px) {
+@media (min-width: 1000px) {
   .masthead .rack-index { display: none; }
 
   .rack-index-card {
@@ -1205,6 +1207,28 @@ body {
     background: linear-gradient(180deg, var(--unit-top), var(--unit-bottom));
     box-shadow: 0 1px 0 var(--unit-bevel) inset, 0 8px 22px var(--unit-shadow);
     overflow: hidden;
+  }
+}
+
+/* Laptop widths: no room for a centred rack with the card in its margin, so
+   the rack and the card are laid out as one group -- 10px at each edge of
+   the window, 10px between them, the card narrower -- and the group takes
+   the middle when there is room to spare. Squeezed past its full width, the
+   group spends the rack's width first: the rack is fluid, the card is not. */
+@media (min-width: 1000px) and (max-width: 1479px) {
+  .app {
+    /* 1008px of rack, the gap, the card, and an edge each side. */
+    max-width: 1214px;
+    padding-left: 10px;
+    padding-right: 196px;
+  }
+
+  .rack-index-card {
+    /* The group's right edge, less its 10px and the card: the window's right
+       edge while the group fills it, and half the spare room in from it once
+       it no longer does. */
+    left: calc(100vw - 186px - max(0px, (100vw - 1214px) / 2));
+    width: 176px;
   }
 }
 
@@ -1305,6 +1329,14 @@ body {
   font-size: 10px;
   color: var(--ink-faint);
   font-variant-numeric: tabular-nums;
+}
+
+/* The narrower card at laptop widths, set tighter to keep the patch's name
+   readable beside the flip. */
+@media (min-width: 1000px) and (max-width: 1479px) {
+  .rack-index-head { gap: 6px; padding: 6px 6px 5px 5px; }
+  .rack-index-head .flip-button { width: 48px; }
+  .rack-index-row { gap: 6px; padding: 4px 6px; }
 }
 
 /* Smaller units, the rack itself untouched: the cable layer and every jack
@@ -2728,6 +2760,79 @@ body {
 
 /* --- scope ---------------------------------------------------------- */
 
+/* The Track In: which track it hears, over its level. */
+.trackin-face {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+.trackin-source {
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: normal;
+  text-transform: none;
+  padding: 3px 5px;
+  color: var(--ink);
+  background: var(--field);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+  min-width: 0;
+}
+
+/* The Expression: a formula, and its graph. */
+.expr-face {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+.expr-entry { display: flex; align-items: center; gap: 6px; }
+.expr-prompt {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+.expr-formula {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 7px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--recess);
+  border: 1px solid var(--recess-edge);
+  border-radius: 3px;
+}
+.expr-formula.pending { border-color: var(--accent-line); }
+.expr-formula.invalid { border-color: var(--danger); }
+.expr-status {
+  min-height: 1.3em;
+  font-size: 10px;
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.expr-status.error { color: var(--danger); white-space: normal; }
+.expr-screen {
+  display: block;
+  width: 100%;
+  height: 160px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, var(--screen-top), var(--screen-bottom));
+  box-shadow: 0 0 0 1px var(--screen-edge) inset;
+  --expr-line: var(--accent-line);
+  --expr-grid: var(--scope-grid-c);
+  --expr-axis: var(--scope-axis-c);
+  --expr-text: var(--ink-faint);
+  --expr-dot: var(--ink);
+}
+
 .scope-face {
   display: flex;
   flex-direction: column;
@@ -3283,6 +3388,28 @@ body {
    same fact -- this track is not reaching the speakers. */
 .track.silent { opacity: 0.45; }
 
+/* The master rack, listed above the tracks while the song has one. */
+.track-master { border-bottom-color: var(--panel-edge); margin-bottom: 2px; }
+.track-master-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 4px;
+  color: var(--ink);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+/* In place of the roll while the master rack is on the bench. */
+.roll-master {
+  padding: 24px;
+  font-size: 12px;
+  color: var(--ink-dim);
+}
 .track-name {
   flex: 1;
   min-width: 0;
@@ -3433,7 +3560,8 @@ body {
 .tracks-hidden.on { color: var(--ink); border-color: var(--accent-line); }
 
 .tracks-foot { display: flex; gap: 4px; }
-.tracks-foot .track-add { flex: 1; }
+/* Four of them now, so they give up letter spacing before they wrap. */
+.tracks-foot .track-add { flex: 1; min-width: 0; padding: 5px 2px; letter-spacing: 0.04em; white-space: nowrap; }
 
 /* Under the pinned band. */
 .tracks-rule {
@@ -3796,6 +3924,38 @@ button.playlist-label:hover { color: var(--ink); }
   stroke-opacity: 0.45;
   stroke-dasharray: 2 2;
 }
+/* A sound's clip: its file's loudness, mirrored round the middle. */
+.playlist-clip-wave {
+  position: absolute;
+  top: 10px;
+  left: 0;
+  width: 100%;
+  height: calc(100% - 12px);
+  fill: currentColor;
+  opacity: 0.7;
+  pointer-events: none;
+}
+.playlist-clip-wave .seam {
+  stroke: currentColor;
+  stroke-opacity: 0.45;
+  stroke-dasharray: 2 2;
+}
+/* The mark on a sound in the list: not a pattern of notes. */
+.playlist-sound-mark {
+  flex: none;
+  color: var(--ink-dim);
+  font-size: 12px;
+  line-height: 1;
+}
+.playlist-drop-hint {
+  display: block;
+  padding: 4px 8px;
+  font-size: 10px;
+  color: var(--ink-faint);
+}
+/* An audio file held over the lanes. */
+.playlist-layer.dropping { outline: 1px dashed var(--accent-line); outline-offset: -1px; }
+
 /* The trim handles: the clip's two ends. */
 .playlist-clip-edge {
   position: absolute;
@@ -4227,6 +4387,42 @@ button.playlist-bar:hover { border-color: var(--rule); color: var(--ink); }
 .mix-master { border-color: rgb(var(--accent-rgb) / 0.4); }
 .mix-limiter { align-self: center; padding: 4px 6px; }
 
+/* Buses: the sends to them, where each channel goes, and the tag on one. */
+.mix-controls { display: flex; flex-direction: column; gap: 4px; }
+.mix-sends {
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: 2px 6px;
+  padding-top: 4px;
+  border-top: 1px solid var(--recess-edge);
+}
+.mix-sends .knob { transform: scale(0.82); transform-origin: top center; margin-bottom: -12px; }
+.mix-out {
+  max-width: 150px;
+  font: inherit;
+  font-size: 10px;
+  color: var(--ink-dim);
+  background: var(--control);
+  border: 1px solid var(--panel-edge);
+  border-radius: 2px;
+}
+/* The master rack's button, under the master strip's controls. */
+.mix-master-rack {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.mix-bus-tag {
+  margin-right: 4px;
+  padding: 0 3px;
+  font-size: 8px;
+  color: var(--accent);
+  border: 1px solid var(--accent-line);
+  border-radius: 2px;
+}
+.mix-add-bus { align-self: flex-start; }
+
 
 /* --- focus ------------------------------------------------------------ */
 
@@ -4492,19 +4688,42 @@ button.playlist-bar:hover { border-color: var(--rule); color: var(--ink); }
   flex-direction: column;
   max-width: calc(100vw - 16px);
   max-height: calc(100vh - var(--dock-h, 44px) - 24px);
-  background: var(--unit-top);
+  /* Bench gear, not a rack unit: its own case colour (see --bench-top in
+     theme.css), with the rack's knobs and lamps on it. */
+  background: linear-gradient(180deg, var(--bench-top), var(--bench-bottom));
   border: 1px solid var(--panel-edge);
   border-radius: 5px;
-  box-shadow: 0 16px 40px var(--unit-shadow), 0 0 0 1px var(--sunken) inset;
+  box-shadow: 0 1px 0 var(--unit-bevel) inset, 0 16px 40px var(--unit-shadow);
   user-select: text;
 }
 
+/* The feet it stands on: a rack unit has ears, a bench instrument has feet. */
+.utility-panel::before,
+.utility-panel::after {
+  content: '';
+  position: absolute;
+  bottom: -5px;
+  width: 34px;
+  height: 5px;
+  background: var(--panel-edge);
+  border-radius: 0 0 4px 4px;
+  pointer-events: none;
+}
+.utility-panel::before { left: 22px; }
+.utility-panel::after { right: 22px; }
+
+/* The rack ear laid on its side: the same metal, inks and lettering as
+   .unit-spine, so a utility reads as a unit pulled out of the rack rather
+   than a window. Like the ear, it is the handle the panel is moved by. */
 .utility-head {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 6px 6px 12px;
-  border-bottom: 1px solid var(--hairline);
+  min-height: 30px;
+  padding: 0 4px 0 12px;
+  background: linear-gradient(180deg, var(--spine-top), var(--spine-bottom));
+  border-bottom: 1px solid var(--panel-edge);
+  border-radius: 4px 4px 0 0;
   cursor: grab;
   touch-action: none;
   user-select: none;
@@ -4515,16 +4734,216 @@ button.playlist-bar:hover { border-color: var(--rule); color: var(--ink); }
 .utility-head h2 {
   flex: 1;
   margin: 0;
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: var(--ink);
+  white-space: nowrap;
+  color: var(--spine-ink, var(--ink-dim));
 }
+
+/* Inked like the presets button on the ear, not like a dialog's close. */
+.utility-head .sheet-close {
+  font-size: 15px;
+  padding: 1px 6px;
+  color: var(--spine-ink-faint, var(--ink-faint));
+}
+.utility-head .sheet-close:hover,
+.utility-head .sheet-close:focus-visible { color: var(--spine-ink, var(--ink)); }
 
 .utility-body {
   overflow-y: auto;
   padding: 12px;
+}
+
+/* --- the bench kit: what every utility's case is built from ---------
+   A utility is a piece of test gear on the bench beside the rack. The case,
+   the legends printed on it, its push buttons and its entry field are the
+   same on every one; the glass is where each gets its own character -- a
+   VFD that glows, an LCD that does not -- always lit in the theme's lamp. */
+
+/* Printed on the case, as the rack's knob labels are printed on a panel. */
+.bench-legend {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+
+.bench-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.bench-section { display: flex; flex-direction: column; gap: 6px; }
+
+/* A legend, then a printed rule out to whatever sits at the end of the row. */
+.bench-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.bench-section-head::after {
+  content: '';
+  order: 1;
+  flex: 1;
+  height: 1px;
+  background: var(--rule);
+}
+.bench-section-head > :not(.bench-legend) { order: 2; }
+
+/* A push button: raised, and pressed in while it is held. */
+.bench-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink);
+  background: linear-gradient(180deg, var(--control-top), var(--control-bottom));
+  border: 1px solid var(--panel-edge);
+  border-radius: 3px;
+  box-shadow: 0 1px 0 var(--control-bevel) inset, 0 2px 3px var(--shadow-raised);
+  cursor: pointer;
+}
+.bench-button:hover { border-color: var(--accent-line); }
+.bench-button:active {
+  background: linear-gradient(180deg, var(--control-pressed-top), var(--control-pressed-bottom));
+  box-shadow: 0 1px 2px var(--shadow-pressed) inset;
+}
+.bench-button:disabled { opacity: 0.5; cursor: default; }
+.bench-button.small { padding: 3px 7px; font-size: 9px; }
+
+/* The lamp in a button, lit while what it started is going. */
+.bench-lamp {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--led-off);
+  box-shadow: 0 0 0 1px var(--panel-edge);
+}
+.bench-button.on .bench-lamp {
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--panel-edge), 0 0 7px rgb(var(--accent-rgb) / 0.85);
+}
+
+/* The glass. Dark in either mode, as a display window is whatever the case
+   around it is: from the theme's dark key colour, so it is the theme's
+   black and not a stock one. */
+.bench-glass {
+  --glass: color-mix(in srgb, var(--key-black) 45%, #000);
+  position: relative;
+  padding: 10px 12px;
+  background: var(--glass);
+  border: 1px solid var(--panel-edge);
+  border-radius: 4px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--bench-bottom), #000 25%), 0 2px 8px rgb(0 0 0 / 0.5) inset;
+  color: var(--seg-on);
+}
+
+/* A vacuum-fluorescent display: lit segments glow, the unlit ones show
+   faintly behind them, and the fine mesh of the grid is over all of it. */
+.bench-glass.vfd {
+  --seg-on: var(--accent);
+  --seg-off: rgb(var(--accent-rgb) / 0.075);
+}
+.bench-glass.vfd::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    repeating-linear-gradient(0deg, rgb(0 0 0 / 0.18) 0 1px, transparent 1px 3px),
+    linear-gradient(170deg, rgb(255 255 255 / 0.05), transparent 40%);
+  pointer-events: none;
+}
+.bench-glass.vfd .seg-on { filter: drop-shadow(0 0 2px rgb(var(--accent-rgb) / 0.7)); }
+
+.segments { display: inline-flex; line-height: 0; }
+.segments svg { overflow: visible; }
+.seg-on { fill: var(--seg-on); }
+.seg-off { fill: var(--seg-off); }
+
+/* An annunciator: a word printed on the glass that lights when it applies. */
+.annun {
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: rgb(var(--accent-rgb) / 0.16);
+}
+.annun.on {
+  color: var(--seg-on, var(--accent));
+  text-shadow: 0 0 5px rgb(var(--accent-rgb) / 0.6);
+}
+
+/* A reading on the glass is a button, because a click copies it; it says so
+   only when pointed at. */
+.glass-read {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 2px 3px;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 2px;
+  cursor: copy;
+}
+.glass-read:hover { background: rgb(var(--accent-rgb) / 0.07); }
+.glass-read:focus-visible { outline: 1px solid var(--accent); }
+.reading.quiet { flex-direction: row; align-items: center; gap: 6px; }
+
+.note-reading-glass { display: inline-flex; align-items: flex-start; gap: 3px; }
+.note-reading-side {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  align-self: stretch;
+}
+.annun.sharp { font-size: 1em; letter-spacing: 0; }
+
+/* A tuner's row of lamps; see LedLadder. */
+.led-ladder { display: flex; align-items: center; gap: 3px; }
+.led-ladder i {
+  width: 6px;
+  height: 11px;
+  border-radius: 1.5px;
+  background: rgb(var(--accent-rgb) / 0.1);
+}
+.led-ladder i.major { height: 14px; }
+.led-ladder i.centre { background: color-mix(in srgb, var(--meter-low) 22%, transparent); height: 16px; }
+.led-ladder i.lit {
+  background: var(--accent);
+  box-shadow: 0 0 6px rgb(var(--accent-rgb) / 0.85);
+}
+.led-ladder i.centre.lit {
+  background: var(--meter-low);
+  box-shadow: 0 0 7px var(--meter-low);
+}
+.led-ladder.vertical { flex-direction: column; gap: 2px; }
+.led-ladder.vertical i { width: 11px; height: 4px; }
+.led-ladder.vertical i.major { width: 11px; height: 4px; }
+.led-ladder.vertical i.centre { width: 14px; height: 5px; }
+
+.glass-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  color: rgb(var(--accent-rgb) / 0.4);
+  font-variant-numeric: tabular-nums;
 }
 
 /* --- the Timing utility --- */
@@ -4954,232 +5373,605 @@ button.playlist-bar:hover { border-color: var(--rule); color: var(--ink); }
 
 .rack-note:focus-within { border-color: rgb(0 0 0 / 0.45); }
 
-/* --- the Metronome --- */
+/* --- the Metronome: a stage metronome, its LCD backlit --- */
 
-.metronome,
-.pitch {
+/* The glass on the left with the beat lamps over it, the jog wheel beside
+   it; the front panel's knobs and switches under the glass, and Start and
+   the Tap pad under the wheel, where a hand already is. */
+.metronome {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'leds  .'
+    'glass jog'
+    'panel transport';
+  align-items: start;
+  gap: 10px 18px;
+  width: min(640px, calc(100vw - 42px));
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.metro-leds { grid-area: leds; }
+.metro-lcd { grid-area: glass; }
+.metro-jog { grid-area: jog; }
+.metro-panel { grid-area: panel; }
+.metro-transport { grid-area: transport; }
+.metronome-note { grid-column: 1 / -1; margin: 0; color: var(--danger); }
+
+@media (max-width: 640px) {
+  .metronome {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'leds' 'glass' 'jog' 'transport' 'panel';
+  }
+}
+
+/* A reflective LCD with its backlight on: the theme's lamp colour shining
+   through a pale panel, and the segments dark on it, the unlit ones just
+   showing. The same in either mode, as the glass of any display is. */
+.bench-glass.lcd {
+  --lcd-light: color-mix(in srgb, var(--accent) 42%, #e9ecdf);
+  --seg-on: color-mix(in srgb, var(--key-black) 88%, var(--accent));
+  --seg-off: rgb(0 0 0 / 0.07);
+  background:
+    radial-gradient(ellipse at 50% 40%, rgb(255 255 255 / 0.22), transparent 70%),
+    var(--lcd-light);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--bench-bottom), #000 25%), 0 2px 7px rgb(0 0 0 / 0.38) inset;
+}
+/* The segments sit a hair over the backlight and throw a faint shadow on it,
+   which is how an LCD is told from a print. */
+.bench-glass.lcd .seg-on { filter: drop-shadow(1px 1px 0 rgb(0 0 0 / 0.14)); }
+.bench-glass.lcd .annun { color: rgb(0 0 0 / 0.1); }
+.bench-glass.lcd .annun.on { color: var(--seg-on); text-shadow: none; }
+.bench-glass.lcd .glass-read:hover { background: rgb(0 0 0 / 0.06); }
+.bench-glass.lcd .glass-read:focus-visible { outline-color: var(--seg-on); }
+
+.metro-lcd {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  width: min(380px, calc(100vw - 42px));
-  font-size: 12px;
-  color: var(--ink);
-}
-
-.metronome input[type='number'],
-.metronome select,
-.pitch input,
-.pitch select {
-  font: inherit;
-  font-size: 12px;
-  letter-spacing: normal;
-  text-transform: none;
-  padding: 3px 5px;
-  color: var(--ink);
-  background: var(--field);
-  border: 1px solid var(--panel-edge);
-  border-radius: 2px;
-}
-
-.metronome .timing-sig input[type='number'] { width: 46px; }
-
-.metronome-top {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.metronome-go {
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  width: 84px;
-  height: 52px;
-  color: var(--ink);
-  background: var(--control);
-  border: 1px solid var(--panel-edge);
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.metronome-go:hover { border-color: var(--accent-line); }
-
-.metronome-go.on {
-  color: var(--on-accent);
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
-.metronome-tempo {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-}
-
-.metronome-tempo button {
-  font: inherit;
-  font-size: 11px;
-  padding: 4px 6px;
-  color: var(--ink-dim);
-  background: var(--control);
-  border: 1px solid var(--panel-edge);
-  border-radius: 2px;
-  cursor: pointer;
-}
-
-.metronome-tempo button:hover { color: var(--ink); }
-
-.metronome .metronome-bpm {
-  width: 70px;
-  font-size: 18px;
-  font-weight: 600;
-  text-align: center;
-}
-
-.metronome-tap { margin-left: 4px; }
-
-.metronome-lamps {
-  display: flex;
-  gap: 6px;
-  padding: 10px;
-  background: var(--well);
-  border-radius: 3px;
-}
-
-.metronome-lamp {
-  flex: 1;
-  height: 14px;
-  background: var(--sunken);
-  border: 1px solid var(--hairline);
-  border-radius: 2px;
-}
-
-.metronome-lamp.first { border-color: var(--accent-line); }
-.metronome-lamp.on { background: var(--accent); border-color: var(--accent); }
-.metronome-lamp.first.on { box-shadow: 0 0 10px rgb(var(--accent-rgb) / 0.6); }
-.metronome-lamp.sub { background: rgb(var(--accent-rgb) / 0.35); }
-
-.metronome-check {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--ink-dim);
-}
-
-.metronome-volume {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-}
-
-.metronome-volume input { width: 90px; accent-color: var(--accent); }
-
-.metronome-note { margin: 0; color: var(--danger); }
-
-/* --- Notes & frequencies --- */
-
-.pitch-input { flex: 1; }
-.pitch-input input { width: 100%; }
-.pitch .invalid { border-color: var(--danger); }
-.pitch input[type='number'] { width: 70px; }
-
-.pitch-answer {
-  display: flex;
-  gap: 16px;
-  align-items: center;
-  padding: 10px 12px;
-  background: var(--well);
-  border-radius: 3px;
-}
-
-.pitch-main {
-  display: flex;
-  align-items: center;
   gap: 8px;
+  padding: 12px 14px 10px;
 }
 
-.pitch-main strong { font-size: 24px; white-space: nowrap; }
-.pitch-cents { font-size: 13px; font-weight: 500; color: var(--ink-dim); }
+.metro-lcd-main {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
 
-.pitch-play {
+.metro-lcd-beat,
+.metro-lcd-tempo,
+.metro-lcd-time {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.metro-lcd-tempo { align-items: flex-end; }
+.metro-lcd-time { align-items: flex-end; }
+
+/* The tempo being typed, set in the glass's own ink and about its size. */
+.metronome-bpm-entry {
+  width: 128px;
+  height: 50px;
+  padding: 0 6px;
   font: inherit;
-  width: 28px;
-  height: 28px;
-  color: var(--ink);
-  background: var(--control);
-  border: 1px solid var(--panel-edge);
-  border-radius: 50%;
-  cursor: pointer;
-}
-
-.pitch-play:hover { border-color: var(--accent-line); }
-
-.pitch-facts {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 1px 8px;
-  margin: 0;
+  font-size: 34px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--seg-on);
+  background: rgb(255 255 255 / 0.3);
+  border: 1px solid var(--seg-on);
+  border-radius: 2px;
 }
 
-.pitch-facts dt {
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
+.metro-lcd-sig { display: inline-flex; align-items: center; gap: 3px; }
+.metro-lcd-slash {
+  width: 2px;
+  height: 22px;
+  background: var(--seg-on);
+  transform: skewX(-20deg);
+  border-radius: 1px;
+}
+
+.metro-lcd-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 6px;
+  border-top: 1px solid rgb(0 0 0 / 0.1);
+}
+.metro-lcd-marks { display: inline-flex; align-items: center; gap: 8px; }
+.annun.mark { font-size: 13px; letter-spacing: 0; line-height: 1; }
+
+/* The beat lamps: round LEDs in a row, shrinking to fit as many beats as a
+   bar has. */
+.metro-leds {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 14px;
+  padding: 0 4px;
+}
+.metronome-lamp {
+  flex: 0 1 13px;
+  min-width: 5px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--led-off);
+  box-shadow: 0 0 0 1px var(--panel-edge), 0 1px 1px rgb(0 0 0 / 0.25) inset;
+}
+.metronome-lamp.on {
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--panel-edge), 0 0 8px rgb(var(--accent-rgb) / 0.85);
+}
+.metronome-lamp.sub { background: rgb(var(--accent-rgb) / 0.5); }
+/* The accented beat's lamp is the other colour, as on a stage metronome. */
+.metronome-lamp.first { box-shadow: 0 0 0 1px var(--meter-low), 0 1px 1px rgb(0 0 0 / 0.25) inset; }
+.metronome-lamp.first.on {
+  background: var(--meter-low);
+  box-shadow: 0 0 0 1px var(--meter-low), 0 0 9px var(--meter-low);
+}
+.metronome-lamp.first.sub { background: color-mix(in srgb, var(--meter-low) 55%, transparent); }
+
+/* --- the jog wheel: a heavy dial with a finger dimple --- */
+
+.metro-jog {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
   align-self: center;
 }
 
-.pitch-facts dd { margin: 0; }
+.jog {
+  width: 112px;
+  height: 112px;
+  padding: 5px;
+  border-radius: 50%;
+  /* The collar it turns in, sunk into the case. */
+  background: var(--knob-track);
+  box-shadow: 0 1px 2px var(--shadow-pressed) inset, 0 1px 0 var(--control-bevel);
+  cursor: ns-resize;
+  touch-action: none;
+}
+.jog:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
 
-.pitch-section h3 {
-  margin: 0 0 6px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ink-dim);
+.jog-face {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  /* Knurled round the rim, smooth on the face. */
+  background:
+    radial-gradient(circle at 50% 50%, var(--knob-cap) 0 62%, transparent 63%),
+    repeating-conic-gradient(var(--knob-cap) 0 4deg, var(--knob-cap-edge) 4deg 6deg);
+  box-shadow: 0 0 0 1px var(--knob-cap-edge), 0 3px 6px var(--shadow-raised);
+}
+.jog-face::before {
+  content: '';
+  position: absolute;
+  inset: 22%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, rgb(255 255 255 / 0.35), transparent 60%);
+  pointer-events: none;
+}
+.jog-dimple {
+  position: absolute;
+  top: 17%;
+  left: 50%;
+  width: 18px;
+  height: 18px;
+  margin-left: -9px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 60%, var(--knob-cap) 0, var(--knob-cap-edge) 100%);
+  box-shadow: 0 1px 2px var(--shadow-pressed) inset;
 }
 
-.pitch-octave {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 3px;
+/* --- the front panel --- */
+
+.metro-panel {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
 }
 
-.pitch-key {
+.metro-sound {
   display: flex;
   flex-direction: column;
   align-items: center;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.metro-latches {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding-top: 6px;
+}
+
+/* A slide switch: the legends over a slot, and a thumb in the slot under
+   the one it is set to. */
+.slide-switch {
+  --slot: 92px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: var(--slot);
+}
+.slide-switch-legends { display: flex; }
+.slide-switch-legends button {
+  flex: 1;
+  padding: 1px 0;
   font: inherit;
-  font-size: 11px;
-  padding: 3px 2px;
-  color: var(--ink);
-  background: var(--control);
-  border: 1px solid var(--panel-edge);
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  background: none;
+  border: 0;
   border-radius: 2px;
   cursor: pointer;
-  font-variant-numeric: tabular-nums;
+}
+.slide-switch-legends button.on { color: var(--ink); }
+.slide-switch-legends button:focus-visible { outline: 1px solid var(--accent-line); }
+.slide-switch-slot {
+  position: relative;
+  height: 16px;
+  border-radius: 3px;
+  background: var(--knob-track);
+  box-shadow: 0 1px 2px var(--shadow-pressed) inset;
+  cursor: pointer;
+}
+.slide-switch-thumb {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: calc(2px + (100% - 4px) / var(--positions) * var(--at));
+  width: calc((100% - 4px) / var(--positions));
+  border-radius: 2px;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 3px, rgb(0 0 0 / 0.12) 3px 4px),
+    linear-gradient(180deg, var(--control-top), var(--control-bottom));
+  box-shadow: 0 0 0 1px var(--panel-edge), 0 1px 2px var(--shadow-raised);
+  transition: left 90ms ease-out;
 }
 
-.pitch-key.black { background: var(--sunken); }
-.pitch-key.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
-.pitch-key:hover { border-color: var(--accent-line); }
-.pitch-key .timing-dim { font-size: 10px; }
+/* --- Start and the Tap pad, under the wheel --- */
 
-.pitch-transpose {
+.metro-transport {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  font-variant-numeric: tabular-nums;
+  align-items: stretch;
+  gap: 8px;
+  padding-top: 4px;
 }
+
+.metronome-go {
+  flex-direction: column;
+  justify-content: center;
+  gap: 7px;
+  width: 66px;
+  height: 60px;
+  padding: 0;
+}
+.metronome-go-text { white-space: nowrap; }
+
+/* A rubber pad: matte, darker than the case, and it gives when hit. */
+.metro-tap {
+  width: 66px;
+  height: 60px;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  background: radial-gradient(ellipse at 50% 35%, var(--control-top), var(--control-bottom) 75%);
+  border: 1px solid var(--panel-edge);
+  border-radius: 10px;
+  box-shadow: 0 3px 0 var(--panel-edge), 0 4px 6px var(--shadow-raised);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.metro-tap:hover { color: var(--ink); }
+.metro-tap:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 var(--panel-edge), 0 1px 3px var(--shadow-raised), 0 1px 4px var(--shadow-pressed) inset;
+}
+.metro-tap:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+
+/* --- Notes & frequencies: a tuner and a counter in one case --- */
+
+/* Wide and low, as bench gear is: the glass with the harmonics beside it,
+   then the front panel's knobs and the keyboard in one row under them, so the whole instrument fits on screen
+   without a scroll bar over its controls. */
+.pitch {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+  grid-template-areas:
+    'display harmonics'
+    'play play';
+  align-content: start;
+  gap: 12px 16px;
+  width: min(680px, calc(100vw - 42px));
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.pitch-display { grid-area: display; }
+.pitch-play { grid-area: play; }
+.pitch-harmonics-section { grid-area: harmonics; }
+/* The glass runs as tall as the display beside it. */
+.pitch-harmonics-section .pitch-harmonics { flex: 1; }
+
+/* The knobs, then the keyboard taking the rest of the row. */
+.pitch-play {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.pitch-octave { flex: 1; min-width: 0; }
+
+@media (max-width: 760px) {
+  .pitch {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'display' 'harmonics' 'play';
+  }
+  .pitch-play { flex-direction: column; align-items: stretch; }
+}
+
+.pitch-display { display: flex; flex-direction: column; gap: 10px; }
+
+/* The front panel's knobs: Tune large, as the main knob of a piece of gear
+   is, then the Ref trim, Octave and Transpose. */
+.pitch-controls {
+  /* On one baseline: the labels and readouts in a row under knobs of two sizes. */
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Bigger than the knobs round it; the drawing scales with its viewBox. */
+.pitch-tune .knob { width: 84px; }
+.pitch-tune .knob svg { width: 76px; height: 76px; }
+.pitch-tune .knob-readout { font-size: 11px; }
+
+.pitch-top {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.pitch-tuner {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  min-width: 0;
+}
+
+.pitch-tuner .led-ladder { justify-content: space-between; }
+
+.pitch-cents {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+/* Hz printed beside the last digit rather than under it. */
+.pitch-freq {
+  flex-direction: row;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.pitch-facts {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgb(var(--accent-rgb) / 0.12);
+}
+
+.pitch-error {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 60px;
+}
+
+
+.pitch-tune,
+.pitch-ref,
+.pitch-oct,
+.pitch-shift { flex: none; }
+
+/* One octave, C to B, the naturals side by side and the sharps laid over
+   their gaps. Keys use the theme's own key colours, which stay light and
+   dark in either mode because that is what a keyboard looks like. */
+.pitch-keys {
+  position: relative;
+  height: 68px;
+  border: 1px solid var(--panel-edge);
+  border-radius: 0 0 3px 3px;
+  background: var(--panel-edge);
+  box-shadow: 0 2px 4px var(--shadow-raised);
+  overflow: hidden;
+}
+
+.pitch-key {
+  position: absolute;
+  top: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: calc(100% / 7);
+  height: 100%;
+  padding: 0 0 5px;
+  font: inherit;
+  background: linear-gradient(180deg, var(--key-white) 80%, color-mix(in srgb, var(--key-white), var(--key-black) 12%));
+  border: 0;
+  border-right: 1px solid var(--panel-edge);
+  border-radius: 0 0 3px 3px;
+  cursor: pointer;
+}
+
+.pitch-key.black {
+  z-index: 1;
+  width: calc(100% / 7 * 0.58);
+  height: 60%;
+  transform: translateX(-50%);
+  background: linear-gradient(180deg, var(--key-black) 85%, color-mix(in srgb, var(--key-black), var(--key-white) 18%));
+  border: 1px solid var(--panel-edge);
+  border-top: 0;
+}
+
+/* Held down, and sounding: pressed in, as a key goes. */
+.pitch-key.held {
+  filter: brightness(0.9);
+  box-shadow: inset 0 3px 4px rgb(0 0 0 / 0.18);
+}
+
+.pitch-key-name {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: color-mix(in srgb, var(--key-black) 70%, var(--key-white));
+}
+
+/* The key being looked at: a lamp set into it, as on a keyboard that shows
+   which note it is holding. */
+.pitch-key.on::after {
+  content: '';
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px rgb(var(--accent-rgb) / 0.8);
+}
+
+.pitch-key:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -3px; }
+
+/* The counter's row: the MIDI number, the period and the note in tune in the
+   room to the right of the frequency. */
+.pitch-mid {
+  display: flex;
+  /* The small readings' tops on the counter's. */
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.pitch-mid-facts { flex: 1; display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
+
+/* Where a transposition lands, small, at the foot of the glass: the legend,
+   then the note, its Hz and the speed in a row under it. */
+.pitch-moved {
+  display: grid;
+  grid-template-columns: auto auto auto;
+  align-items: center;
+  justify-items: start;
+  gap: 2px 14px;
+  min-width: 0;
+}
+.pitch-moved-legend { grid-column: 1 / -1; white-space: nowrap; }
+
+/* The readings at the glass's edges sit on them, their click padding
+   hanging outside, so everything down the left and right lines up. */
+.pitch-main,
+.pitch-freq,
+.pitch-moved-note { margin-left: -3px; }
+.pitch-mid-facts > :last-child { margin-right: -3px; }
+
+.pitch-harmonics { display: flex; flex-direction: column; gap: 8px; }
+
+/* The chosen harmonic's reading, over the meter. */
+.pitch-partial-read {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgb(var(--accent-rgb) / 0.12);
+}
+
+/* The scale and the twelve columns, filling whatever height the glass has. */
+.pitch-partials-meter {
+  flex: 1;
+  display: flex;
+  gap: 4px;
+  min-height: 120px;
+}
+
+.pitch-partials {
+  flex: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: stretch;
+}
+
+/* Each column: its lamps stretched to the height, its number under them.
+   The padding, the number's height and the gap are what the scale beside it
+   is measured from (see .glass-scale.vertical below), so change them together. */
+.pitch-partial {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 0;
+  font: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.pitch-partial .led-ladder { flex: 1; justify-content: space-between; }
+.pitch-partial .led-ladder i { flex: 1 1 0; min-height: 2px; max-height: 6px; }
+
+.pitch-partial:hover { background: rgb(var(--accent-rgb) / 0.06); }
+.pitch-partial:focus-visible { outline: 1px solid var(--accent); }
+.pitch-partial.on { border-color: rgb(var(--accent-rgb) / 0.35); }
+
+.pitch-partial-n {
+  height: 12px;
+  line-height: 12px;
+  font-size: 9px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: rgb(var(--accent-rgb) / 0.4);
+}
+
+.pitch-partial.on .pitch-partial-n {
+  color: var(--accent);
+  text-shadow: 0 0 5px rgb(var(--accent-rgb) / 0.7);
+}
+
+/* Down the side: each mark is set on the centre of its lamp -- the top one,
+   the middle one, the bottom one -- by padding the column the way a
+   .pitch-partial is padded, plus half a lamp. */
+.glass-scale.vertical {
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  padding: 8px 0 25px;
+}
+.glass-scale.vertical span { height: 0; line-height: 0; display: flex; align-items: center; }
 
 /* --- the Scales & chords, Progressions and Rhythm utilities --- */
 

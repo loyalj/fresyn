@@ -1,6 +1,7 @@
 import type { Routing } from '../dsp/Console'
 import type { SampleBank } from '../dsp/samples'
-import { DESK, SongEngine, type TrackEvent, type TrackMix } from '../dsp/SongEngine'
+import { DESK, MASTER_RACK, SongEngine, type TrackEvent, type TrackMix } from '../dsp/SongEngine'
+import { GAME_SOUND } from '../dsp/modules/types'
 import { compile } from '../patch/compile'
 import { defOf } from '../patch/defs'
 import { clampValue, type ParamSpec } from '../patch/param'
@@ -8,6 +9,7 @@ import { automationBindings, stripTarget, type AutomationBinding } from './autom
 import { engineEventsByTrack, noteTarget, windowEvents, type NoteTarget } from './bind'
 import { consoleOf, setPatternSwing, trackMix } from './edit'
 import { fromStoredProject, type LoadedProject, type Rack } from './project'
+import { reach, tapsOf, type Taps } from './route'
 import { fill, type Cursor, type Loop, type Seam } from './transport'
 import { releasedBySwing, songEnd, type SongEvent } from './schedule'
 import type { NoteTiming, SectionInfo, SectionTiming, SongClock, SongKey } from './game'
@@ -59,9 +61,9 @@ export interface SongPlayerOptions {
    * in phase (see `SongEngine.render`); a bounce never unmutes anything, so
    * that is arithmetic spent on audio nobody hears. It is what keeps stems
    * from costing the square of the track count: without it every stem ran
-   * every rack. The output is the same to the sample, because racks never
-   * reach each other and an unheard track adds nothing to the mix or to a
-   * send. A track left out cannot be brought back, so a game must not set it.
+   * every rack. The output is the same to the sample, because an unheard
+   * track adds nothing to the mix or to a send -- and one a Track In hears
+   * is kept running all the same. A track left out cannot be brought back, so a game must not set it.
    */
   onlyHeard?: boolean
 }
@@ -114,6 +116,10 @@ interface Reachable {
 export class SongPlayer {
   private engine: SongEngine
   private targets = new Map<string, NoteTarget>()
+  /** The tracks whose racks play sounds: those with a Clips module. */
+  private soundTracks = new Set<string>()
+  /** Counts the sounds a game has played, to name each. */
+  private soundCount = 0
   /** Where each automation lane's knob is, in its track's engine or on the desk. */
   private bindings: Map<string, AutomationBinding>
   /**
@@ -155,6 +161,8 @@ export class SongPlayer {
   private readonly baseTempo: number
   private readonly baseTempos: TempoChange[] | undefined
   private scale = 1
+  /** Which tracks each rack hears through a Track In, which play whether heard or not. */
+  private readonly taps: Taps
 
   constructor(
     private song: Song,
@@ -166,8 +174,15 @@ export class SongPlayer {
     this.lookaheadFrames = (options.lookahead ?? DEFAULT_LOOKAHEAD_S) * options.sampleRate
 
     const mix = trackMix(song, options.only)
+    // What a bounce runs: every track heard, and every track a running rack
+    // hears through a Track In -- a muted kick still ducks the bass.
+    this.taps = tapsOf(song, racks)
+    const running = reach(this.taps, [...song.tracks.filter((t) => mix[t.id]?.audible).map((t) => t.id), MASTER_RACK])
     const tracks = []
-    for (const track of song.tracks) {
+    // The master rack after the tracks, called 'master' by a game unless a
+    // track already has that name.
+    const all = racks[MASTER_RACK] ? [...song.tracks, { id: MASTER_RACK, name: 'master' }] : song.tracks
+    for (const track of all) {
       const rack = racks[track.id]
       if (!rack) continue
       const compiled = compile(rack.patch)
@@ -178,7 +193,7 @@ export class SongPlayer {
       }
       // Its knobs and note target are still built below, so events for it
       // are made as ever; with no rack in the engine they land nowhere.
-      if (!options.onlyHeard || mix[track.id]?.audible) tracks.push({ id: track.id, patch: compiled, params })
+      if (!options.onlyHeard || running.has(track.id)) tracks.push({ id: track.id, patch: compiled, params })
 
       const knobs = new Map<string, Reachable>()
       for (const m of rack.patch.modules) {
@@ -190,8 +205,13 @@ export class SongPlayer {
       }
       this.knobs.set(track.id, knobs)
       if (!this.trackByName.has(track.name)) this.trackByName.set(track.name, track.id)
+      if (track.id === MASTER_RACK) {
+        if (!this.trackByName.has('Master')) this.trackByName.set('Master', MASTER_RACK)
+        continue
+      }
       const target = noteTarget(rack.patch)
       if (target) this.targets.set(track.id, target)
+      if (rack.patch.modules.some((m) => m.type === 'clips')) this.soundTracks.add(track.id)
     }
 
     this.songMix = mix
@@ -442,6 +462,8 @@ export class SongPlayer {
         this.targets,
       ),
     )
+    // The song's sounds too, to be picked up where it lands.
+    this.engine.scheduleMany(this.song.tracks.map((t) => ({ frame, track: t.id, kind: 'soundSync' as const, voices: [] })))
     this.cursor = { tick: jump.to, frame: jump.frame }
     this.seams.push({ tick: jump.to, frame: jump.frame })
     this.loop = jump.loop
@@ -537,6 +559,38 @@ export class SongPlayer {
       events.push({ frame: off, track: id, kind: 'off', pitch, velocity: 0 })
     }
     this.play(events)
+    return true
+  }
+
+  /**
+   * Play one of the song's sounds from the game, by name or id: a stinger
+   * on the next bar, a line of voice-over now. It plays through its track's
+   * rack, at the file's own speed, to its end -- not on the timeline, so the
+   * song's loops and jumps leave it alone. `when` lands it on the music like
+   * `frameOf`; `at` is an exact frame and wins.
+   *
+   * Hands back an id for `stopSound`, or null -- and plays nothing -- for a
+   * sound the song does not have, or one whose track has no Clips module.
+   */
+  playSound(name: string, options: { when?: NoteTiming; at?: number } = {}): string | null {
+    const sound = this.song.patterns.find((p) => p.audio && (p.id === name || p.name === name))
+    const audio = sound?.audio
+    if (!audio || !this.soundTracks.has(audio.track)) return null
+    const frame = options.at !== undefined ? this.playFrame(options.at) : this.frameOf(options.when ?? 'now')
+    const key = `${GAME_SOUND}${++this.soundCount}`
+    const event: TrackEvent = { frame, track: audio.track, kind: 'sound', key, sample: audio.sample.id, from: 0 }
+    this.engine.scheduleMany([event])
+    this.played.push(event)
+    return key
+  }
+
+  /** Stop a sound `playSound` started, with a few milliseconds' fade. False for an id it never handed out. */
+  stopSound(id: string, options: Pick<NoteOptions, 'at'> = {}): boolean {
+    if (!id.startsWith(GAME_SOUND)) return false
+    const frame = this.playFrame(options.at)
+    const events: TrackEvent[] = [...this.soundTracks].map((track) => ({ frame, track, kind: 'soundStop', key: id }))
+    this.engine.scheduleMany(events)
+    for (const e of events) this.played.push(e)
     return true
   }
 
@@ -691,7 +745,7 @@ export class SongPlayer {
       const jump = this.jump
       const stop = jump && jump.frame < until ? jump.frame : until
       if (this.cursor.frame < stop) {
-        const out = fill(this.song, this.options.sampleRate, this.cursor, stop, this.loop, this.fresh)
+        const out = fill(this.song, this.options.sampleRate, this.cursor, stop, this.loop, this.fresh, this.taps)
         this.fresh = false
         this.cursor = out.cursor
         this.seams.push(...out.seams.map((s: Seam) => ({ ...s })))

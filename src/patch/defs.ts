@@ -404,6 +404,122 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     ],
   },
 
+
+  bubble: {
+    type: 'bubble',
+    name: 'Bubble',
+    group: 'voice',
+    slug: 'bub',
+    width: 'half',
+    inputs: [
+      // A bubble on every rising edge, besides the random ones.
+      { id: 'trig', label: 'Trig' },
+      { id: 'rate', label: 'Rate' },
+    ],
+    outputs: [{ id: 'out', label: 'Out' }],
+    params: [
+      // An average, as Dust's density is: the gaps are random.
+      { id: 'rate', label: 'Rate', min: 0.1, max: 200, default: 6, unit: 'Hz', curve: 'exp' },
+      // A radius in millimetres, which is what sets a bubble's note.
+      { id: 'size', label: 'Size', min: 0.3, max: 20, default: 3, unit: 'mm', curve: 'exp' },
+      { id: 'spread', label: 'Spread', min: 0, max: 1, default: 0.5, unit: '', curve: 'lin' },
+      { id: 'rise', label: 'Rise', min: 0, max: 1, default: 0.4, unit: '', curve: 'lin' },
+      { id: 'level', label: 'Level', min: 0, max: 1, default: 0.8, unit: '', curve: 'lin' },
+      { id: 'cvAmount', label: 'Rate Amt', min: -5, max: 5, default: 0, unit: 'oct', curve: 'lin' },
+    ],
+  },
+
+  friction: {
+    type: 'friction',
+    name: 'Friction',
+    group: 'voice',
+    slug: 'fric',
+    inputs: [
+      // Bows while it is high; unpatched, it bows for ever.
+      { id: 'gate', label: 'Gate' },
+      // Adds to the Speed knob: an envelope here is a bow stroke, a slow
+      // LFO a door swinging.
+      { id: 'speed', label: 'Speed' },
+      { id: 'pitch', label: 'Pitch' },
+    ],
+    outputs: [{ id: 'out', label: 'Out' }],
+    params: [
+      { id: 'pitch', label: 'Pitch', min: 15, max: 2000, default: 110, unit: 'Hz', curve: 'exp', tuned: true },
+      { id: 'pressure', label: 'Pressure', min: 0, max: 1, default: 0.5, unit: '', curve: 'lin' },
+      { id: 'speed', label: 'Speed', min: 0, max: 1, default: 0.5, unit: '', curve: 'lin' },
+      { id: 'position', label: 'Position', min: 0, max: 1, default: 0.2, unit: '', curve: 'lin' },
+      { id: 'rough', label: 'Rough', min: 0, max: 1, default: 0, unit: '', curve: 'lin' },
+      { id: 'level', label: 'Level', min: 0, max: 1, default: 0.8, unit: '', curve: 'lin' },
+    ],
+  },
+
+  scrape: {
+    type: 'scrape',
+    name: 'Scrape',
+    group: 'voice',
+    slug: 'scr',
+    inputs: [
+      // Adds to the Speed knob: what drags it.
+      { id: 'speed', label: 'Speed' },
+    ],
+    outputs: [{ id: 'out', label: 'Out' }],
+    params: [
+      { id: 'speed', label: 'Speed', min: 0, max: 1, default: 0.5, unit: '', curve: 'lin' },
+      { id: 'rough', label: 'Rough', min: 0, max: 1, default: 0.4, unit: '', curve: 'lin' },
+      { id: 'tone', label: 'Tone', min: 80, max: 8000, default: 900, unit: 'Hz', curve: 'exp' },
+      { id: 'ring', label: 'Ring', min: 0, max: 1, default: 0.3, unit: '', curve: 'lin' },
+      { id: 'mode', label: 'Mode', min: 0, max: 1, default: 0, unit: '', curve: 'lin', steps: ['scrape', 'roll'] },
+      { id: 'level', label: 'Level', min: 0, max: 1, default: 0.8, unit: '', curve: 'lin' },
+    ],
+  },
+
+  engine: {
+    type: 'engine',
+    name: 'Engine',
+    group: 'voice',
+    slug: 'eng',
+    inputs: [
+      // A volt an octave, so a game's speed or an envelope revs it.
+      { id: 'rpm', label: 'RPM' },
+      // Adds to the Load knob: the throttle.
+      { id: 'load', label: 'Load' },
+    ],
+    outputs: [{ id: 'out', label: 'Out' }],
+    params: [
+      { id: 'rpm', label: 'RPM', min: 300, max: 12000, default: 900, unit: 'rpm', curve: 'exp' },
+      { id: 'cylinders', label: 'Cylinders', min: 1, max: 12, default: 4, unit: '#', curve: 'lin' },
+      { id: 'load', label: 'Load', min: 0, max: 1, default: 0.3, unit: '', curve: 'lin' },
+      { id: 'misfire', label: 'Misfire', min: 0, max: 1, default: 0, unit: '', curve: 'lin' },
+      { id: 'exhaust', label: 'Exhaust', min: 40, max: 2000, default: 180, unit: 'Hz', curve: 'exp' },
+      { id: 'rough', label: 'Rough', min: 0, max: 1, default: 0.15, unit: '', curve: 'lin' },
+      { id: 'level', label: 'Level', min: 0, max: 1, default: 0.8, unit: '', curve: 'lin' },
+      { id: 'cvAmount', label: 'RPM Amt', min: -2, max: 2, default: 1, unit: 'oct', curve: 'lin' },
+    ],
+  },
+
+
+  chip: {
+    type: 'chip',
+    name: 'Chip',
+    group: 'voice',
+    slug: 'chip',
+    inputs: [
+      // Starts a note; unpatched, it plays for ever.
+      { id: 'gate', label: 'Gate' },
+      { id: 'pitch', label: 'Pitch' },
+    ],
+    outputs: [{ id: 'out', label: 'Out' }],
+    params: [
+      { id: 'wave', label: 'Wave', min: 0, max: 5, default: 1, unit: '', curve: 'lin', steps: ['12.5%', '25%', '50%', 'tri', 'noise', 'metal'] },
+      { id: 'pitch', label: 'Pitch', min: 27.5, max: 4186, default: 220, unit: 'Hz', curve: 'exp', tuned: true },
+      // Octaves a second, from every gate: up is a jump, down a fall.
+      { id: 'sweep', label: 'Sweep', min: -8, max: 8, default: 0, unit: 'oct', curve: 'lin' },
+      // Zero holds the level; otherwise sixteen steps down across this long.
+      { id: 'decay', label: 'Decay', min: 0, max: 2, default: 0, unit: 's', curve: 'lin' },
+      { id: 'level', label: 'Level', min: 0, max: 1, default: 0.6, unit: '', curve: 'lin' },
+    ],
+  },
+
   lfo: {
     type: 'lfo',
     name: 'LFO',
@@ -620,6 +736,52 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     ],
   },
 
+
+  robin: {
+    type: 'robin',
+    name: 'Round Robin',
+    group: 'control',
+    slug: 'rr',
+    width: 'half',
+    inputs: [
+      { id: 'trig', label: 'Trig' },
+      // The next gate goes to the first output again.
+      { id: 'reset', label: 'Reset' },
+    ],
+    outputs: [
+      { id: 'o1', label: '1' },
+      { id: 'o2', label: '2' },
+      { id: 'o3', label: '3' },
+      { id: 'o4', label: '4' },
+      { id: 'index', label: 'Index' },
+    ],
+    params: [
+      { id: 'count', label: 'Count', min: 2, max: 4, default: 4, unit: '#', curve: 'lin' },
+      { id: 'mode', label: 'Mode', min: 0, max: 2, default: 0, unit: '', curve: 'lin', steps: ['cycle', 'random', 'shuffle'] },
+    ],
+  },
+
+  bounce: {
+    type: 'bounce',
+    name: 'Bouncing Ball',
+    group: 'control',
+    slug: 'ball',
+    trigger: true,
+    width: 'half',
+    inputs: [{ id: 'drop', label: 'Drop' }],
+    outputs: [
+      { id: 'gate', label: 'Gate' },
+      { id: 'vel', label: 'Vel' },
+      { id: 'height', label: 'Height' },
+      { id: 'end', label: 'End' },
+    ],
+    params: [
+      { id: 'fall', label: 'Fall', min: 0.02, max: 2, default: 0.4, unit: 's', curve: 'exp' },
+      { id: 'bounce', label: 'Bounce', min: 0.1, max: 0.95, default: 0.6, unit: '', curve: 'lin' },
+      { id: 'spread', label: 'Spread', min: 0, max: 1, default: 0, unit: '', curve: 'lin' },
+    ],
+  },
+
   burst: {
     type: 'burst',
     name: 'Burst',
@@ -798,6 +960,51 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     ],
   },
 
+
+  mass: {
+    type: 'mass',
+    name: 'Spring Mass',
+    group: 'modulation',
+    slug: 'mass',
+    width: 'half',
+    inputs: [
+      { id: 'in', label: 'In' },
+      // A flick on every rising edge.
+      { id: 'kick', label: 'Kick' },
+    ],
+    outputs: [
+      { id: 'out', label: 'Out' },
+      { id: 'vel', label: 'Vel' },
+    ],
+    params: [
+      { id: 'freq', label: 'Freq', min: 0.1, max: 40, default: 3, unit: 'Hz', curve: 'exp' },
+      // Of critical: at one it arrives without overshooting.
+      { id: 'damping', label: 'Damping', min: 0.01, max: 1, default: 0.12, unit: '', curve: 'lin' },
+      { id: 'kick', label: 'Kick', min: -5, max: 5, default: 1, unit: '', curve: 'lin' },
+    ],
+  },
+
+  expr: {
+    type: 'expr',
+    name: 'Expression',
+    group: 'modulation',
+    slug: 'expr',
+    inputs: [
+      { id: 'x', label: 'X' },
+      { id: 'y', label: 'Y' },
+      // A rising edge puts t back to zero.
+      { id: 'reset', label: 'Reset' },
+    ],
+    outputs: [{ id: 'out', label: 'Out' }],
+    params: [
+      { id: 'mode', label: 'Mode', min: 0, max: 1, default: 0, unit: '', curve: 'lin', steps: ['math', 'bytebeat'] },
+      { id: 'a', label: 'A', min: 0, max: 1, default: 1, unit: '', curve: 'lin' },
+      { id: 'b', label: 'B', min: 0, max: 1, default: 0, unit: '', curve: 'lin' },
+      // How fast t counts in bytebeat mode; the one-liners expect 8000.
+      { id: 'rate', label: 'Rate', min: 1000, max: 48000, default: 8000, unit: 'Hz', curve: 'exp' },
+    ],
+  },
+
   ladder: {
     type: 'ladder',
     name: 'Ladder Filter',
@@ -968,6 +1175,28 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     ],
   },
 
+
+  sub: {
+    type: 'sub',
+    name: 'Subharmonic',
+    group: 'effects',
+    slug: 'sub',
+    bypass: true,
+    width: 'half',
+    inputs: [{ id: 'in', label: 'In' }],
+    outputs: [
+      { id: 'out', label: 'Out' },
+      // The octaves down alone, for a channel of their own.
+      { id: 'sub', label: 'Sub' },
+    ],
+    params: [
+      { id: 'track', label: 'Track', min: 40, max: 600, default: 150, unit: 'Hz', curve: 'exp' },
+      { id: 'sub1', label: '−1 Oct', min: 0, max: 1, default: 0.7, unit: '', curve: 'lin' },
+      { id: 'sub2', label: '−2 Oct', min: 0, max: 1, default: 0, unit: '', curve: 'lin' },
+      { id: 'dry', label: 'Dry', min: 0, max: 1, default: 1, unit: '', curve: 'lin' },
+    ],
+  },
+
   fold: {
     type: 'fold',
     name: 'Wavefolder',
@@ -1014,6 +1243,31 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     params: [
       { id: 'freq', label: 'Freq', min: 1, max: 4000, default: 220, unit: 'Hz', curve: 'exp' },
       { id: 'mix', label: 'Mix', min: 0, max: 1, default: 1, unit: '', curve: 'lin' },
+    ],
+  },
+
+
+  howl: {
+    type: 'howl',
+    name: 'Howl',
+    group: 'effects',
+    slug: 'howl',
+    bypass: true,
+    inputs: [
+      { id: 'in', label: 'In' },
+      { id: 'pitch', label: 'Pitch' },
+      { id: 'feedback', label: 'Fdbk' },
+    ],
+    outputs: [{ id: 'out', label: 'Out' }],
+    params: [
+      { id: 'pitch', label: 'Pitch', min: 50, max: 5000, default: 900, unit: 'Hz', curve: 'exp' },
+      // Past one it howls on its own.
+      { id: 'feedback', label: 'Feedback', min: 0, max: 1.5, default: 0.9, unit: '', curve: 'lin' },
+      { id: 'focus', label: 'Focus', min: 0, max: 1, default: 0.5, unit: '', curve: 'lin' },
+      { id: 'drift', label: 'Drift', min: 0, max: 1, default: 0.2, unit: '', curve: 'lin' },
+      { id: 'air', label: 'Air', min: 0, max: 1, default: 0.3, unit: '', curve: 'lin' },
+      { id: 'mix', label: 'Mix', min: 0, max: 1, default: 1, unit: '', curve: 'lin' },
+      { id: 'cvAmount', label: 'Fdbk Amt', min: -1, max: 1, default: 0.5, unit: '', curve: 'lin' },
     ],
   },
 
@@ -1162,6 +1416,56 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     ],
   },
 
+
+  reverse: {
+    type: 'reverse',
+    name: 'Reverse',
+    group: 'effects',
+    slug: 'rev',
+    bypass: true,
+    shared: true,
+    width: 'half',
+    inputs: [{ id: 'in', label: 'In' }],
+    outputs: [
+      { id: 'out', label: 'Out' },
+      { id: 'wet', label: 'Wet' },
+    ],
+    params: [
+      { id: 'length', label: 'Length', min: 0.05, max: 2, default: 0.4, unit: 's', curve: 'exp' },
+      { id: 'swell', label: 'Swell', min: 0, max: 1, default: 0.5, unit: '', curve: 'lin' },
+      { id: 'feedback', label: 'Feedback', min: 0, max: 0.9, default: 0, unit: '', curve: 'lin' },
+      { id: 'mix', label: 'Mix', min: 0, max: 1, default: 0.5, unit: '', curve: 'lin' },
+    ],
+  },
+
+
+  doppler: {
+    type: 'doppler',
+    name: 'Doppler',
+    group: 'effects',
+    slug: 'dop',
+    inputs: [
+      { id: 'in', label: 'In' },
+      // Sends it past once, from the start.
+      { id: 'trig', label: 'Trig' },
+      // Where it is along the line, -1 to 1, in place of Speed.
+      { id: 'pos', label: 'Pos' },
+    ],
+    outputs: [
+      { id: 'l', label: 'L' },
+      { id: 'r', label: 'R' },
+    ],
+    params: [
+      // Metres a second: a car at 30, a jet at 250.
+      { id: 'speed', label: 'Speed', min: 1, max: 300, default: 30, unit: 'm/s', curve: 'exp' },
+      // Metres: how close it comes.
+      { id: 'distance', label: 'Distance', min: 1, max: 100, default: 6, unit: 'm', curve: 'exp' },
+      // Metres either side: how far off it starts and ends.
+      { id: 'range', label: 'Range', min: 10, max: 300, default: 80, unit: 'm', curve: 'exp' },
+      { id: 'air', label: 'Air', min: 0, max: 1, default: 0.5, unit: '', curve: 'lin' },
+    ],
+  },
+
   chorus: {
     type: 'chorus',
     name: 'Chorus',
@@ -1269,6 +1573,30 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
     ],
   },
 
+
+  shimmer: {
+    type: 'shimmer',
+    name: 'Shimmer',
+    group: 'effects',
+    slug: 'shim',
+    bypass: true,
+    shared: true,
+    inputs: [{ id: 'in', label: 'In' }],
+    outputs: [
+      { id: 'l', label: 'L' },
+      { id: 'r', label: 'R' },
+    ],
+    params: [
+      { id: 'size', label: 'Size', min: 0, max: 1, default: 0.7, unit: '', curve: 'lin' },
+      { id: 'decay', label: 'Decay', min: 0.3, max: 20, default: 5, unit: 's', curve: 'exp' },
+      { id: 'shimmer', label: 'Shimmer', min: 0, max: 1, default: 0.5, unit: '', curve: 'lin' },
+      // In semitones, the order the DSP's table has them.
+      { id: 'interval', label: 'Interval', min: 0, max: 5, default: 3, unit: '', curve: 'lin', steps: ['−12', '+5', '+7', '+12', '+19', '+24'] },
+      { id: 'damping', label: 'Damp', min: 0, max: 1, default: 0.4, unit: '', curve: 'lin' },
+      { id: 'mix', label: 'Mix', min: 0, max: 1, default: 0.4, unit: '', curve: 'lin' },
+    ],
+  },
+
   convolve: {
     type: 'convolve',
     name: 'Convolution',
@@ -1329,6 +1657,90 @@ export const MODULE_DEFS: Record<string, ModuleDef> = {
       // envelope into it.
       { id: 'level', label: 'Level', min: 0, max: 1, default: 0, unit: '', curve: 'lin' },
       { id: 'cvAmount', label: 'CV Amt', min: 0, max: 2, default: 1, unit: '', curve: 'lin' },
+    ],
+  },
+
+  busin: {
+    type: 'busin',
+    name: 'Bus In',
+    group: 'output',
+    slug: 'bus',
+    width: 'half',
+    // One for the whole track: what the song routes here is one signal,
+    // whatever a Keyboard's voices are doing.
+    shared: true,
+    // A main mix while nothing is patched on, so a bus track that is only a
+    // Bus In passes its feed straight through: a fader for a group of tracks
+    // before it is anything else.
+    bus: ['l', 'r'],
+    inputs: [],
+    outputs: [
+      { id: 'l', label: 'L' },
+      { id: 'r', label: 'R' },
+    ],
+    params: [{ id: 'level', label: 'Level', min: 0, max: 2, default: 1, unit: '', curve: 'lin' }],
+  },
+  clips: {
+    type: 'clips',
+    name: 'Clips',
+    group: 'output',
+    slug: 'clips',
+    width: 'half',
+    // One for the whole track: the playlist's sounds are one signal,
+    // whatever a Keyboard's voices are doing.
+    shared: true,
+    // A main mix while nothing is patched on, so a new audio track plays its
+    // clips straight away: effects go in between when they are wanted.
+    bus: ['l', 'r'],
+    inputs: [],
+    outputs: [
+      { id: 'l', label: 'L' },
+      { id: 'r', label: 'R' },
+    ],
+    params: [{ id: 'level', label: 'Level', min: 0, max: 2, default: 1, unit: '', curve: 'lin' }],
+  },
+  trackin: {
+    type: 'trackin',
+    name: 'Track In',
+    group: 'output',
+    slug: 'tap',
+    width: 'half',
+    // One for the whole track: it hears another track's rack, whatever a
+    // Keyboard's voices are doing.
+    shared: true,
+    // No main mix of its own: what it hears is there to key something -- a
+    // Compressor's Key above all -- not to be played again on this track.
+    inputs: [],
+    outputs: [
+      { id: 'l', label: 'L' },
+      { id: 'r', label: 'R' },
+    ],
+    params: [{ id: 'level', label: 'Level', min: 0, max: 2, default: 1, unit: '', curve: 'lin' }],
+  },
+
+
+  seam: {
+    type: 'seam',
+    name: 'Loop Seam',
+    group: 'output',
+    slug: 'loop',
+    shared: true,
+    // A main mix while nothing is patched on, so a rack ending in a Loop
+    // Seam is heard, and rendered, as its loop.
+    bus: ['l', 'r'],
+    inputs: [
+      { id: 'inL', label: 'L' },
+      { id: 'inR', label: 'R' },
+      // Records again.
+      { id: 'rec', label: 'Rec' },
+    ],
+    outputs: [
+      { id: 'l', label: 'L' },
+      { id: 'r', label: 'R' },
+    ],
+    params: [
+      { id: 'length', label: 'Length', min: 0.25, max: 20, default: 4, unit: 's', curve: 'exp' },
+      { id: 'fade', label: 'Fade', min: 0.01, max: 2, default: 0.5, unit: 's', curve: 'exp' },
     ],
   },
 

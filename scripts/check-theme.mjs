@@ -165,6 +165,16 @@ const earBacks = (p) => {
 }
 
 /**
+ * A utility's bench case runs top to bottom from --bench-top to --bench-bottom
+ * and its lettering can sit anywhere on it, so both ends have to hold.
+ */
+const BENCH = '(the bench case)'
+const benchBacks = (p) => {
+  const ends = [hex(p.tokens.get('--bench-top')), hex(p.tokens.get('--bench-bottom'))]
+  return ends.every(Boolean) ? ends : null
+}
+
+/**
  * What sits on what. The ratios are the ones the design already aimed at:
  * body text at 7, the dimmed labels near it, and the faint ones a step
  * below -- deliberately recessive, but never texture.
@@ -178,6 +188,9 @@ const PAIRS = [
   ['--on-danger', '--danger', 4.5, 'a label on the remove button'],
   ['--spine-ink', EAR, 4, 'the module name on the rack ear'],
   ['--spine-ink-faint', EAR, 3.5, 'the module id and presets glyph on the rack ear'],
+  ['--ink', BENCH, 7, 'body text on a utility case'],
+  ['--ink-faint', BENCH, 4.2, 'the faintest labels on a utility case'],
+  ['--accent-line', BENCH, 4.2, 'accent text and strokes on a utility case'],
   ['--knob-pointer', '--knob-cap', 3, 'the pointer line on a knob cap'],
   ['--key-black', '--key-white', 4.5, 'the sharps against the naturals'],
 ]
@@ -187,7 +200,7 @@ for (const p of palettes) {
   const worst = []
   for (const [fg, bg, min, what] of PAIRS) {
     const a = hex(resolve(p, fg))
-    const backs = bg === EAR ? earBacks(p) : [hex(resolve(p, bg))]
+    const backs = bg === EAR ? earBacks(p) : bg === BENCH ? benchBacks(p) : [hex(resolve(p, bg))]
     if (!a || !backs || backs.some((b) => !b)) {
       check(`${p.theme}/${p.mode}: ${fg} on ${bg} is a plain colour`, false, 'not a hex value')
       continue

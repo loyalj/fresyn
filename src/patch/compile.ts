@@ -13,6 +13,8 @@ export interface CompiledModule {
   paramCount: number
   /** Which sample this module asks the bank for, if any. */
   sample?: string
+  /** The module's text, for one that reads any: the Expression's formula. */
+  text?: string
   /**
    * Runs once per sounding note rather than once for the rack. True for the
    * Keyboard a track plays and everything downstream of it, up to the first
@@ -304,6 +306,7 @@ export function compile(input: Patch): CompiledPatch {
       paramCount: def.params.length,
       // The id only; the audio travels beside the patch, never inside it.
       sample: m.sample?.id,
+      ...(m.text ? { text: m.text } : {}),
       ...(poly.has(m.id) ? { poly: true } : {}),
     }
   })

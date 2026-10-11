@@ -147,6 +147,17 @@ export interface Strip {
   /** How much of it goes to each shared effect, 0..1. */
   space: number
   delay: number
+  /**
+   * The bus track its channel goes to, by id, in place of the master. A bus
+   * is a track whose rack has a Bus In; absent is the master, and so is a
+   * track that is not a bus, or has stopped being one. See `song/route`.
+   */
+  out?: string
+  /**
+   * How much of it goes to each bus track besides, by the bus's id, 0..1:
+   * an aux send, post-fader and in stereo. Only the ones turned up are kept.
+   */
+  sends?: Record<string, number>
 }
 
 /** A console EQ: a low shelf at 200 Hz, a bell at 1 kHz, a high shelf at 5 kHz, in dB. */
@@ -220,6 +231,23 @@ export interface Pattern {
    * `song/automation`.
    */
   automation?: AutomationLane[]
+  /**
+   * Set on a **sound**: a pattern that is a piece of audio rather than notes.
+   * Its clips play the file on one track -- through that track's Clips
+   * module -- at the file's own speed, whatever the tempo: a clip starts the
+   * audio on its first tick, its end cuts it, and one drawn out past the
+   * sound's length starts it again, as a pattern's clip repeats the pattern.
+   * A sound has no notes and no automation lanes.
+   */
+  audio?: SoundRef
+}
+
+/** What a sound plays, and where. */
+export interface SoundRef {
+  /** The file, by content hash, as a Sampler names one. */
+  sample: { id: string; name: string }
+  /** The track whose Clips module plays it. */
+  track: string
 }
 
 /**
@@ -434,6 +462,15 @@ export interface Placement {
 export function emptySong(): Song {
   return { tempo: 120, tracks: [], patterns: [], playlist: [] }
 }
+
+/**
+ * The master rack's id: the rack the whole mix goes through, returns and
+ * all, before the master bus's EQ, level and limiter. A rack and not a track
+ * -- it has no strip, no notes and no routes -- so it is never one of the
+ * mix's tracks, but its knobs, automation and scopes are addressed by this
+ * as a track's are. Not an id a track can have: see `normalizeSong`.
+ */
+export const MASTER_RACK = '~master'
 
 /** The one track every rack has: the one on the bench. */
 export const BENCH_TRACK = 'bench'

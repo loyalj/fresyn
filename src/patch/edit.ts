@@ -132,6 +132,22 @@ export function setSample(
   return { ...patch, modules }
 }
 
+/**
+ * Set a module's text -- an Expression's formula -- or take it away with an
+ * empty one, which puts the module back on its starting text. An edit like
+ * any other, so a formula typed over is one Ctrl+Z away.
+ */
+export function setModuleText(patch: Patch, moduleId: string, text: string): Patch {
+  const at = patch.modules.findIndex((m) => m.id === moduleId)
+  if (at < 0 || (patch.modules[at].text ?? '') === text) return patch
+  const modules = patch.modules.map((m) => {
+    if (m.id !== moduleId) return m
+    const { text: _dropped, ...rest } = m
+    return text ? { ...rest, text } : rest
+  })
+  return { ...patch, modules }
+}
+
 export function addModule(
   patch: Patch,
   module: PatchModule,

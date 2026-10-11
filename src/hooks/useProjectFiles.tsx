@@ -102,9 +102,9 @@ export function useProjectFiles({
    * rather than re-encoded from what is loaded, so what lands in the zip is
    * the file that was dropped in.
    */
-  const gatherSamples = useCallback(async (patches: readonly Patch[]) => {
-    // Every module that names one, a Drum Kit's pads included.
-    const ids = [...sampleIdsIn(patches)]
+  const gatherSamples = useCallback(async (sources: readonly unknown[]) => {
+    // Every module that names one, a Drum Kit's pads included, and every sound.
+    const ids = [...sampleIdsIn(sources)]
     const found: StoredSample[] = []
     for (const id of ids) {
       const s = await getSample(id)
@@ -138,7 +138,7 @@ export function useProjectFiles({
   const saveProject = useCallback(
     (saveAs = false) => runJob('saving', async () => {
       const patches = song.tracks.flatMap((t) => racks[t.id]?.patch ?? [])
-      const { found, missing } = await gatherSamples(patches)
+      const { found, missing } = await gatherSamples([...patches, song.patterns])
       const stored = toStoredProject(name, song, racks)
       const summary =
         missing > 0

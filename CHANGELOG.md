@@ -4,6 +4,221 @@ What changed, newest first. The README says what Fresyn is now; this is how
 it got there. The older entries are the milestone notes that used to sit at
 the top of the README, moved here as they were written.
 
+## A rack on the master
+
+The whole mix can now go through a rack of its own before the master bus:
+every channel and the Space and Delay returns, then the master EQ, balance,
+level and limiter.
+
+- **+ Rack**, under the Mix view's master strip, adds a **master rack** and
+  puts it on the bench. It starts as a Bus In passing the mix through, so it
+  changes nothing until effects are patched after it. **×** takes it away.
+- It is a rack, not a track: kept with the racks under a reserved id, with no
+  strip, notes or routes of its own. It is listed as **Master** above the
+  tracks and in the rack's menu, its knobs automate and take a MIDI
+  controller like any rack's, a Track In in it hears any track, and games
+  reach it as `'master'` through `setParam`.
+- A song without one sounds exactly as before. It is part of the master bus:
+  heard live, in a bounce and in a game, and left out of stems.
+- `Desk.finish` is split into `returns` and `finish`, so `SongEngine`
+  renders the master rack in between.
+
+The track list's footer buttons no longer wrap now that there are four.
+
+`check-song` covers a pass-through rack being bit-identical, gain over the
+whole mix and the returns, the limiter after it, stems, removal, a Track In
+on it, saving, lanes, a bounce and `setParam('master', ...)`. `check-master`
+adds it, benches it, reloads and removes it in a browser.
+
+## Sounds: audio clips on the timeline
+
+Audio files can now go in the playlist beside patterns: stingers,
+voice-over, loops, ambience beds.
+
+- **Drop a file on a playlist lane** and it becomes a **sound** and a clip
+  of it there. It plays on the track on the bench if that is an audio track,
+  or on a new audio track named for the file. **+ Audio** under the track
+  list adds an empty one.
+- An **audio track** is a track whose rack has the new **Clips** module, as
+  a bus is one with a Bus In. Effects go after it, so a voice-over gets an
+  EQ, a loop a filter sweep, the dialogue a compressor keyed by a Track In.
+- A sound is a pattern carrying `audio` (its file and its track), so its
+  clips move, trim, split, loop when drawn out, mute and ride along with
+  sections exactly as a pattern's do. The list marks it ∿; picking one
+  paints it without taking the roll off the pattern it is writing. Its clips
+  are drawn as the file's waveform.
+- **Natural speed**: a sound is never sped up or slowed down by the tempo.
+  A clip starts its file on its first tick, stops it at its end, and starts
+  it again each time round when drawn out past the sound's length.
+- Playing from inside a clip picks the file up where the playhead is,
+  through a sync of what should be sounding whenever playback starts,
+  seeks, crosses a loop's seam or the arrangement is edited -- so a clip
+  already playing is left alone and one deleted stops.
+- **Games**: `SongPlayer.playSound(name, { when })` plays a sound on demand,
+  on the next beat or bar if asked, and `stopSound(id)` fades it out. The
+  song's loops and section jumps leave it alone.
+- A sound's file is saved in the project, fetched on load, and kept from the
+  storage sweep, as a Sampler's is. Removing an audio track removes its
+  sounds and their clips.
+
+`check-song` covers playback against the file sample for sample, trims,
+loops, tempo, mute, overlaps, starting mid-clip, loop seams, block sizes,
+`playSound`, saving and removing. `check-sounds` drops a WAV on the
+playlist in a browser and follows it through.
+
+## Sidechain: a Track In hears any track
+
+A new module, **Track In**, plays another track's audio in this track's
+rack, picked from a menu on its panel. Patched into a **Compressor's Key** it
+ducks this track under that one -- the bass pumping under the kick -- and
+through an Envelope Follower it is a control voltage.
+
+- It hears the other rack **before its channel**: before the fader, the pan
+  and the mute, so a muted kick still pumps the bass.
+- A track a heard rack listens to is **played even when muted** or silenced
+  by a solo: the scheduler takes the Track Ins into account, and a bounce
+  and a stem keep running that track's rack.
+- `SongEngine` renders every track before the racks that hear it, as it
+  renders a bus after what feeds it. A track that would close a loop is
+  greyed out in the Track In's menu, and the Mix view's routes and sends
+  now count Track Ins in their loop check too. A loop read from a file
+  leaves the later Track In silent.
+- Unlike a Bus In it has no main mix: unpatched it does nothing.
+
+`check-song` covers the module, ducking, block sizes, loops, the routing
+checks, muted and soloed scheduling, and a bounce and stem keyed by a muted
+track.
+
+## Sixteen tutorials for the new modules
+
+Tutorials 23 to 38, one for each module added this week, each a game sound
+built from the tutorial rack, in the library under Tutorials, and checked by
+`check-manual` against every claim its chapter makes: Boiling potion
+(Bubble), Creaking door (Friction), Crate drag (Scrape), Motorbike rev
+(Engine), Car pass-by (Doppler), Deep boom (Subharmonic), Rewind spell
+(Reverse), Item get (Shimmer), Mic squeal (Howl), Boing (Spring Mass),
+Dropped coin (Bouncing Ball), Footsteps (Round Robin), 8-bit jump (Chip),
+Waveshaper by formula and Bytebeat (Expression), and Seamless wind (Loop
+Seam).
+
+Writing them found two bugs, both fixed:
+
+- **Shimmer ran away.** Its shifted feedback was added on top of the
+  reverb's own, so past a Shimmer of about 0.3 the loop's gain went over one
+  and the tail swelled into a roar. Each line now has its own shifter,
+  crossfaded in at equal power, and an energy governor holds the tail under
+  the curve Decay sets. `check-dsp` holds a full-Shimmer tail to dying away.
+- **Doppler started beside you.** Its history of where the source had been
+  began empty, so for as long as the sound took to arrive it was treated as
+  passing at the closest point: a loud burst at the start of every render.
+  It now starts as though the source had always been where it begins.
+
+## Round Robin, Chip, Loop Seam, Doppler and Bouncing Ball
+
+- **Round Robin** hands each trigger to the next of four outputs, in turn, at
+  random (never the same twice running) or shuffled, with an Index CV. Four
+  footstep samples, and no two steps in a row alike.
+- **Chip** is the NES's 2A03: pulses at 12.5, 25 and 50%, the 32-step
+  triangle, and the shift-register noise in its long and short ("metal")
+  modes. Pitch goes through the chip's own divider, so the top drifts flat as
+  it did; Level and Decay have its sixteen steps; Sweep bends from each gate.
+- **Loop Seam** records Length of its input and plays it as a seamless loop,
+  the seam hidden by a crossfade from just past the end into the start. A
+  rack with one renders exactly one loop: no tail fade, no trim, so the file
+  tiles in a game.
+- **Doppler** sends a sound past along a line Distance away: the delay
+  through the air (solved for when the sound set off, so the shift matches
+  the physics to a tenth of a percent), level by distance, air absorption and
+  pan, together. Unpatched it passes again and again; Trig sends it past
+  once; Pos lets a game place it.
+- **Bouncing Ball** drops a ball on its button or a Drop edge: impacts each
+  Bounce times sooner and softer until it rests. Gate, Vel, Height and End
+  outputs.
+
+Knobs can now read in rpm, metres and metres a second.
+
+## Engine
+
+A new voice: a four-stroke **Engine**. RPM and Cylinders set the bangs a
+second; each bang goes down an exhaust pipe ringing at Exhaust and out through
+a muffler that opens with Load, the throttle. Each cylinder is drawn slightly
+different, which gives an idle its lope, and Rough and Misfire shake and skip
+bangs. RPM has a volt-per-octave jack and Load a jack of its own, so a game's
+speed or an envelope revs it; a game can also turn RPM with `setParam`. RPM
+knobs read in rpm, and accept a value typed as `3000 rpm`.
+
+## Nine modules: Bubble, Friction, Scrape, Expression, and five more
+
+Sources:
+
+- **Bubble**: bubbles in water, each a short note set by its size that
+  glides up as it rises (Minnaert and van den Doel). Random at Rate, or one
+  per rising edge at Trig. Rain on a pond, a boiling pot, lava, a drain.
+- **Friction**: a bowed-string waveguide whose tone comes from sticking and
+  slipping. High and steady it is a cello or a wet glass; low, with Pressure
+  up and some Rough, a creaking door. Bows while its Gate is high.
+- **Scrape**: one thing moving across another. Silent at rest, and denser,
+  louder and brighter with Speed; Rough runs from sand to stones, and Roll
+  mode thumps once a revolution.
+
+Effects:
+
+- **Subharmonic**: an octave divider, one and two octaves under the input,
+  following its level.
+- **Reverse**: slices of the input played backwards, with Swell leaning
+  each into its attack and Feedback for reversed echoes.
+- **Shimmer**: a reverb with a pitch shifter in its loop, so the tail climbs
+  by Interval (−12 to +24 semitones) on every pass.
+- **Howl**: controlled feedback. A delay, a band at Pitch and a soft limiter;
+  past a Feedback of one it howls on its own from Air.
+
+Modulation:
+
+- **Spring Mass**: a weight on a spring pulled towards In, which overshoots
+  and wobbles where Slew glides. A rising edge at Kick flicks it.
+- **Expression**: a formula typed on the panel, worked out every sample. It
+  reads x and y (jacks), a and b (knobs) and t. Math mode puts out the
+  answer as a voltage; bytebeat mode counts t at Rate and plays the low
+  byte, so `t*(t>>5|t>>8)` pasted from anywhere works. The syntax is
+  JavaScript's (`^` is exclusive or), with `saw tri sq noise()` added. The
+  panel names a mistake as it is typed and keeps the last formula that
+  compiled; Enter hands a new one over, as one step of undo. Underneath, a
+  graph like a graphing calculator's: a formula of x drawn against x from
+  −2 to 2 with a dot where the input is, a formula of t scrolling, bytebeat
+  as its wave.
+
+A module can now carry text beside its knobs (`text` on a patch module, in
+the save format, the compiler and the engine), which is how the formula
+travels. `check-dsp` holds each module to what its manual entry says it
+does, `check-patch` to the formula surviving save, copy and compile, and a
+new browser suite, `check:expression`, types into the panel.
+
+## Buses: route tracks to a track with effects on it
+
+A **bus** is a track that other tracks feed. It is a rack like any other,
+built around a new module, **Bus In**, which plays whatever the song routes
+to its track. So a bus can hold any effect in any order, with automation,
+LFOs and Macros on its knobs, and a game can turn them.
+
+- **+ Bus**, in the Mix view and under the track list, adds a track whose
+  rack is a Bus In. Unpatched, a Bus In goes straight to the speakers, so a
+  new bus passes its feed through: a fader for a group of tracks.
+- Every strip in the Mix view has an **output** menu (→ Master, or → a bus in
+  its place) and a **send** knob per bus (post-fader, stereo). A track can
+  use both. A bus can feed a bus, and a choice that would loop is greyed out.
+- **Solo follows the routing**: a soloed track keeps the buses it feeds, and
+  a soloed bus keeps the tracks feeding it, heard only through the bus. A
+  muted bus silences what is routed to it.
+- **Stems**: a track's stem is the track before its bus; a bus gets a stem
+  of its own.
+- `SongEngine` renders every bus after everything feeding it. A loop read
+  from a file is broken rather than followed. Live play, a bounce and a game
+  hear the same mix.
+
+The shared Space and Delay are unchanged. Not yet: automating the sends to
+buses, a rack on the master, and sidechaining one track from another (since
+added: see Track In, above).
+
 ## Fixed: a click at the start of every note played over the last
 
 A note that began while the one before was still sounding -- any legato

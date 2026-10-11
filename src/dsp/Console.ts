@@ -19,7 +19,7 @@ import type { Console, Eq3 } from '../song/types'
 const GLIDE_S = 0.01
 
 /** A value that glides to its target rather than stepping, so nothing zips. */
-class Glide {
+export class Glide {
   value: number
   target: number
   constructor(v: number, private readonly k: number) {
@@ -373,11 +373,18 @@ export class Strip {
   readonly pan: Glide
   readonly space: Glide
   readonly delay: Glide
+  /**
+   * Its sends to bus tracks, by the bus's id. One turned off glides down to
+   * nothing rather than stopping, and is kept: a send is a handful of bytes.
+   */
+  readonly sends = new Map<string, Glide>()
   /** The loudest it has been since the meter last asked. */
   peak = 0
+  private readonly k: number
 
   constructor(sampleRate: number) {
     const k = glideK(sampleRate)
+    this.k = k
     this.eq = new ThreeBand(sampleRate)
     this.gain = new Glide(1, k)
     this.pan = new Glide(0, k)
@@ -385,16 +392,28 @@ export class Strip {
     this.delay = new Glide(0, k)
   }
 
-  set(s: { gain: number; pan?: number; eq?: Eq3; space?: number; delay?: number }, first = false) {
+  set(
+    s: { gain: number; pan?: number; eq?: Eq3; space?: number; delay?: number; sends?: Readonly<Record<string, number>> },
+    first = false,
+  ) {
     this.gain.target = s.gain
     this.pan.target = s.pan ?? 0
     this.space.target = s.space ?? 0
     this.delay.target = s.delay ?? 0
     this.eq.set(s.eq ?? { low: 0, mid: 0, high: 0 })
+    for (const g of this.sends.values()) g.target = 0
+    if (s.sends) {
+      for (const bus in s.sends) {
+        let g = this.sends.get(bus)
+        // A send that has just been turned up fades in from nothing.
+        if (!g) this.sends.set(bus, (g = new Glide(0, this.k)))
+        g.target = s.sends[bus]
+      }
+    }
     // A strip that has just appeared starts where it was set, rather than
     // fading up from unity.
     if (first) {
-      for (const g of [this.gain, this.pan, this.space, this.delay]) g.value = g.target
+      for (const g of [this.gain, this.pan, this.space, this.delay, ...this.sends.values()]) g.value = g.target
     }
   }
 }
@@ -477,13 +496,13 @@ export class Desk {
   }
 
   /**
-   * The returns added in, then the master bus, over a mix the strips have
-   * already summed into `left` and `right`.
+   * The returns added in, over a mix the strips have already summed into
+   * `left` and `right`: what reaches the master bus, and so the master rack.
    *
    * The effects run whether or not anything is being sent this block, so a
    * tail rings out after the last send rather than stopping dead.
    */
-  finish(left: Float32Array, right: Float32Array, n: number, routing: Routing) {
+  returns(left: Float32Array, right: Float32Array, n: number, routing: Routing) {
     if (routing.sends) {
       const s = this.space
       const d = this.delay
@@ -504,6 +523,13 @@ export class Desk {
         }
       }
     }
+  }
+
+  /**
+   * The master bus over the whole mix -- after `returns`, and after the
+   * master rack when there is one: EQ, balance, level and the limiter.
+   */
+  finish(left: Float32Array, right: Float32Array, n: number, routing: Routing) {
     if (!routing.master) {
       // No master bus, but still its delay. A stem is meant to be laid
       // against the full bounce and line up with it, and the full bounce is
